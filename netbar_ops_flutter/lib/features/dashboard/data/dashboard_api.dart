@@ -54,6 +54,51 @@ class TrendDataPoint {
   }
 }
 
+/// 重启响应
+class RestartResponse {
+  final String message;
+  final int targetCount;
+  final String estimatedTime;
+
+  RestartResponse({
+    required this.message,
+    required this.targetCount,
+    required this.estimatedTime,
+  });
+
+  factory RestartResponse.fromJson(Map<String, dynamic> json) {
+    return RestartResponse(
+      message: json['message'] ?? '',
+      targetCount: json['target_count'] ?? 0,
+      estimatedTime: json['estimated_time'] ?? '',
+    );
+  }
+}
+
+/// 诊断响应
+class DiagnoseResponse {
+  final String message;
+  final int nodeCount;
+  final List<String> checkItems;
+  final String estimatedTime;
+
+  DiagnoseResponse({
+    required this.message,
+    required this.nodeCount,
+    required this.checkItems,
+    required this.estimatedTime,
+  });
+
+  factory DiagnoseResponse.fromJson(Map<String, dynamic> json) {
+    return DiagnoseResponse(
+      message: json['message'] ?? '',
+      nodeCount: json['node_count'] ?? 0,
+      checkItems: (json['check_items'] as List?)?.map((e) => e.toString()).toList() ?? [],
+      estimatedTime: json['estimated_time'] ?? '',
+    );
+  }
+}
+
 /// Dashboard API 服务
 class DashboardApi {
   final ApiClient _client = ApiClient.instance;
@@ -76,6 +121,18 @@ class DashboardApi {
     );
     final list = response.data as List? ?? [];
     return list.map((e) => TrendDataPoint.fromJson(e)).toList();
+  }
+
+  /// 全部重启
+  Future<RestartResponse> restartAll() async {
+    final response = await _client.post('/dashboard/restart');
+    return RestartResponse.fromJson(response.data);
+  }
+
+  /// 网络诊断
+  Future<DiagnoseResponse> networkDiagnose() async {
+    final response = await _client.post('/dashboard/diagnose');
+    return DiagnoseResponse.fromJson(response.data);
   }
 }
 

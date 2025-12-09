@@ -169,9 +169,9 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         children: [
           // 左侧: Logo & 菜单
           _buildLeftSection(),
-          const SizedBox(width: 12),
+          const SizedBox(width: 24),
           Container(width: 1, height: 24, color: Colors.grey.shade200),
-          const SizedBox(width: 12),
+          const SizedBox(width: 24),
           // 网吧选择：桌面用标签栏，移动用单个选择按钮
           Expanded(
             child: isNarrow ? _buildNetbarPicker(isNarrow) : NetbarTabBar(),
@@ -214,6 +214,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
             ),
           ),
           itemBuilder: (context) => [
+            _buildMenuItem('概览', '/dashboard', LucideIcons.layoutDashboard, Colors.blue),
             _buildMenuItem('网吧管理', '/monitor', LucideIcons.network, Colors.indigo),
             _buildMenuItem('资源管理', '/resource-management', LucideIcons.database, Colors.orange),
             _buildMenuItem('用户账户', '/user-management', LucideIcons.users, Colors.purple),
@@ -300,11 +301,13 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
             padding: EdgeInsets.symmetric(horizontal: isNarrow ? 8 : 12, vertical: 6),
             decoration: BoxDecoration(borderRadius: BorderRadius.circular(8)),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 const Icon(LucideIcons.wrench, size: 16, color: AppColors.iosBlue),
                 if (!isNarrow) ...[
                   const SizedBox(width: 6),
                   const Text('运维管理', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                  const SizedBox(width: 4), // Added small spacing before chevron
                   Icon(LucideIcons.chevronDown, size: 14, color: Colors.grey.shade400),
                 ],
               ],

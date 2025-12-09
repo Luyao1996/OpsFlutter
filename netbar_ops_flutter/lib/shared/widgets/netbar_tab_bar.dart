@@ -106,58 +106,55 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
     // 检查是否需要显示箭头
     _checkOverflow();
 
-    return Padding(
-      padding: const EdgeInsets.only(top: 20),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          // 左箭头
-          if (_showLeftArrow) _buildScrollButton(isLeft: true),
-          // 标签页列表（可滚动，内部Tab可缩小）
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final tabCount = tabsState.tabs.length;
-                final addButtonWidth = 36.0; // 添加按钮宽度
-                final availableWidth = constraints.maxWidth - addButtonWidth;
-                final minTabWidth = 130.0;
-                final totalMinWidth = tabCount * (minTabWidth + 2); // 2 for margin
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        // 左箭头
+        if (_showLeftArrow) _buildScrollButton(isLeft: true),
+        // 标签页列表（可滚动，内部Tab可缩小）
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final tabCount = tabsState.tabs.length;
+              final addButtonWidth = 36.0; // 添加按钮宽度
+              final availableWidth = constraints.maxWidth - addButtonWidth;
+              final minTabWidth = 130.0;
+              final totalMinWidth = tabCount * (minTabWidth + 2); // 2 for margin
 
-                // 如果空间足够所有Tab以最小宽度显示，不需要滚动
-                final needsScroll = totalMinWidth > availableWidth;
+              // 如果空间足够所有Tab以最小宽度显示，不需要滚动
+              final needsScroll = totalMinWidth > availableWidth;
 
-                if (!needsScroll && tabCount > 0) {
-                  // 不需要滚动，Tab可以压缩或扩展
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      ...tabsState.tabs.map((tab) => Flexible(
-                        child: _buildTab(tab, tabsState.activeTabId, flexible: true),
-                      )),
-                      _buildAddButton(),
-                    ],
-                  );
-                }
-
-                // 需要滚动
-                return SingleChildScrollView(
-                  controller: _scrollController,
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      ...tabsState.tabs.map((tab) => _buildTab(tab, tabsState.activeTabId, flexible: false)),
-                      _buildAddButton(),
-                    ],
-                  ),
+              if (!needsScroll && tabCount > 0) {
+                // 不需要滚动，Tab可以压缩或扩展
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    ...tabsState.tabs.map((tab) => Flexible(
+                      child: _buildTab(tab, tabsState.activeTabId, flexible: true),
+                    )),
+                    _buildAddButton(),
+                  ],
                 );
-              },
-            ),
+              }
+
+              // 需要滚动
+              return SingleChildScrollView(
+                controller: _scrollController,
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    ...tabsState.tabs.map((tab) => _buildTab(tab, tabsState.activeTabId, flexible: false)),
+                    _buildAddButton(),
+                  ],
+                ),
+              );
+            },
           ),
-          // 右箭头
-          if (_showRightArrow) _buildScrollButton(isLeft: false),
-        ],
-      ),
+        ),
+        // 右箭头
+        if (_showRightArrow) _buildScrollButton(isLeft: false),
+      ],
     );
   }
 

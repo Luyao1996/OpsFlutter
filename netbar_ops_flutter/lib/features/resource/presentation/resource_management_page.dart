@@ -1,4 +1,5 @@
 import 'package:cross_file/cross_file.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:path/path.dart' as p;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../channel/presentation/platform_helper.dart';
 import '../../channel/presentation/drop_target_stub.dart'
@@ -881,6 +883,65 @@ class _ResourceManagementPageState
     );
   }
 
+  Future<void> _handleDownload(Resource file) async {
+    if (kIsWeb) {
+      final url = _resourceApi.getDownloadUrl(file.id);
+      if (await canLaunchUrl(Uri.parse(url))) {
+        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('无法打开下载链接')),
+          );
+        }
+      }
+    } else {
+      try {
+        final savePath = await FilePicker.platform.saveFile(
+          dialogTitle: '保存文件',
+          fileName: file.name,
+        );
+
+        if (savePath == null) return;
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: const [
+                  Text('正在下载...'),
+                  SizedBox(width: 16),
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  ),
+                ],
+              ),
+              duration: const Duration(days: 1),
+            ),
+          );
+        }
+
+        await _resourceApi.downloadToFile(file.id, savePath);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('下载成功: $savePath')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('下载失败: $e')),
+          );
+        }
+      }
+    }
+  }
+
   void _showEmptyContextMenu(Offset position) {
     final pasteLabel = _clipboard.isNotEmpty ? '粘贴 (已复制${_clipboard.length}个项)' : '粘贴';
     showContextMenu(
@@ -932,12 +993,7 @@ class _ResourceManagementPageState
           ContextMenuItem(
             label: '下载',
             icon: LucideIcons.download,
-            onTap: () {
-              // TODO: 实现下载功能
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('下载功能开发中')),
-              );
-            },
+            onTap: () => _handleDownload(file),
           ),
         ContextMenuItem(
           label: '复制',

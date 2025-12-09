@@ -160,6 +160,20 @@ class ResourceApi {
     return response.data ?? const [];
   }
 
+  /// 下载文件到本地路径 (流式下载)
+  Future<void> downloadToFile(int id, String savePath, {ProgressCallback? onReceiveProgress}) async {
+    await _client.dio.download(
+      '/resources/$id/download',
+      savePath,
+      onReceiveProgress: onReceiveProgress,
+    );
+  }
+
+  /// 获取下载链接 (用于 Web 或外部调用)
+  String getDownloadUrl(int id) {
+    return '${_client.dio.options.baseUrl}/resources/$id/download';
+  }
+
   /// 创建资源
   Future<Resource> create({
     required String name,

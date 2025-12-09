@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/storage/token_store.dart';
 import '../features/auth/presentation/login_page.dart';
 import '../features/channel/presentation/channel_management_page.dart';
+import '../features/dashboard/presentation/dashboard_page.dart';
 import '../features/monitor/presentation/monitor_page.dart';
 import '../features/resource/presentation/resource_management_page.dart';
 import '../shared/widgets/main_layout.dart';
@@ -11,7 +12,7 @@ import '../shared/widgets/main_layout.dart';
 /// 路由配置
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
-    initialLocation: '/monitor',
+    initialLocation: '/dashboard',
     redirect: (context, state) {
       final isLoggedIn = TokenStore.isLoggedIn();
       final isLoginRoute = state.matchedLocation == '/login';
@@ -20,7 +21,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         return '/login';
       }
       if (isLoggedIn && isLoginRoute) {
-        return '/monitor';
+        return '/dashboard';
       }
       return null;
     },
@@ -54,7 +55,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/dashboard',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
-              child: const Scaffold(body: Center(child: Text('Dashboard - 开发中'))),
+              child: const DashboardPage(),
               transitionsBuilder: (context, animation, secondaryAnimation, child) {
                 return FadeTransition(opacity: animation, child: child);
               },
