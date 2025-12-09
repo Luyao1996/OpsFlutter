@@ -1,0 +1,37 @@
+# Root artifacts
+.DS_Store
+Thumbs.db
+
+# Go backend (netbar-ops-api)
+netbar-ops-api/server
+netbar-ops-api/server.exe
+netbar-ops-api/*.out
+netbar-ops-api/*.test
+netbar-ops-api/*.log
+netbar-ops-api/data/*.db
+netbar-ops-api/uploads/
+
+# Node/Vite frontend (netbar-ops-vue)
+netbar-ops-vue/node_modules/
+netbar-ops-vue/dist/
+netbar-ops-vue/.vite/
+netbar-ops-vue/.vite-temp/
+netbar-ops-vue/npm-debug.log*
+netbar-ops-vue/yarn-debug.log*
+netbar-ops-vue/yarn-error.log*
+netbar-ops-vue/pnpm-debug.log*
+netbar-ops-vue/.env.local
+netbar-ops-vue/.env.*
+
+# Flutter client (netbar_ops_flutter)
+netbar_ops_flutter/.dart_tool/
+netbar_ops_flutter/.packages
+netbar_ops_flutter/.flutter-plugins
+netbar_ops_flutter/.flutter-plugins-dependencies
+netbar_ops_flutter/.pub-cache/
+netbar_ops_flutter/build/
+
+# IDE/editor
+.idea/
+.vscode/
+*.iml

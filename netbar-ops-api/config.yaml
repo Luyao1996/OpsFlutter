@@ -1,0 +1,14 @@
+server:
+  port: 8080
+  mode: debug  # debug, release, test
+
+database:
+  main:
+    path: ./data/data.db
+  logs:
+    path: ./data/logs.db
+
+jwt:
+  secret: your-secret-key-change-in-production
+  expire_hours: 24
+

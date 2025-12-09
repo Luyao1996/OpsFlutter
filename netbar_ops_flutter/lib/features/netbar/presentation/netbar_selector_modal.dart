@@ -1,0 +1,721 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lucide_icons/lucide_icons.dart';
+import '../../../core/theme/app_theme.dart';
+import '../data/netbar_api.dart';
+import 'group_picker.dart';
+import 'edit_netbar_modal.dart';
+
+/// 网吧列表 Provider
+final netbarListProvider = FutureProvider.autoDispose<List<Netbar>>((ref) async {
+  final api = NetbarApi();
+  return api.getList();
+});
+
+/// 网吧选择弹窗 - 对应 Vue 的 NetbarSelectorModal.vue
+class NetbarSelectorModal extends ConsumerStatefulWidget {
+  final int? selectedId;
+  final Function(int id, String name, String status)? onSelect;
+  final bool isMobile;
+
+  const NetbarSelectorModal({
+    super.key,
+    this.selectedId,
+    this.onSelect,
+    this.isMobile = false,
+  });
+
+  @override
+  ConsumerState<NetbarSelectorModal> createState() => _NetbarSelectorModalState();
+}
+
+class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
+  String _searchQuery = '';
+  String _selectedGroup = '全部分组';
+  String _sortKey = 'id';
+  bool _sortAsc = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // 监听 Esc 关闭
+    HardwareKeyboard.instance.addHandler(_handleKey);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKey);
+    super.dispose();
+  }
+
+  bool _handleKey(KeyEvent event) {
+    if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape) {
+      Navigator.of(context).pop();
+      return true;
+    }
+    return false;
+  }
+
+  void _handleSelect(Netbar netbar) {
+    widget.onSelect?.call(netbar.id, netbar.name, netbar.status);
+    Navigator.of(context).pop();
+  }
+
+  void _handleEdit(Netbar netbar) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.2),
+      builder: (context) => EditNetbarModal(
+        netbar: netbar,
+        onSaved: () => ref.invalidate(netbarListProvider),
+      ),
+    );
+  }
+
+  List<Netbar> _filterAndSort(List<Netbar> netbars) {
+    var result = netbars.where((n) {
+      if (_selectedGroup != '全部分组' && n.group != _selectedGroup) return false;
+      if (_searchQuery.isNotEmpty) {
+        final q = _searchQuery.toLowerCase();
+        return n.name.toLowerCase().contains(q) ||
+            n.id.toString().contains(q) ||
+            n.code.toLowerCase().contains(q);
+      }
+      return true;
+    }).toList();
+
+    result.sort((a, b) {
+      int cmp = 0;
+      switch (_sortKey) {
+        case 'id':
+          cmp = a.id.compareTo(b.id);
+        case 'name':
+          cmp = a.name.compareTo(b.name);
+        case 'terminalCount':
+          cmp = a.terminalCount.compareTo(b.terminalCount);
+        case 'status':
+          cmp = a.status.compareTo(b.status);
+      }
+      return _sortAsc ? cmp : -cmp;
+    });
+
+    return result;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final netbarsAsync = ref.watch(netbarListProvider);
+    final size = MediaQuery.of(context).size;
+
+    if (widget.isMobile) {
+      return Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(
+          child: Column(
+            children: [
+              _buildHeader(),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: _buildSearchOnly(),
+              ),
+              Expanded(
+                child: _buildMobileList(netbarsAsync),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: size.width * 0.05,
+        vertical: size.height * 0.05,
+      ),
+      child: Container(
+        width: size.width * 0.9,
+        height: size.height * 0.9,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: AppShadows.xl,
+        ),
+        child: Column(
+          children: [
+            _buildHeader(),
+            _buildToolbar(),
+            Expanded(child: _buildContent(netbarsAsync)),
+            _buildFooter(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50.withValues(alpha: 0.5),
+        border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('切换网吧', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
+                if (!widget.isMobile)
+                  Text(
+                    '选择您要管理的网吧终端，或点击编辑按钮修改网吧信息',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                  ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: () => Navigator.of(context).pop(),
+            icon: Icon(LucideIcons.x, size: 20, color: Colors.grey.shade400),
+            hoverColor: Colors.grey.shade100,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildToolbar() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          Expanded(child: _buildSearchField()),
+          const SizedBox(width: 12),
+          GroupPicker(
+            selectedGroup: _selectedGroup,
+            onSelect: (group) => setState(() => _selectedGroup = group),
+            label: '分组',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchOnly() {
+    return _buildSearchField();
+  }
+
+  Widget _buildSearchField() {
+    return Container(
+      height: 44,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF3F4F6),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: TextField(
+        onChanged: (v) => setState(() => _searchQuery = v),
+        decoration: InputDecoration(
+          hintText: '搜索网吧名称...',
+          hintStyle: TextStyle(fontSize: 14, color: Colors.grey.shade400),
+          prefixIcon: Icon(LucideIcons.search, size: 16, color: Colors.grey.shade400),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        ),
+        style: const TextStyle(fontSize: 14),
+      ),
+    );
+  }
+
+  Widget _buildMobileList(AsyncValue<List<Netbar>> netbarsAsync) {
+    return netbarsAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (err, _) => _buildError(err.toString()),
+      data: (netbars) {
+        final filtered = _filterAndSort(netbars);
+        if (filtered.isEmpty) return _buildEmpty();
+        return ListView.separated(
+          padding: EdgeInsets.zero,
+          itemCount: filtered.length,
+          separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey.shade200),
+          itemBuilder: (context, index) {
+            final netbar = filtered[index];
+            final isSelected = netbar.id == widget.selectedId;
+            return ListTile(
+              title: Text(
+                netbar.name,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: isSelected ? AppColors.iosBlue : Colors.black,
+                ),
+              ),
+              onTap: () => _handleSelect(netbar),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildContent(AsyncValue<List<Netbar>> netbarsAsync) {
+    return netbarsAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (err, _) => _buildError(err.toString()),
+      data: (netbars) {
+        final filtered = _filterAndSort(netbars);
+        if (filtered.isEmpty) {
+          return _buildEmpty();
+        }
+        return _buildTable(filtered);
+      },
+    );
+  }
+
+  Widget _buildError(String message) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 64, height: 64,
+            decoration: BoxDecoration(
+              color: Colors.red.shade50,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(LucideIcons.alertTriangle, size: 28, color: Colors.red.shade400),
+          ),
+          const SizedBox(height: 16),
+          Text('加载失败', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Colors.grey.shade700)),
+          const SizedBox(height: 8),
+          Text(message, style: TextStyle(fontSize: 13, color: Colors.grey.shade500)),
+          const SizedBox(height: 16),
+          TextButton.icon(
+            onPressed: () => ref.invalidate(netbarListProvider),
+            icon: const Icon(LucideIcons.refreshCw, size: 16),
+            label: const Text('重新加载'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmpty() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(LucideIcons.search, size: 48, color: Colors.grey.shade200),
+          const SizedBox(height: 16),
+          Text('未找到匹配的网吧', style: TextStyle(fontSize: 14, color: Colors.grey.shade400)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTable(List<Netbar> netbars) {
+    if (widget.isMobile) {
+      return ListView.separated(
+        padding: EdgeInsets.zero,
+        itemCount: netbars.length,
+        separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey.shade200),
+        itemBuilder: (context, index) {
+          final netbar = netbars[index];
+          return ListTile(
+            title: Text(netbar.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            onTap: () => _handleSelect(netbar),
+          );
+        },
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade100),
+        boxShadow: AppShadows.sm,
+      ),
+      child: Column(
+        children: [
+          // 表头
+          _buildTableHeader(),
+          // 列表
+          Expanded(
+            child: ListView.separated(
+              padding: EdgeInsets.zero,
+              itemCount: netbars.length,
+              separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey.shade50),
+              itemBuilder: (context, index) => _buildTableRow(netbars[index]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTableHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50.withValues(alpha: 0.9),
+        border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      child: Row(
+        children: [
+          _buildHeaderCell('网吧名称 / ID', flex: 3, sortKey: 'id'),
+          _buildHeaderCell('终端', flex: 1, sortKey: 'terminalCount'),
+          _buildHeaderCell('状态', flex: 1, sortKey: 'status'),
+          _buildHeaderCell('所属分组', flex: 2),
+          _buildHeaderCell('管理员', flex: 2),
+          _buildHeaderCell('创建时间', flex: 2),
+          _buildHeaderCell('Token', flex: 2),
+          _buildHeaderCell('编辑', flex: 1),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeaderCell(String title, {int flex = 1, String? sortKey}) {
+    final isActive = sortKey != null && _sortKey == sortKey;
+    return Expanded(
+      flex: flex,
+      child: GestureDetector(
+        onTap: sortKey != null ? () {
+          setState(() {
+            if (_sortKey == sortKey) {
+              _sortAsc = !_sortAsc;
+            } else {
+              _sortKey = sortKey;
+              _sortAsc = true;
+            }
+          });
+        } : null,
+        child: MouseRegion(
+          cursor: sortKey != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
+          child: Row(
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: isActive ? AppColors.iosBlue : Colors.grey.shade500,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              if (isActive) ...[
+                const SizedBox(width: 4),
+                Icon(
+                  _sortAsc ? LucideIcons.arrowUp : LucideIcons.arrowDown,
+                  size: 12,
+                  color: AppColors.iosBlue,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTableRow(Netbar netbar) {
+    final isSelected = netbar.id == widget.selectedId;
+    return _HoverableRow(
+      isSelected: isSelected,
+      onTap: () => _handleSelect(netbar),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        child: Row(
+          children: [
+            // 网吧名称 / ID
+            Expanded(
+              flex: 3,
+              child: Row(
+                children: [
+                  Container(
+                    width: 40, height: 40,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        netbar.id.toString(),
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey.shade600),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      netbar.name,
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // 终端数
+            Expanded(
+              flex: 1,
+              child: Row(
+                children: [
+                  Icon(LucideIcons.monitor, size: 14, color: Colors.grey.shade400),
+                  const SizedBox(width: 6),
+                  Text(netbar.terminalCount.toString(), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+            // 状态
+            Expanded(
+              flex: 1,
+              child: Row(
+                children: [
+                  _buildStatusBadge(netbar.status),
+                ],
+              ),
+            ),
+            // 分组
+            Expanded(
+              flex: 2,
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      netbar.group,
+                      style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // 管理员
+            Expanded(
+              flex: 2,
+              child: Row(
+                children: [
+                  Icon(LucideIcons.users, size: 14, color: Colors.grey.shade400),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      netbar.admin,
+                      style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // 创建时间
+            Expanded(
+              flex: 2,
+              child: Row(
+                children: [
+                  Icon(LucideIcons.clock, size: 12, color: Colors.grey.shade400),
+                  const SizedBox(width: 6),
+                  Text(netbar.createTime, style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+                ],
+              ),
+            ),
+            // Token
+            Expanded(
+              flex: 2,
+              child: _buildTokenCell(netbar.code),
+            ),
+            // 编辑按钮
+            Expanded(
+              flex: 1,
+              child: Center(
+                child: _EditButton(onTap: () => _handleEdit(netbar)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusBadge(String status) {
+    final isOnline = status == 'online';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: isOnline ? const Color(0xFFDCFCE7) : Colors.grey.shade100, // green-100
+        borderRadius: BorderRadius.circular(9999), // rounded-full
+        border: Border.all(
+          color: isOnline ? const Color(0xFFBBF7D0) : Colors.grey.shade200, // green-200
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isOnline ? LucideIcons.checkCircle2 : LucideIcons.xCircle,
+            size: 12,
+            color: isOnline ? const Color(0xFF15803D) : Colors.grey.shade500, // green-700
+          ),
+          const SizedBox(width: 6),
+          Text(
+            isOnline ? '在线' : '离线',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: isOnline ? const Color(0xFF15803D) : Colors.grey.shade600, // green-700
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTokenCell(String token) {
+    return GestureDetector(
+      onTap: () {
+        Clipboard.setData(ClipboardData(text: token));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Token 已复制'), duration: Duration(seconds: 1)),
+        );
+      },
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade50,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.transparent),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  token,
+                  style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: Colors.grey.shade500),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(LucideIcons.copy, size: 12, color: Colors.grey.shade400),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFooter() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        border: Border(top: BorderSide(color: Colors.grey.shade100)),
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(20)),
+      ),
+      child: Row(
+        children: [
+          Icon(LucideIcons.edit2, size: 12, color: Colors.grey.shade400),
+          const SizedBox(width: 6),
+          Text('点击编辑按钮可修改网吧信息', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+          const Spacer(),
+          Text('Esc 关闭', style: TextStyle(fontSize: 12, color: Colors.grey.shade400)),
+        ],
+      ),
+    );
+  }
+}
+
+/// 可悬停的行
+class _HoverableRow extends StatefulWidget {
+  final bool isSelected;
+  final VoidCallback onTap;
+  final Widget child;
+
+  const _HoverableRow({
+    required this.isSelected,
+    required this.onTap,
+    required this.child,
+  });
+
+  @override
+  State<_HoverableRow> createState() => _HoverableRowState();
+}
+
+class _HoverableRowState extends State<_HoverableRow> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          color: widget.isSelected
+              ? AppColors.iosBlue.withValues(alpha: 0.1)
+              : _isHovered
+                  ? Colors.blue.shade50.withValues(alpha: 0.5)
+                  : Colors.transparent,
+          child: widget.child,
+        ),
+      ),
+    );
+  }
+}
+
+/// 编辑按钮
+class _EditButton extends StatefulWidget {
+  final VoidCallback onTap;
+
+  const _EditButton({required this.onTap});
+
+  @override
+  State<_EditButton> createState() => _EditButtonState();
+}
+
+class _EditButtonState extends State<_EditButton> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: _isHovered ? AppColors.iosBlue : const Color(0xFFEFF6FF), // blue-50
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: _isHovered ? Colors.transparent : const Color(0xFFDBEAFE), // blue-100
+            ),
+            boxShadow: AppShadows.sm,
+          ),
+          child: Icon(
+            LucideIcons.edit2,
+            size: 16,
+            color: _isHovered ? Colors.white : AppColors.iosBlue,
+          ),
+        ),
+      ),
+    );
+  }
+}
