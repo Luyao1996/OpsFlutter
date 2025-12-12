@@ -3,6 +3,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../data/startup_item_api.dart';
 import '../../../netbar/data/area_api.dart';
+import 'executable_path_picker_field.dart';
 
 /// 释放文件配置（与 Web ConfigFile 对应）
 class ConfigFileInput {
@@ -336,11 +337,10 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                   const SizedBox(height: 16),
                   _buildLabel('执行程序路径/文件名', required: true),
                   const SizedBox(height: 8),
-                  TextFormField(
+                  ExecutablePathPickerField(
                     controller: _nameController,
-                    validator: (v) => v == null || v.isEmpty ? '请输入执行程序路径' : null,
-                    decoration: _inputDecoration('例如: steam.exe 或 C:\\Games\\Pubg.exe'),
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                    validator: (v) => v == null || v.isEmpty ? '请选择执行程序路径' : null,
+                    decoration: _inputDecoration('请选择 exe 文件'),
                   ),
                   const SizedBox(height: 16),
                   _buildLabel('程序运行目录 (可选)'),

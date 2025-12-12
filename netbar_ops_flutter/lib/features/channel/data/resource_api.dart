@@ -18,6 +18,7 @@ enum ResourceZone {
 class Resource {
   final int id;
   final String name;
+  final String path;
   final String type;
   final bool isDirectory;
   final int? parentId;
@@ -32,6 +33,7 @@ class Resource {
   Resource({
     required this.id,
     required this.name,
+    required this.path,
     required this.type,
     required this.isDirectory,
     this.parentId,
@@ -48,6 +50,7 @@ class Resource {
     return Resource(
       id: json['id'] ?? 0,
       name: json['name'] ?? '',
+      path: json['path'] ?? '',
       type: json['type'] ?? 'unknown',
       isDirectory: json['is_directory'] ?? false,
       parentId: json['parent_id'],

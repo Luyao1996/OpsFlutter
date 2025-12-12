@@ -6,8 +6,10 @@ import 'package:file_picker/file_picker.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/providers/permission_provider.dart';
+import '../../../shared/utils/resource_path_display.dart';
 import '../data/channel_api.dart';
 import '../data/channel_models.dart';
+import 'widgets/add_startup_item_modal.dart';
 
 // Providers for state
 final currentZoneProvider = StateProvider<String>((ref) => 'PUBLIC');
@@ -76,6 +78,36 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     return allowed;
   }
 
+  bool _isExecutableFile(ChannelFile file) {
+    if (file.isDirectory) return false;
+    final lower = file.name.toLowerCase();
+    return lower.endsWith('.exe');
+  }
+
+  void _showAddStartupFromFile(ChannelFile file) {
+    if (!_canEdit()) return;
+    final auth = ref.read(authNotifierProvider);
+    final isAdmin = (auth.user?.role.toLowerCase() ?? '').contains('admin');
+    final zone = file.zone;
+    int? netbarId = ref.read(currentNetbarProvider).id;
+    if (zone == 'HEADQUARTERS' || zone == 'BRANCH') netbarId = null;
+
+    showDialog(
+      context: context,
+      builder: (context) => AddStartupItemModal(
+        zone: zone,
+        netbarId: netbarId,
+        resourceId: file.id,
+        defaultPath: file.path.isNotEmpty ? file.path : file.name,
+        defaultWorkingDir: deriveDirectoryFromPath(file.path),
+        isAdmin: isAdmin,
+        onSuccess: () {
+          ref.invalidate(channelStartupItemsProvider);
+        },
+      ),
+    );
+  }
+
   Future<void> _uploadFile() async {
     if (!_canEdit()) return;
     final result = await FilePicker.platform.pickFiles(allowMultiple: true);
@@ -111,6 +143,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
 
   void _showContextMenu(TapDownDetails details, dynamic item) {
     final isFile = item is ChannelFile;
+    final canEdit = _canEdit(showWarning: false);
     final position = RelativeRect.fromLTRB(
       details.globalPosition.dx,
       details.globalPosition.dy,
@@ -125,6 +158,19 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
         if (isFile) ...[
           const PopupMenuItem(value: 'open', child: Row(children: [Icon(LucideIcons.folderOpen, size: 16), SizedBox(width: 8), Text('打开')])),
           const PopupMenuItem(value: 'rename', child: Row(children: [Icon(LucideIcons.edit3, size: 16), SizedBox(width: 8), Text('重命名')])),
+          if (canEdit && _isExecutableFile(item as ChannelFile)) ...[
+            const PopupMenuDivider(),
+            const PopupMenuItem(
+              value: 'add_to_startup',
+              child: Row(
+                children: [
+                  Icon(LucideIcons.zap, size: 16, color: Color(0xFF22C55E)),
+                  SizedBox(width: 8),
+                  Text('添加到启动项', style: TextStyle(color: Color(0xFF22C55E))),
+                ],
+              ),
+            ),
+          ],
         ] else ...[
           const PopupMenuItem(value: 'edit', child: Row(children: [Icon(LucideIcons.settings, size: 16), SizedBox(width: 8), Text('编辑')])),
           const PopupMenuItem(value: 'toggle', child: Row(children: [Icon(LucideIcons.power, size: 16), SizedBox(width: 8), Text('切换状态')])),
@@ -134,6 +180,8 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     ).then((value) {
       if (value == 'delete') {
         _deleteItem(item);
+      } else if (value == 'add_to_startup' && isFile) {
+        _showAddStartupFromFile(item as ChannelFile);
       } else if (value == 'open' && isFile) {
         if (item.isDirectory) {
           setState(() {
@@ -601,7 +649,16 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
                           ),
                         ],
                       ),
-                      Text(item.path, style: TextStyle(color: Colors.grey.shade500, fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Text(
+                        formatPathWithZone(
+                          item.path,
+                          detectZoneFromPath(item.path) ?? item.zone,
+                          maxLength: 36,
+                        ),
+                        style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ],
                   ),
                 ),

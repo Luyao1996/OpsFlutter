@@ -28,6 +28,7 @@ import '../../channel/presentation/widgets/add_startup_item_modal.dart';
 import '../../channel/presentation/widgets/context_menu.dart';
 import '../../channel/presentation/widgets/file_editor_modal.dart';
 import '../../channel/presentation/widgets/file_icon.dart';
+import '../../../shared/utils/resource_path_display.dart';
 import '../../channel/presentation/widgets/disable_startup_modal.dart';
 import '../../channel/presentation/widgets/startup_config_modal.dart';
 import '../../channel/presentation/widgets/upload_modal.dart';
@@ -1109,6 +1110,9 @@ class _ResourceManagementPageState
   }
 
   void _showFileContextMenu(Offset position, Resource file) {
+    final isExe = !file.isDirectory &&
+        file.name.toLowerCase().endsWith('.exe') &&
+        _canEdit;
     showContextMenu(
       context: context,
       position: position,
@@ -1129,6 +1133,14 @@ class _ResourceManagementPageState
             label: '下载',
             icon: LucideIcons.download,
             onTap: () => _handleDownload(file),
+          ),
+        if (isExe)
+          ContextMenuItem(
+            label: '添加到启动项',
+            icon: LucideIcons.zap,
+            color: const Color(0xFF22C55E),
+            onTap: () => _showAddStartupFromFile(file),
+            divider: true,
           ),
         if (_canEdit) ...[
           ContextMenuItem(
@@ -1166,6 +1178,23 @@ class _ResourceManagementPageState
           ),
         ],
       ],
+    );
+  }
+
+  void _showAddStartupFromFile(Resource file) {
+    if (!_ensureCanEdit('添加到启动项')) return;
+    showDialog(
+      context: context,
+      builder: (context) => AddStartupItemModal(
+        zone: _getZoneString(),
+        netbarId: _getNetbarId(),
+        resourceId: file.id,
+        defaultPath: file.path.isNotEmpty ? file.path : file.name,
+        defaultWorkingDir: deriveDirectoryFromPath(file.path),
+        isAdmin: _isAdmin,
+        areas: _areas,
+        onSuccess: _loadData,
+      ),
     );
   }
 
@@ -2686,7 +2715,12 @@ class _ResourceStartupCardState extends State<_ResourceStartupCard> {
                           ],
                         ),
                         Text(
-                          widget.item.path,
+                          formatPathWithZone(
+                            widget.item.path,
+                            detectZoneFromPath(widget.item.path) ??
+                                widget.item.zone,
+                            maxLength: 36,
+                          ),
                           style: TextStyle(
                               color: Colors.grey.shade500, fontSize: 12),
                           maxLines: 1,

@@ -3,6 +3,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../data/startup_item_api.dart';
 import '../../../netbar/data/area_api.dart';
+import 'executable_path_picker_field.dart';
 
 /// 释放文件配置（与 Web ConfigFile 对应）
 class ConfigFile {
@@ -59,6 +60,7 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
   final _workingDirController = TextEditingController();
   final _argsController = TextEditingController();
   final _delayController = TextEditingController(text: '0');
+  int? _selectedExeResourceId;
 
   // 基础设置（与 Web config 对应）
   bool _enabled = true;
@@ -85,6 +87,7 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
   @override
   void initState() {
     super.initState();
+    _selectedExeResourceId = widget.resourceId;
     if (widget.defaultPath != null) {
       _nameController.text = widget.defaultPath!;
     }
@@ -116,7 +119,7 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
           .toList();
 
       await _api.create(
-        resourceId: widget.resourceId,
+        resourceId: _selectedExeResourceId ?? widget.resourceId,
         netbarId: widget.netbarId,
         name: _nameController.text.trim(),
         displayName: _displayNameController.text.trim().isEmpty ? null : _displayNameController.text.trim(),
@@ -273,14 +276,14 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
                   const SizedBox(height: 16),
                   _buildLabel('执行程序路径/文件名', required: true),
                   const SizedBox(height: 8),
-                  TextFormField(
+                  ExecutablePathPickerField(
                     controller: _nameController,
-                    validator: (v) => v == null || v.isEmpty ? '请输入执行程序路径' : null,
-                    decoration: _inputDecoration('例如: steam.exe 或 C:\\Games\\Pubg.exe'),
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                    validator: (v) => v == null || v.isEmpty ? '请选择执行程序路径' : null,
+                    decoration: _inputDecoration('请选择 exe 文件'),
+                    onSelected: (r) => setState(() => _selectedExeResourceId = r.id),
                   ),
                   const SizedBox(height: 4),
-                  Text('请输入完整的可执行文件名或绝对路径', style: TextStyle(fontSize: 10, color: Colors.grey.shade400)),
+                  Text('从资源管理中选择可执行文件', style: TextStyle(fontSize: 10, color: Colors.grey.shade400)),
                   const SizedBox(height: 16),
                   _buildLabel('程序运行目录 (可选)'),
                   const SizedBox(height: 8),
@@ -831,4 +834,3 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
     );
   }
 }
-
