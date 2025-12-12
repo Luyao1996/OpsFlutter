@@ -124,6 +124,7 @@ func Setup(mode string) *gin.Engine {
 			auth.PUT("/resources/:id", handler.UpdateResource)
 			auth.DELETE("/resources/:id", handler.DeleteResource)
 			auth.POST("/resources/upload", handler.UploadFile)
+			auth.POST("/resources/upload-image", handler.UploadDesktopImage)
 			auth.GET("/resources/:id/download", handler.DownloadFile)
 			auth.GET("/resources/:id/download-dir", handler.DownloadDirectory)
 			auth.POST("/resources/:id/copy", handler.CopyResource)

@@ -26,11 +26,13 @@ import '../../data/resource_api.dart';
 class FileEditorModal extends StatefulWidget {
   final Resource file;
   final VoidCallback onSuccess;
+  final bool readOnly;
 
   const FileEditorModal({
     super.key,
     required this.file,
     required this.onSuccess,
+    this.readOnly = false,
   });
 
   @override
@@ -53,7 +55,9 @@ class _FileEditorModalState extends State<FileEditorModal> {
   bool _isFullscreen = false;
   bool _forceLoad = false;
   bool _isPreview = false;
+  bool _isTooLarge = false;
   String _originalContent = '';
+  String _previewText = '';
 
   @override
   void initState() {
@@ -115,19 +119,35 @@ class _FileEditorModalState extends State<FileEditorModal> {
     setState(() {
       _loading = true;
       _error = null;
+      _isTooLarge = false;
     });
     try {
-      final raw = await _fetchContentWithFallback(widget.file.id);
-      final shouldPreview = widget.file.size > _warnLimit && !_forceLoad;
+      // 超过 200KB 的文件不做在线预览/编辑，避免卡顿
+      if (!_forceLoad) {
+        final knownSize = widget.file.size;
+        if (knownSize > _previewLimit) {
+          _isTooLarge = true;
+          _error = '文件过大，请下载后查看';
+          return;
+        }
 
-      if (shouldPreview && raw.length > _previewLimit) {
-        _isPreview = true;
-        final preview = await _fetchPreviewContent(widget.file.id);
-        _initCodeController(
-          '$preview\n\n...[Previewing first 200KB only. Click "Force edit" to load all.]',
+        // size 不可靠时，用流式限量读取判断是否超限
+        final bytes = await _api.downloadBytesLimited(
+          widget.file.id,
+          _previewLimit + 1,
         );
-        _error = '文件较大，仅预览前 200KB，强制编辑可能卡顿。';
+        if (bytes.length > _previewLimit) {
+          _isTooLarge = true;
+          _error = '文件过大，请下载后查看';
+          return;
+        }
+
+        final text = utf8.decode(bytes, allowMalformed: true);
+        _isPreview = false;
+        _initCodeController(text);
       } else {
+        // 强制加载（仅用于小文件重载）
+        final raw = await _fetchContentWithFallback(widget.file.id);
         _isPreview = false;
         _initCodeController(raw);
       }
@@ -151,10 +171,7 @@ class _FileEditorModalState extends State<FileEditorModal> {
 
   Future<String> _fetchPreviewContent(int fileId) async {
     final bytes = await _api
-        .downloadBytesPartial(
-          fileId,
-          endExclusive: _previewLimit + 2048,
-        )
+        .downloadBytesLimited(fileId, _previewLimit + 2048)
         .timeout(const Duration(seconds: 8));
     final limited = bytes.length > _previewLimit ? bytes.sublist(0, _previewLimit) : bytes;
     return utf8.decode(limited, allowMalformed: true);
@@ -270,7 +287,10 @@ class _FileEditorModalState extends State<FileEditorModal> {
                   ],
                 ),
                 const SizedBox(height: 2),
-                Text('编辑文件内容', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                Text(
+                  widget.readOnly ? '查看文件内容' : '编辑文件内容',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                ),
               ],
             ),
           ),
@@ -299,6 +319,84 @@ class _FileEditorModalState extends State<FileEditorModal> {
   Widget _buildEditor() {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_isTooLarge) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(LucideIcons.alertTriangle,
+                size: 48, color: Colors.orange.shade400),
+            const SizedBox(height: 12),
+            const Text(
+              '文件过大，请下载后查看',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              widget.file.name,
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_isPreview) {
+      return Column(
+        children: [
+          if (_error != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              color: Colors.orange.shade50,
+              child: Row(
+                children: [
+                  Icon(LucideIcons.alertTriangle,
+                      size: 16, color: Colors.orange.shade700),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _error!,
+                      style: TextStyle(
+                          fontSize: 12, color: Colors.orange.shade800),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _forceLoad = true;
+                        _error = null;
+                      });
+                      _loadContent();
+                    },
+                    icon: const Icon(LucideIcons.edit3, size: 14),
+                    label: const Text('强制编辑'),
+                  ),
+                ],
+              ),
+            ),
+          Expanded(
+            child: Container(
+              margin: EdgeInsets.zero,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: SelectableText(
+                  _previewText,
+                  style:
+                      const TextStyle(fontSize: 13, fontFamily: 'Consolas'),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
     }
 
     if (_error != null && _collectDocumentText().trim().isEmpty) {
@@ -330,6 +428,25 @@ class _FileEditorModalState extends State<FileEditorModal> {
               ],
             ),
           ],
+        ),
+      );
+    }
+
+    if (widget.readOnly) {
+      final text = _collectDocumentText();
+      return Container(
+        margin: EdgeInsets.zero,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: Colors.grey.shade300),
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(12),
+          child: SelectableText(
+            text,
+            style: const TextStyle(fontSize: 13, fontFamily: 'Consolas'),
+          ),
         ),
       );
     }
@@ -399,22 +516,26 @@ class _FileEditorModalState extends State<FileEditorModal> {
               if (!mounted) return;
               if (shouldClose) Navigator.of(context).pop();
             },
-            child: Text('取消', style: TextStyle(color: Colors.grey.shade600)),
-          ),
-          const SizedBox(width: 12),
-          ElevatedButton.icon(
-            onPressed: _saving || !_hasChanges || _isPreview ? null : _handleSave,
-            icon: _saving
-                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : const Icon(LucideIcons.save, size: 16),
-            label: const Text('保存'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.iosBlue,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            child: Text(
+              widget.readOnly ? '关闭' : '取消',
+              style: TextStyle(color: Colors.grey.shade600),
             ),
           ),
+          const SizedBox(width: 12),
+          if (!widget.readOnly && !_isPreview && !_isTooLarge)
+            ElevatedButton.icon(
+              onPressed: _saving || !_hasChanges || _isPreview ? null : _handleSave,
+              icon: _saving
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(LucideIcons.save, size: 16),
+              label: const Text('保存'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.iosBlue,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
         ],
       ),
     );

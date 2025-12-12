@@ -9,17 +9,23 @@ import 'widgets/stat_card.dart';
 import 'widgets/trend_chart.dart';
 import 'widgets/quick_actions.dart';
 
-final dashboardStatsProvider = FutureProvider.autoDispose((ref) async {
+final dashboardRangeProvider = StateProvider.autoDispose<String>((ref) => '最近7天');
+
+final dashboardStatsProvider = FutureProvider.autoDispose<DashboardStats>((ref) async {
   final netbar = ref.watch(currentNetbarProvider);
   final api = ref.read(dashboardApiProvider);
+  return api.getStats(netbarId: netbar.id);
+});
+
+final dashboardTrendProvider = FutureProvider.autoDispose<List<TrendDataPoint>>((ref) async {
+  final netbar = ref.watch(currentNetbarProvider);
+  final api = ref.read(dashboardApiProvider);
+  final range = ref.watch(dashboardRangeProvider);
+
+  // Map display string to API param
+  final rangeParam = range == '最近30天' ? '30d' : '7d';
   
-  // Use Future.wait to fetch both stats and trend data in parallel
-  final results = await Future.wait<dynamic>([
-    api.getStats(netbarId: netbar.id),
-    api.getTrendData(netbarId: netbar.id),
-  ]);
-  
-  return (stats: results[0] as DashboardStats, trend: results[1] as List<TrendDataPoint>);
+  return api.getTrendData(netbarId: netbar.id, range: rangeParam);
 });
 
 class DashboardPage extends ConsumerWidget {
@@ -27,11 +33,11 @@ class DashboardPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final dashboardData = ref.watch(dashboardStatsProvider);
+    final dashboardStats = ref.watch(dashboardStatsProvider);
 
     return Scaffold(
       backgroundColor: AppColors.iosBg,
-      body: dashboardData.when(
+      body: dashboardStats.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (err, stack) => Center(
           child: Column(
@@ -49,7 +55,7 @@ class DashboardPage extends ConsumerWidget {
             ],
           ),
         ),
-        data: (data) => LayoutBuilder(
+        data: (DashboardStats stats) => LayoutBuilder(
           builder: (context, constraints) {
             // Padding is 32 on each side, so available width for content is maxWidth - 64
             final width = constraints.maxWidth - 64; 
@@ -98,14 +104,14 @@ class DashboardPage extends ConsumerWidget {
                     spacing: gap,
                     runSpacing: gap,
                     children: [
-                      _buildStatItem(itemWidth, '总网吧数', data.stats.totalNetbars.toString(), 
-                          '${data.stats.onlineNetbars} 个在线 / ${data.stats.totalNetbars - data.stats.onlineNetbars} 个离线',
+                      _buildStatItem(itemWidth, '总网吧数', stats.totalNetbars.toString(), 
+                          '${stats.onlineNetbars} 个在线 / ${stats.totalNetbars - stats.onlineNetbars} 个离线',
                           LucideIcons.server, Colors.blue, null),
-                      _buildStatItem(itemWidth, '终端总数', data.stats.totalDesktops.toString(), null,
+                      _buildStatItem(itemWidth, '终端总数', stats.totalDesktops.toString(), null,
                           LucideIcons.monitor, Colors.indigo, 2.4),
-                      _buildStatItem(itemWidth, '在线终端', data.stats.onlineDesktops.toString(), null,
+                      _buildStatItem(itemWidth, '在线终端', stats.onlineDesktops.toString(), null,
                           LucideIcons.activity, Colors.green, 12.5),
-                      _buildStatItem(itemWidth, '活跃通道', '${data.stats.activeChannels}/${data.stats.totalChannels}', null,
+                      _buildStatItem(itemWidth, '活跃通道', '${stats.activeChannels}/${stats.totalChannels}', null,
                           LucideIcons.wifi, Colors.orange, null),
                     ],
                   ),
@@ -119,7 +125,7 @@ class DashboardPage extends ConsumerWidget {
                       children: [
                         SizedBox(
                           width: itemWidth * 3 + gap * 2,
-                          child: TrendChart(data: data.trend),
+                          child: const TrendChart(),
                         ),
                         const SizedBox(width: gap),
                         SizedBox(
@@ -131,7 +137,7 @@ class DashboardPage extends ConsumerWidget {
                   else
                     Column(
                       children: [
-                        TrendChart(data: data.trend),
+                        const TrendChart(),
                         const SizedBox(height: 24),
                         const QuickActions(),
                       ],

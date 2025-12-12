@@ -84,6 +84,107 @@ class Terminal {
   bool get isKeyDevice => ['server', 'console', 'cashier'].contains(type);
 }
 
+class TerminalProcess {
+  final String name;
+  final int pid;
+  final double cpu;
+  final double mem; // MB
+  final String user;
+
+  TerminalProcess({
+    required this.name,
+    required this.pid,
+    required this.cpu,
+    required this.mem,
+    required this.user,
+  });
+
+  factory TerminalProcess.fromJson(Map<String, dynamic> json) {
+    return TerminalProcess(
+      name: json['name'] ?? '',
+      pid: json['pid'] ?? 0,
+      cpu: (json['cpu'] ?? 0).toDouble(),
+      mem: (json['mem'] ?? 0).toDouble(),
+      user: json['user'] ?? '',
+    );
+  }
+}
+
+class TerminalFile {
+  final String name;
+  final String path;
+  final bool isDirectory;
+  final int size;
+  final String updatedAt;
+
+  TerminalFile({
+    required this.name,
+    required this.path,
+    required this.isDirectory,
+    required this.size,
+    required this.updatedAt,
+  });
+
+  factory TerminalFile.fromJson(Map<String, dynamic> json) {
+    return TerminalFile(
+      name: json['name'] ?? '',
+      path: json['path'] ?? '',
+      isDirectory: json['is_directory'] ?? false,
+      size: json['size'] ?? 0,
+      updatedAt: json['updated_at'] ?? '',
+    );
+  }
+}
+
+class TerminalChatMessage {
+  final String content;
+  final String sender; // 'admin' or 'user'
+  final String time;
+
+  TerminalChatMessage({
+    required this.content,
+    required this.sender,
+    required this.time,
+  });
+
+  factory TerminalChatMessage.fromJson(Map<String, dynamic> json) {
+    return TerminalChatMessage(
+      content: json['content'] ?? '',
+      sender: json['sender'] ?? 'user',
+      time: json['time'] ?? '',
+    );
+  }
+}
+
+class TerminalLog {
+  final String level;
+  final String time;
+  final String source;
+  final int eventId;
+  final String category;
+  final String message;
+
+  TerminalLog({
+    required this.level,
+    required this.time,
+    required this.source,
+    required this.eventId,
+    required this.category,
+    required this.message,
+  });
+
+  factory TerminalLog.fromJson(Map<String, dynamic> json) {
+    return TerminalLog(
+      level: json['level'] ?? 'Info',
+      time: json['time'] ?? '',
+      source: json['source'] ?? '',
+      eventId: json['event_id'] ?? 0,
+      category: json['category'] ?? 'None',
+      message: json['message'] ?? '',
+    );
+  }
+}
+
 /// Terminal API 服务
 class TerminalApi {
   final ApiClient _client = ApiClient.instance;
@@ -116,5 +217,72 @@ class TerminalApi {
   Future<void> remote(int id, String action) async {
     await _client.post('/terminals/$id/remote', data: {'action': action});
   }
-}
 
+  /// 获取终端心跳/实时状态
+  Future<Terminal> getHeartbeat(int id) async {
+    final res = await _client.get('/terminals/$id/heartbeat');
+    final data = res.data is Map<String, dynamic> ? res.data as Map<String, dynamic> : <String, dynamic>{};
+    // 将心跳数据合并到 Terminal 结构
+    final merged = {
+      'id': id,
+      ...data,
+    };
+    return Terminal.fromJson(merged);
+  }
+
+  /// 获取进程列表
+  Future<List<TerminalProcess>> getProcesses(int id) async {
+    final response = await _client.get('/terminals/$id/processes');
+    final list = response.data as List? ?? [];
+    return list.map((e) => TerminalProcess.fromJson(e)).toList();
+  }
+
+  /// 结束进程
+  Future<void> killProcess(int id, int pid) async {
+    await _client.post('/terminals/$id/processes/$pid/kill');
+  }
+
+  /// 获取文件列表
+  Future<List<TerminalFile>> getFiles(int id, String path) async {
+    final response = await _client.get('/terminals/$id/files', queryParameters: {'path': path});
+    final list = response.data as List? ?? [];
+    return list.map((e) => TerminalFile.fromJson(e)).toList();
+  }
+
+  /// 获取硬件信息 (返回 Map，结构较灵活)
+  Future<List<Map<String, dynamic>>> getHardwareInfo(int id) async {
+    final response = await _client.get('/terminals/$id/hardware');
+    final list = response.data as List? ?? [];
+    return list.map((e) => e as Map<String, dynamic>).toList();
+  }
+
+  /// 获取聊天记录
+  Future<List<TerminalChatMessage>> getChatMessages(int id) async {
+    final response = await _client.get('/terminals/$id/chat');
+    final list = response.data as List? ?? [];
+    return list.map((e) => TerminalChatMessage.fromJson(e)).toList();
+  }
+
+  /// 发送聊天消息
+  Future<void> sendChatMessage(int id, String content) async {
+    await _client.post('/terminals/$id/chat', data: {'content': content});
+  }
+
+  /// 获取终端日志
+  Future<List<TerminalLog>> getLogs(int id) async {
+    final response = await _client.get('/terminals/$id/logs');
+    final list = response.data as List? ?? [];
+    return list.map((e) => TerminalLog.fromJson(e)).toList();
+  }
+
+  /// 执行终端命令
+  Future<String> executeCommand(int id, String command) async {
+    final response = await _client.post('/terminals/$id/command', data: {'command': command});
+    return response.data['output'] ?? '';
+  }
+
+  /// 远程唤醒 (WOL)
+  Future<void> wakeOnLan(List<int> terminalIds) async {
+    await _client.post('/terminals/wake', data: {'ids': terminalIds});
+  }
+}

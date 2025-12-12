@@ -130,7 +130,12 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     ...tabsState.tabs.map((tab) => Flexible(
-                      child: _buildTab(tab, tabsState.activeTabId, flexible: true),
+                      child: _buildTab(
+                        tab,
+                        tabsState.activeTabId,
+                        flexible: true,
+                        canClose: tabsState.tabs.length > 1,
+                      ),
                     )),
                     _buildAddButton(),
                   ],
@@ -144,7 +149,12 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    ...tabsState.tabs.map((tab) => _buildTab(tab, tabsState.activeTabId, flexible: false)),
+                    ...tabsState.tabs.map((tab) => _buildTab(
+                      tab,
+                      tabsState.activeTabId,
+                      flexible: false,
+                      canClose: tabsState.tabs.length > 1,
+                    )),
                     _buildAddButton(),
                   ],
                 ),
@@ -165,7 +175,7 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
     );
   }
 
-  Widget _buildTab(OpenedNetbarTab tab, int? activeTabId, {bool flexible = false}) {
+  Widget _buildTab(OpenedNetbarTab tab, int? activeTabId, {bool flexible = false, required bool canClose}) {
     final isActive = tab.id == activeTabId;
 
     return _HoverableTab(
@@ -174,6 +184,7 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
       onClose: () => ref.read(netbarTabsProvider.notifier).closeTab(tab.id),
       tab: tab,
       flexible: flexible,
+      canClose: canClose,
     );
   }
 
@@ -238,6 +249,7 @@ class _HoverableTab extends StatefulWidget {
   final VoidCallback onClose;
   final OpenedNetbarTab tab;
   final bool flexible;
+  final bool canClose;
 
   const _HoverableTab({
     required this.isActive,
@@ -245,6 +257,7 @@ class _HoverableTab extends StatefulWidget {
     required this.onClose,
     required this.tab,
     this.flexible = false,
+    this.canClose = true,
   });
 
   @override
@@ -261,6 +274,8 @@ class _HoverableTabState extends State<_HoverableTab> {
   @override
   Widget build(BuildContext context) {
     final isActive = widget.isActive;
+    final canClose = widget.canClose;
+    final closeHovered = canClose && _isCloseHovered;
 
     // 计算背景色
     Color bgColor;
@@ -328,17 +343,17 @@ class _HoverableTabState extends State<_HoverableTab> {
               const SizedBox(width: 4),
               // 关闭按钮
               MouseRegion(
-                cursor: SystemMouseCursors.click,
-                onEnter: (_) => setState(() => _isCloseHovered = true),
-                onExit: (_) => setState(() => _isCloseHovered = false),
+                cursor: canClose ? SystemMouseCursors.click : SystemMouseCursors.basic,
+                onEnter: canClose ? (_) => setState(() => _isCloseHovered = true) : null,
+                onExit: canClose ? (_) => setState(() => _isCloseHovered = false) : null,
                 child: GestureDetector(
-                  onTap: widget.onClose,
+                  onTap: canClose ? widget.onClose : null,
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 150),
                     width: 16,
                     height: 16,
                     decoration: BoxDecoration(
-                      color: _isCloseHovered
+                      color: closeHovered
                           ? (isActive ? Colors.white.withValues(alpha: 0.2) : Colors.grey.shade300)
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(4),
@@ -346,9 +361,11 @@ class _HoverableTabState extends State<_HoverableTab> {
                     child: Icon(
                       LucideIcons.x,
                       size: 12,
-                      color: isActive
-                          ? Colors.white.withValues(alpha: _isCloseHovered ? 1.0 : 0.8)
-                          : (_isCloseHovered ? Colors.grey.shade700 : Colors.grey.shade400),
+                      color: !canClose
+                          ? Colors.grey.shade400
+                          : isActive
+                              ? Colors.white.withValues(alpha: closeHovered ? 1.0 : 0.8)
+                              : (closeHovered ? Colors.grey.shade700 : Colors.grey.shade400),
                     ),
                   ),
                 ),
@@ -405,4 +422,3 @@ class _HoverableAddButtonState extends State<_HoverableAddButton> {
     );
   }
 }
-

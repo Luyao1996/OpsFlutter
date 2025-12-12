@@ -1,5 +1,6 @@
 import 'dart:convert';
 import '../../../core/network/api_client.dart';
+import 'startup_monitor_models.dart';
 
 /// IP范围模型（与 Web IpRange 对应）
 class IpRange {
@@ -431,3 +432,16 @@ class StartupItemApi {
   }
 }
 
+/// 启动项监控 API（用于通道监控页）
+class StartupItemMonitorApi {
+  final ApiClient _client = ApiClient.instance;
+
+  Future<List<NetbarMonitorData>> getMonitor({int? netbarId}) async {
+    final params = <String, dynamic>{};
+    if (netbarId != null) params['netbar_id'] = netbarId;
+
+    final response = await _client.get('/startup-items/monitor', queryParameters: params);
+    final list = response.data as List? ?? [];
+    return list.map((e) => NetbarMonitorData.fromJson(e as Map<String, dynamic>)).toList();
+  }
+}

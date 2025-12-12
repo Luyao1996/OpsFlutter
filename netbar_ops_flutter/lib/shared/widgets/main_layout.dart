@@ -3,11 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/storage/token_store.dart';
 import '../providers/app_providers.dart';
 import '../providers/netbar_tabs_provider.dart';
 import '../../features/netbar/presentation/netbar_selector_modal.dart';
+import '../../features/netbar/data/netbar_api.dart';
 import 'netbar_tab_bar.dart';
 import 'upload_queue_overlay.dart';
+import '../../features/user/presentation/user_profile_dialog.dart';
 
 /// 主布局 - 对应 Vue 的 ClientMainLayout
 class MainLayout extends ConsumerStatefulWidget {
@@ -23,6 +26,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
   bool _isSystemMenuOpen = false;
   bool _isOpsMenuOpen = false;
   bool _isProfileOpen = false;
+  bool _tabsInitialized = false;
 
   @override
   void initState() {
@@ -30,6 +34,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     // 加载用户信息和统计
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(authNotifierProvider.notifier).loadCurrentUser();
+      _initializeNetbarTabs();
     });
   }
 
@@ -47,24 +52,12 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
 
     return Scaffold(
       backgroundColor: AppColors.iosBg,
-      body: Stack(
+      body: Column(
         children: [
-          Column(
-            children: [
-              // 顶栏
-              _buildHeader(authState, isNarrow),
-              // 主内容
-              Expanded(child: widget.child),
-            ],
-          ),
-          // 状态Pills浮动在右上角内容区域
-          if (!isNarrow)
-            Positioned(
-              top: 56 + 8, // header高度 + 间距
-              right: 24,
-              child: _buildStatusPills(stats),
-            ),
-          const UploadQueueOverlay(),
+          // 顶栏
+          _buildHeader(authState, isNarrow, stats), // Pass stats to header
+          // 主内容
+          Expanded(child: widget.child),
         ],
       ),
     );
@@ -84,6 +77,41 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
           );
         });
       }
+    }
+  }
+
+  Future<void> _initializeNetbarTabs() async {
+    if (_tabsInitialized) return;
+    _tabsInitialized = true;
+
+    final tabsState = ref.read(netbarTabsProvider);
+    if (tabsState.tabs.isNotEmpty) {
+      // 如果有历史标签但没有激活项，默认选中最后一个
+      if (tabsState.activeTabId == null && tabsState.tabs.isNotEmpty) {
+        await ref.read(netbarTabsProvider.notifier).switchToTab(tabsState.tabs.last.id);
+      }
+      return;
+    }
+
+    final netbarApi = NetbarApi();
+    try {
+      final netbars = await netbarApi.getList();
+      if (!mounted || netbars.isEmpty) return;
+
+      final target = netbars.first;
+
+      await ref.read(netbarTabsProvider.notifier).openTab(
+            target.id,
+            target.name,
+            target.status,
+          );
+      await ref.read(currentNetbarProvider.notifier).setNetbar(
+            target.id,
+            target.name,
+            target.status,
+          );
+    } catch (_) {
+      // 网络或数据错误时保持现状，避免阻塞 UI
     }
   }
 
@@ -157,24 +185,34 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     );
   }
 
-  Widget _buildHeader(AuthState authState, bool isNarrow) {
+  Widget _buildHeader(AuthState authState, bool isNarrow, AsyncValue stats) {
     return Container(
       height: 56,
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.8),
-        border: Border(bottom: BorderSide(color: Colors.grey.withValues(alpha: 0.2))),
+        color: Colors.white.withOpacity(0.8),
+        border: Border(bottom: BorderSide(color: Colors.grey.withOpacity(0.2))),
       ),
       padding: EdgeInsets.symmetric(horizontal: isNarrow ? 12 : 24),
       child: Row(
         children: [
           // 左侧: Logo & 菜单
-          _buildLeftSection(),
+          _buildLeftSection(authState),
           const SizedBox(width: 24),
           Container(width: 1, height: 24, color: Colors.grey.shade200),
           const SizedBox(width: 24),
           // 网吧选择：桌面用标签栏，移动用单个选择按钮
           Expanded(
-            child: isNarrow ? _buildNetbarPicker(isNarrow) : NetbarTabBar(),
+            child: Row(
+              children: [
+                Expanded(
+                  child: isNarrow ? _buildNetbarPicker(isNarrow) : const NetbarTabBar(),
+                ),
+                if (!isNarrow) ...[
+                  const SizedBox(width: 24),
+                  _buildStatusPills(stats), // Moved here
+                ],
+              ],
+            ),
           ),
           const SizedBox(width: 12),
           // 右侧: 运维、通知、用户
@@ -184,7 +222,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     );
   }
 
-  Widget _buildLeftSection() {
+  Widget _buildLeftSection(AuthState authState) {
     return Row(
       children: [
         // 系统菜单按钮
@@ -217,7 +255,8 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
             _buildMenuItem('概览', '/dashboard', LucideIcons.layoutDashboard, Colors.blue),
             _buildMenuItem('网吧管理', '/monitor', LucideIcons.network, Colors.indigo),
             _buildMenuItem('资源管理', '/resource-management', LucideIcons.database, Colors.orange),
-            _buildMenuItem('用户账户', '/user-management', LucideIcons.users, Colors.purple),
+            if ((authState.user?.role ?? 'user') == 'admin')
+              _buildMenuItem('用户账户', '/user-management', LucideIcons.users, Colors.purple),
             _buildMenuItem('监控中心', '/channel-monitor', LucideIcons.monitor, Colors.green),
             _buildMenuItem('系统日志', '/system-logs', LucideIcons.fileText, Colors.grey),
             _buildMenuItem('安全中心', '#', LucideIcons.shield, Colors.red),
@@ -320,29 +359,20 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         ),
         const SizedBox(width: 8),
         // 用户菜单（头像触发）
-        PopupMenuButton<String>(
-          offset: const Offset(0, 40),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          onSelected: (value) {
-            if (value == 'profile') {
-              _showUserProfile(authState);
-            } else if (value == 'logout') {
-              ref.read(authNotifierProvider.notifier).logout();
-              context.go('/login');
-            } else if (value == 'settings') {
-              context.go('/settings');
-            }
-          },
+        InkWell(
+          onTap: () => _showUserProfile(authState),
+          borderRadius: BorderRadius.circular(24),
           child: Container(
             padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
-              color: Colors.grey.shade100.withValues(alpha: 0.5),
+              color: Colors.grey.shade100.withOpacity(0.5),
               borderRadius: BorderRadius.circular(24),
             ),
             child: Row(
               children: [
                 Container(
-                  width: 28, height: 28,
+                  width: 28,
+                  height: 28,
                   decoration: const BoxDecoration(
                     shape: BoxShape.circle,
                     gradient: LinearGradient(colors: AppColors.blueGradient),
@@ -350,7 +380,11 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                   child: Center(
                     child: Text(
                       (authState.user?.name ?? 'U')[0].toUpperCase(),
-                      style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
@@ -362,20 +396,11 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(width: 4),
-                  Icon(LucideIcons.chevronDown, size: 14, color: Colors.grey.shade400),
+                  Icon(LucideIcons.chevronRight, size: 14, color: Colors.grey.shade400), // Change chevronDown to chevronRight
                 ],
               ],
             ),
           ),
-          itemBuilder: (context) => [
-            PopupMenuItem(value: 'profile', child: _buildMenuRow(LucideIcons.user, '个人资料')),
-            PopupMenuItem(value: 'settings', child: _buildMenuRow(LucideIcons.settings, '设置')),
-            const PopupMenuDivider(),
-            PopupMenuItem(
-              value: 'logout',
-              child: _buildMenuRow(LucideIcons.logOut, '退出登录', color: AppColors.red),
-            ),
-          ],
         ),
       ],
     );
@@ -394,63 +419,8 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
   void _showUserProfile(AuthState authState) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Container(
-              width: 48, height: 48,
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: LinearGradient(colors: AppColors.blueGradient),
-              ),
-              child: Center(
-                child: Text(
-                  (authState.user?.name ?? 'U')[0].toUpperCase(),
-                  style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(authState.user?.name ?? '', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                Text(
-                  authState.user?.role == 'admin' ? '管理员' : '操作员',
-                  style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-                ),
-              ],
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(LucideIcons.user),
-              title: const Text('个人资料'),
-              onTap: () => Navigator.pop(context),
-            ),
-            ListTile(
-              leading: const Icon(LucideIcons.settings),
-              title: const Text('设置'),
-              onTap: () => Navigator.pop(context),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              ref.read(authNotifierProvider.notifier).logout();
-              context.go('/login');
-            },
-            icon: const Icon(LucideIcons.logOut, size: 16, color: AppColors.red),
-            label: const Text('退出登录', style: TextStyle(color: AppColors.red)),
-          ),
-        ],
-      ),
+      barrierColor: Colors.black.withOpacity(0.4),
+      builder: (context) => const UserProfileDialog(),
     );
   }
 }

@@ -14,6 +14,7 @@ type DesktopLayoutIcon struct {
 	ExePath string `json:"exePath"`
 	Args    string `json:"args,omitempty"`
 	WorkDir string `json:"workDir,omitempty"`
+	IconPath string `json:"iconPath,omitempty"`
 	X       int    `json:"x"`
 	Y       int    `json:"y"`
 }
@@ -36,4 +37,3 @@ type DesktopLayout struct {
 func (DesktopLayout) TableName() string {
 	return "desktop_layouts"
 }
-

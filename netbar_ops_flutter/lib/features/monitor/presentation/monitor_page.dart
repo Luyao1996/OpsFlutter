@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../data/terminal_api.dart';
@@ -23,6 +24,10 @@ class MonitorPage extends ConsumerStatefulWidget {
 
 class _MonitorPageState extends ConsumerState<MonitorPage> {
   String _searchQuery = '';
+  bool _isListView = false;
+  String _filterStatus = 'all'; // all, busy, online_idle, offline
+  int _sortColumnIndex = 0;
+  bool _sortAscending = true;
   // 右键菜单状态
   OverlayEntry? _menuOverlay;
   Terminal? _selectedTerminal;
@@ -101,17 +106,55 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
     final devices = terminals.where((t) => t.isKeyDevice).toList();
     final clients = terminals.where((t) => !t.isKeyDevice).toList();
 
-    // 过滤和排序
+    // 过滤
     var filteredClients = clients.where((t) {
-      if (_searchQuery.isEmpty) return true;
-      return t.name.toLowerCase().contains(_searchQuery.toLowerCase());
+      // 搜索过滤
+      if (_searchQuery.isNotEmpty && !t.name.toLowerCase().contains(_searchQuery.toLowerCase())) {
+        return false;
+      }
+      // 状态过滤
+      if (_filterStatus == 'online_idle' && t.status != 1) return false; // 在线空闲
+      if (_filterStatus == 'busy' && t.status != 2) return false; // 使用中
+      if (_filterStatus == 'offline' && t.status != 0) return false; // 离线
+
+      return true;
     }).toList();
 
-    // 在线的排前面
+    // 排序
     filteredClients.sort((a, b) {
-      if (a.status > 0 && b.status == 0) return -1;
-      if (a.status == 0 && b.status > 0) return 1;
-      return 0;
+      int cmp = 0;
+      switch (_sortColumnIndex) {
+        case 0: // 终端ID (Name)
+          // Try to parse as int for correct numerical sorting
+          final intA = int.tryParse(a.name) ?? 0;
+          final intB = int.tryParse(b.name) ?? 0;
+          if (intA > 0 && intB > 0) {
+            cmp = intA.compareTo(intB);
+          } else {
+            cmp = a.name.compareTo(b.name);
+          }
+          break;
+        case 1: // 状态
+          cmp = b.status.compareTo(a.status);
+          break;
+        case 2: // IP
+          cmp = a.ip.compareTo(b.ip);
+          break;
+        case 3: cmp = a.mac.compareTo(b.mac); break;
+        case 4: cmp = a.uptime.compareTo(b.uptime); break;
+        case 5:
+          final aTime = _parseToCst(a.updatedAt);
+          final bTime = _parseToCst(b.updatedAt);
+          cmp = (aTime ?? DateTime.fromMillisecondsSinceEpoch(0))
+              .compareTo(bTime ?? DateTime.fromMillisecondsSinceEpoch(0));
+          break;
+        default:
+          // 默认排序：在线在前
+          if (a.status > 0 && b.status == 0) return -1;
+          if (a.status == 0 && b.status > 0) return 1;
+          return 0;
+      }
+      return _sortAscending ? cmp : -cmp;
     });
 
     return CustomScrollView(
@@ -120,57 +163,177 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
         SliverToBoxAdapter(child: _buildDevicesSection(devices)),
         // 工具栏
         SliverToBoxAdapter(child: _buildToolbar(filteredClients.length)),
-        // 终端网格 - 使用响应式布局
+        // 终端列表/网格
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(32, 16, 32, 32),
-          sliver: SliverLayoutBuilder(
-            builder: (context, constraints) {
-              // 响应式列数: 类似 Vue 的 grid-cols-2 sm:3 md:4 lg:5 xl:6 2xl:8
-              final width = constraints.crossAxisExtent;
-              int columns;
-              if (width >= 1536) {
-                columns = 8;
-              } else if (width >= 1280) {
-                columns = 6;
-              } else if (width >= 1024) {
-                columns = 5;
-              } else if (width >= 768) {
-                columns = 4;
-              } else if (width >= 640) {
-                columns = 3;
-              } else {
-                columns = 2;
-              }
+          sliver: _isListView
+              ? SliverToBoxAdapter(
+                  child: _buildTerminalDataTable(filteredClients),
+                )
+              : SliverLayoutBuilder(
+                  builder: (context, constraints) {
+                    // 响应式列数: 类似 Vue 的 grid-cols-2 sm:3 md:4 lg:5 xl:6 2xl:8
+                    final width = constraints.crossAxisExtent;
+                    int columns;
+                    if (width >= 1536) {
+                      columns = 8;
+                    } else if (width >= 1280) {
+                      columns = 6;
+                    } else if (width >= 1024) {
+                      columns = 5;
+                    } else if (width >= 768) {
+                      columns = 4;
+                    } else if (width >= 640) {
+                      columns = 3;
+                    } else {
+                      columns = 2;
+                    }
 
-              return SliverGrid(
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: columns,
-                  childAspectRatio: 0.9, // 接近 16:9 图片 + 底部名称栏
-                  crossAxisSpacing: 16,
-                  mainAxisSpacing: 16,
-                ),
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final terminal = filteredClients[index];
-                    return TerminalCard(
-                      terminal: terminal,
-                      onTap: () => _openTerminalDetail(terminal),
-                      onSecondaryTapDown: (details) => _showContextMenu(details, terminal),
+                    return SliverGrid(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: columns,
+                        childAspectRatio: 0.9, // 接近 16:9 图片 + 底部名称栏
+                        crossAxisSpacing: 16,
+                        mainAxisSpacing: 16,
+                      ),
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final terminal = filteredClients[index];
+                          return TerminalCard(
+                            terminal: terminal,
+                            onTap: () => _openTerminalDetail(terminal),
+                            onSecondaryTapDown: (details) => _showContextMenu(details, terminal),
+                          );
+                        },
+                        childCount: filteredClients.length,
+                      ),
                     );
                   },
-                  childCount: filteredClients.length,
                 ),
-              );
-            },
-          ),
         ),
       ],
+    );
+  }
+
+  Widget _buildTerminalDataTable(List<Terminal> terminals) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: AppColors.iosCard,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.iosSeparator),
+        boxShadow: AppShadows.sm,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                child: DataTable(
+                  showCheckboxColumn: false,
+                  sortColumnIndex: _sortColumnIndex,
+                  sortAscending: _sortAscending,
+                  headingRowColor: MaterialStateProperty.all(Colors.grey.shade50),
+                  dataRowMinHeight: 48,
+                  dataRowMaxHeight: 48,
+                  columns: [
+                    _buildDataColumn('终端ID', 0),
+                    _buildDataColumn('状态', 1),
+                    _buildDataColumn('IP地址', 2),
+                    _buildDataColumn('MAC地址', 3),
+                    _buildDataColumn('在线时长', 4),
+                    _buildDataColumn('最后活动时间', 5),
+                  ],
+                  rows: terminals.map((t) {
+                    return DataRow(
+                      cells: [
+                        DataCell(Text(t.name, style: const TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(_buildStatusCell(t.status)),
+                        DataCell(Text(t.ip, style: const TextStyle(fontFamily: 'monospace'))),
+                        DataCell(Text(t.mac, style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+                        DataCell(Text(t.uptime)),
+                        DataCell(Text(_formatUpdatedAt(t.updatedAt))),
+                      ],
+                      onSelectChanged: (selected) {
+                        if (selected == true) _openTerminalDetail(t);
+                      },
+                    );
+                  }).toList(),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  DataColumn _buildDataColumn(String label, int index) {
+    return DataColumn(
+      label: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+      onSort: (colIndex, ascending) {
+        setState(() {
+          _sortColumnIndex = colIndex;
+          _sortAscending = ascending;
+        });
+      },
+    );
+  }
+
+  Widget _buildStatusCell(int status) {
+    Color color;
+    String text;
+    if (status == 0) {
+      color = Colors.grey;
+      text = '离线';
+    } else if (status == 1) {
+      color = Colors.green;
+      text = '在线空闲';
+    } else if (status == 2) {
+      color = Colors.orange;
+      text = '使用中';
+    } else {
+      color = Colors.grey; // Default for unknown status
+      text = '未知';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold),
+      ),
     );
   }
 
   /// 打开终端详情
   void _openTerminalDetail(Terminal terminal) {
     context.push('/terminal/${terminal.id}');
+  }
+
+  /// 转换并格式化为东八区时间
+  String _formatUpdatedAt(String? value) {
+    final dt = _parseToCst(value);
+    if (dt == null) return '-';
+    return DateFormat('yyyy-MM-dd HH:mm:ss').format(dt);
+  }
+
+  DateTime? _parseToCst(String? value) {
+    if (value == null || value.isEmpty) return null;
+    try {
+      final parsed = DateTime.parse(value);
+      return parsed.toUtc().add(const Duration(hours: 8));
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 显示右键菜单
@@ -201,9 +364,9 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
               child: Container(
                 width: 180,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: AppColors.iosCard, // 使用 AppColors.iosCard
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade200),
+                  border: Border.all(color: AppColors.iosSeparator), // 使用 AppColors.iosSeparator
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -234,13 +397,15 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
   Widget _buildContextMenuItem(String label, IconData icon, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
+      hoverColor: AppColors.iosHover, // 添加悬停效果
+      borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           children: [
-            Icon(icon, size: 16, color: Colors.grey.shade600),
+            Icon(icon, size: 16, color: AppColors.iosGray), // 使用 AppColors.iosGray
             const SizedBox(width: 12),
-            Text(label, style: const TextStyle(fontSize: 14)),
+            Text(label, style: const TextStyle(fontSize: 14, color: Color(0xFF333333))), // 使用更深的灰色文本
           ],
         ),
       ),
@@ -248,7 +413,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
   }
 
   Widget _buildMenuDivider() {
-    return Divider(height: 1, color: Colors.grey.shade200);
+    return Divider(height: 1, color: AppColors.iosSeparator); // 使用 AppColors.iosSeparator
   }
 
   /// 远程操作
@@ -312,7 +477,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                   // 关键设备卡片 (使用 TerminalCard 样式)
                   ...devices.map((d) => SizedBox(
                     width: itemWidth,
-                    height: 140, // 固定高度
+                    height: 200, // 固定高度
                     child: TerminalCard(
                       terminal: d,
                       onTap: () => _openTerminalDetail(d),
@@ -322,7 +487,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                   // 路由器卡片
                   SizedBox(
                     width: itemWidth,
-                    height: 140,
+                    height: 200,
                     child: _buildRouterCard(),
                   ),
                 ],
@@ -338,9 +503,9 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
   Widget _buildRouterCard() {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.7),
+        color: AppColors.iosCard, // 使用 AppColors.iosCard
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.4)),
+        border: Border.all(color: AppColors.iosSeparator), // 使用 AppColors.iosSeparator
         boxShadow: AppShadows.sm,
       ),
       child: Stack(
@@ -394,7 +559,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
             child: Icon(
               LucideIcons.router,
               size: 80,
-              color: Colors.grey.shade100,
+              color: AppColors.iosBg.withOpacity(0.5), // 使用 AppColors.iosBg 并调整透明度
             ),
           ),
         ],
@@ -456,64 +621,70 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                 child: Text('$count', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600)),
               ),
               const Spacer(),
+              // 搜索框
+              if (!isNarrow)
+                SizedBox(
+                  width: 260,
+                  child: _buildSearchBox(),
+                ),
+              if (!isNarrow) const SizedBox(width: 12),
               // 筛选按钮
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade200),
-                  boxShadow: AppShadows.sm,
+              PopupMenuButton<String>(
+                tooltip: '筛选',
+                offset: const Offset(0, 40),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.iosCard,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.iosSeparator),
+                    boxShadow: AppShadows.sm,
+                  ),
+                  child: Icon(LucideIcons.filter, size: 18, color: _filterStatus != 'all' ? AppColors.iosBlue : Colors.grey.shade600),
                 ),
-                child: IconButton(
-                  onPressed: () {
-                    // TODO: 打开筛选菜单
-                  },
-                  icon: Icon(LucideIcons.filter, size: 18, color: Colors.grey.shade600),
-                  tooltip: '筛选',
-                ),
+                onSelected: (val) => setState(() => _filterStatus = val),
+                itemBuilder: (context) => [
+                  const PopupMenuItem(value: 'all', child: Text('全部')),
+                  const PopupMenuItem(value: 'busy', child: Text('使用中')),
+                  const PopupMenuItem(value: 'online_idle', child: Text('在线空闲')),
+                  const PopupMenuItem(value: 'offline', child: Text('离线')),
+                ],
               ),
               const SizedBox(width: 8),
-              Container(width: 1, height: 24, color: Colors.grey.shade300),
+              Container(width: 1, height: 24, color: AppColors.iosSeparator),
               const SizedBox(width: 8),
               // 视图切换
               Container(
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade200,
-                  borderRadius: BorderRadius.circular(8),
+                  color: AppColors.iosCard,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.iosSeparator),
+                  boxShadow: AppShadows.sm,
                 ),
                 padding: const EdgeInsets.all(4),
                 child: Row(
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(6),
-                        boxShadow: AppShadows.sm,
-                      ),
-                      child: Icon(LucideIcons.layoutGrid, size: 16, color: Colors.grey.shade700),
+                    _buildToolbarSwitchItem(
+                      icon: LucideIcons.layoutGrid,
+                      isSelected: !_isListView,
+                      onTap: () => setState(() => _isListView = false),
                     ),
-                    const SizedBox(width: 4),
-                    Container(
-                      padding: const EdgeInsets.all(6),
-                      child: Icon(LucideIcons.settings, size: 16, color: Colors.grey.shade500),
+                    _buildToolbarSwitchItem(
+                      icon: LucideIcons.list,
+                      isSelected: _isListView,
+                      onTap: () => setState(() => _isListView = true),
                     ),
                   ],
                 ),
               ),
               const SizedBox(width: 12),
               // 刷新按钮
-              IconButton(
-                onPressed: () => ref.invalidate(terminalsProvider),
-                icon: Icon(LucideIcons.refreshCw, size: 18, color: Colors.grey.shade500),
+              _buildToolbarButton(
+                icon: LucideIcons.refreshCw,
                 tooltip: '刷新',
+                onPressed: () => ref.invalidate(terminalsProvider),
               ),
-              if (!isNarrow) const SizedBox(width: 12),
-              if (!isNarrow)
-                SizedBox(
-                  width: 260,
-                  child: _buildSearchBox(),
-                ),
             ],
           ),
           if (isNarrow) const SizedBox(height: 12),
@@ -523,14 +694,59 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
     );
   }
 
+  /// 构建工具栏按钮
+  Widget _buildToolbarButton({required IconData icon, required String tooltip, required VoidCallback onPressed}) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.iosCard,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.iosSeparator),
+        boxShadow: AppShadows.sm,
+      ),
+      child: IconButton(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 18, color: Colors.grey.shade600),
+        tooltip: tooltip,
+      ),
+    );
+  }
+
+  /// 构建工具栏切换项 (例如, 网格/列表视图切换)
+  Widget _buildToolbarSwitchItem({
+    required IconData icon,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.iosBlue : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            icon,
+            size: 16,
+            color: isSelected ? Colors.white : Colors.grey.shade500,
+          ),
+        ), // AnimatedContainer 结束
+      ), // GestureDetector 结束
+    ); // MouseRegion 结束
+  }
+
   Widget _buildSearchBox() {
     return Container(
       width: double.infinity,
       height: 40,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.iosCard,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: AppColors.iosSeparator),
         boxShadow: AppShadows.sm,
       ),
       child: Row(

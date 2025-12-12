@@ -112,9 +112,10 @@ class DashboardApi {
   }
 
   /// 获取趋势数据
-  Future<List<TrendDataPoint>> getTrendData({int? netbarId}) async {
+  Future<List<TrendDataPoint>> getTrendData({int? netbarId, String? range}) async {
     final params = <String, dynamic>{};
     if (netbarId != null) params['netbar_id'] = netbarId;
+    if (range != null) params['range'] = range;
     final response = await _client.get(
       '/dashboard/trend',
       queryParameters: params,
@@ -125,14 +126,13 @@ class DashboardApi {
 
   /// 全部重启
   Future<RestartResponse> restartAll() async {
-    final response = await _client.post('/dashboard/restart');
+    final response = await _client.post('/dashboard/restart-all');
     return RestartResponse.fromJson(response.data);
   }
 
   /// 网络诊断
   Future<DiagnoseResponse> networkDiagnose() async {
-    final response = await _client.post('/dashboard/diagnose');
+    final response = await _client.post('/dashboard/network-diagnose');
     return DiagnoseResponse.fromJson(response.data);
   }
 }
-

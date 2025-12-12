@@ -16,6 +16,7 @@ class User {
   final String username;
   final String name;
   final String role;
+  final int? groupId;
   final String? email;
   final String? phone;
   final int status;
@@ -26,6 +27,7 @@ class User {
     required this.username,
     required this.name,
     required this.role,
+    this.groupId,
     this.email,
     this.phone,
     required this.status,
@@ -38,6 +40,7 @@ class User {
       username: json['username'] ?? '',
       name: json['name'] ?? json['username'] ?? '',
       role: json['role'] ?? '',
+      groupId: json['group_id'],
       email: json['email'],
       phone: json['phone'],
       status: json['status'] ?? 1,
@@ -50,6 +53,7 @@ class User {
     'username': username,
     'name': name,
     'role': role,
+    'group_id': groupId,
     'email': email,
     'phone': phone,
     'status': status,
@@ -143,4 +147,3 @@ class AuthApi {
     return QRLoginStatus.fromJson(response.data);
   }
 }
-

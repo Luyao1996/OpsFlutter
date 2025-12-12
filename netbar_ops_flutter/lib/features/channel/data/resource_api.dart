@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:dio/dio.dart';
 
 import '../../../core/network/api_client.dart';
@@ -158,6 +159,28 @@ class ResourceApi {
       ),
     );
     return response.data ?? const [];
+  }
+
+  /// 流式获取前 N 字节，用于大文件预览（不依赖 Range 支持）
+  Future<List<int>> downloadBytesLimited(int id, int limit) async {
+    final response = await _client.dio.get<ResponseBody>(
+      '/resources/$id/download',
+      options: Options(responseType: ResponseType.stream),
+    );
+
+    final body = response.data;
+    if (body == null) return const [];
+
+    final buffer = <int>[];
+    await for (final chunk in body.stream) {
+      buffer.addAll(chunk);
+      if (buffer.length >= limit) break;
+    }
+
+    if (buffer.length > limit) {
+      return buffer.sublist(0, limit);
+    }
+    return buffer;
   }
 
   /// 下载文件到本地路径 (流式下载)

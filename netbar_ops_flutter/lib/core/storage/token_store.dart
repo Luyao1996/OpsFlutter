@@ -7,6 +7,7 @@ class TokenStore {
   static const String _userKey = 'user';
   static const String _savedUsersKey = 'ops_pro_saved_users';
   static const String _currentNetbarKey = 'current_netbar';
+  static const String _autoConnectKey = 'auto_connect_last_netbar';
 
   static SharedPreferences? _prefs;
 
@@ -90,11 +91,22 @@ class TokenStore {
     return await _prefs?.remove(_currentNetbarKey) ?? false;
   }
 
+  /// 获取是否自动连接上次网吧
+  static bool getAutoConnectLastNetbar() {
+    return _prefs?.getBool(_autoConnectKey) ?? false;
+  }
+
+  /// 设置是否自动连接上次网吧
+  static Future<bool> setAutoConnectLastNetbar(bool enabled) async {
+    return await _prefs?.setBool(_autoConnectKey, enabled) ?? false;
+  }
+
   /// 清除所有认证数据
   static Future<void> clearAuth() async {
     await removeToken();
     await removeUser();
     await removeCurrentNetbar();
+    await _prefs?.remove(_autoConnectKey);
   }
 
   /// 是否已登录
@@ -112,4 +124,3 @@ class TokenStore {
     return await _prefs?.setString(key, value) ?? false;
   }
 }
-

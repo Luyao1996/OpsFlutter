@@ -6,8 +6,14 @@ import '../features/auth/presentation/login_page.dart';
 import '../features/channel/presentation/channel_management_page.dart';
 import '../features/dashboard/presentation/dashboard_page.dart';
 import '../features/monitor/presentation/monitor_page.dart';
+import '../features/netbar/presentation/netbar_list_page.dart';
 import '../features/resource/presentation/resource_management_page.dart';
+import '../features/user/presentation/user_management_page.dart';
+import '../features/logs/presentation/system_logs_page.dart';
+import '../features/desktop/presentation/desktop_management_page.dart'; // Import DesktopManagementPage
 import '../shared/widgets/main_layout.dart';
+import '../features/monitor/presentation/terminal_detail_page.dart';
+import '../features/channel/presentation/channel_monitor_page.dart';
 
 /// 路由配置
 final routerProvider = Provider<GoRouter>((ref) {
@@ -65,7 +71,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/netbar-list',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
-              child: const Scaffold(body: Center(child: Text('网吧列表 - 开发中'))),
+              child: const NetbarListPage(),
               transitionsBuilder: (context, animation, secondaryAnimation, child) {
                 return FadeTransition(opacity: animation, child: child);
               },
@@ -85,7 +91,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/desktop-management',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
-              child: const Scaffold(body: Center(child: Text('桌面管理 - 开发中'))),
+              child: const DesktopManagementPage(),
               transitionsBuilder: (context, animation, secondaryAnimation, child) {
                 return FadeTransition(opacity: animation, child: child);
               },
@@ -95,7 +101,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/user-management',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
-              child: const Scaffold(body: Center(child: Text('用户管理 - 开发中'))),
+              child: const UserManagementPage(),
               transitionsBuilder: (context, animation, secondaryAnimation, child) {
                 return FadeTransition(opacity: animation, child: child);
               },
@@ -105,7 +111,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/channel-monitor',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
-              child: const Scaffold(body: Center(child: Text('监控中心 - 开发中'))),
+              child: const ChannelMonitorPage(),
               transitionsBuilder: (context, animation, secondaryAnimation, child) {
                 return FadeTransition(opacity: animation, child: child);
               },
@@ -115,7 +121,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/system-logs',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
-              child: const Scaffold(body: Center(child: Text('系统日志 - 开发中'))),
+              child: const SystemLogsPage(),
               transitionsBuilder: (context, animation, secondaryAnimation, child) {
                 return FadeTransition(opacity: animation, child: child);
               },
@@ -137,10 +143,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/terminal/:id',
         pageBuilder: (context, state) {
-          final id = state.pathParameters['id'] ?? '0';
+          final id = int.parse(state.pathParameters['id'] ?? '0'); // Convert String to int
           return CustomTransitionPage(
             key: state.pageKey,
-            child: Scaffold(body: Center(child: Text('终端详情 #$id - 开发中'))),
+            child: TerminalDetailPage(terminalId: id),
             transitionsBuilder: (context, animation, secondaryAnimation, child) {
               return FadeTransition(opacity: animation, child: child);
             },
@@ -153,4 +159,3 @@ final routerProvider = Provider<GoRouter>((ref) {
     ),
   );
 });
-

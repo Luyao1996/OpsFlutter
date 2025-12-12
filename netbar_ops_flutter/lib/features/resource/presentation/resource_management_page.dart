@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:cross_file/cross_file.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -7,7 +9,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:path/path.dart' as p;
-import 'package:url_launcher/url_launcher.dart';
+
+import '../../../shared/utils/web_download_helper_stub.dart'
+    if (dart.library.html)
+        '../../../shared/utils/web_download_helper_web.dart';
 
 import '../../channel/presentation/platform_helper.dart';
 import '../../channel/presentation/drop_target_stub.dart'
@@ -118,10 +123,11 @@ class _ResourceManagementPageState
     return _startupItems.where((s) => _selectedIds.contains('startup-${s.id}')).toList();
   }
 
-  bool get _canDisableStartupItem => true;
-  bool get _canDeleteStartupItem => _isAdmin;
+  bool get _canDisableStartupItem => _canEdit;
+  bool get _canDeleteStartupItem => _canEdit;
 
   Future<void> _handleBatchStartupEnable(bool enable) async {
+    if (!_ensureCanEdit(enable ? '启用启动项' : '禁用启动项')) return;
     for (final item in _selectedStartupItems) {
       if (enable) {
         await _startupItemApi.enable(item.id);
@@ -133,10 +139,29 @@ class _ResourceManagementPageState
   }
 
   Future<void> _handleBatchStartupDelete() async {
+    if (!_ensureCanEdit('删除启动项')) return;
     for (final item in _selectedStartupItems) {
       await _startupItemApi.delete(item.id);
     }
     _loadData();
+  }
+
+  Future<void> _toggleStartupItemEnabled(StartupItem item, bool enable) async {
+    if (!_ensureCanEdit(enable ? '启用启动项' : '禁用启动项')) return;
+    try {
+      if (enable) {
+        await _startupItemApi.enable(item.id);
+      } else {
+        await _startupItemApi.disable(item.id, item.enabledState);
+      }
+      _loadData();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('更新启动项状态失败: $e')),
+        );
+      }
+    }
   }
 
   Widget _buildSearchField({double width = 160}) {
@@ -190,8 +215,9 @@ class _ResourceManagementPageState
   }
 
   Widget _buildUploadButton() {
+    if (!_canEdit) return const SizedBox.shrink();
     return ElevatedButton.icon(
-      onPressed: _canEdit ? _showUploadModal : null,
+      onPressed: _showUploadModal,
       icon: const Icon(LucideIcons.upload, size: 14),
       label: const Text('上传'),
       style: ElevatedButton.styleFrom(
@@ -512,8 +538,8 @@ class _ResourceManagementPageState
       case ResourceZone.headquarters:
         return 0; // 总部
       case ResourceZone.branch:
-        // 分公司用用户的分组ID，这里简化处理
-        return user?.id ?? 0;
+        // 分公司用用户的分公司ID
+        return user?.groupId ?? 0;
       case ResourceZone.shared:
         return null; // 共享区不需要 netbar_id
     }
@@ -525,15 +551,20 @@ class _ResourceManagementPageState
     return role.contains('admin');
   }
 
+  int get _userGroupId {
+    final auth = ref.watch(authNotifierProvider);
+    return auth.user?.groupId ?? 0;
+  }
+
   /// 是否可以编辑当前区域
   bool get _canEdit {
     switch (_currentZone) {
       case ResourceZone.headquarters:
-        return _isAdmin; // 总部资源只有管理员可编辑
+        return _isAdmin; // 总部资源仅管理员可编辑
       case ResourceZone.branch:
-        return !_isAdmin; // 分公司资源：非管理员可编辑自己公司的
+        return !_isAdmin && _userGroupId > 0; // 分公司资源：普通用户编辑自己的分公司
       case ResourceZone.shared:
-        return true; // 共享区所有人可上传
+        return true; // 共享区：所有用户可编辑
     }
   }
 
@@ -543,7 +574,7 @@ class _ResourceManagementPageState
       case ResourceZone.headquarters:
         return true; // 所有人可查看总部资源
       case ResourceZone.branch:
-        return !_isAdmin; // 分公司资源：管理员不显示，其他人可看自己公司的
+        return !_isAdmin && _userGroupId > 0; // 分公司资源：仅普通用户查看自己的分公司
       case ResourceZone.shared:
         return true; // 共享区所有人可查看
     }
@@ -554,9 +585,9 @@ class _ResourceManagementPageState
       case ResourceZone.headquarters:
         return '总部资源仅管理员可编辑';
       case ResourceZone.branch:
-        return '分公司资源仅分公司成员可编辑';
+        return '分公司资源仅所属分公司成员可编辑';
       case ResourceZone.shared:
-        return '需要登录后才能上传到共享区';
+        return '共享区暂无写入权限';
     }
   }
 
@@ -597,12 +628,14 @@ class _ResourceManagementPageState
   }
 
   void _handleZoneChange(ResourceZone zone) {
-    // 分公司资源对管理员不显示
-    if (zone == ResourceZone.branch && _isAdmin) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('管理员不显示分公司资源')),
-      );
-      return;
+    // 权限限制：管理员不能切到分公司；普通用户必须有分公司才能进入分公司资源
+    if (zone == ResourceZone.branch) {
+      if (_isAdmin || _userGroupId <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无权限访问分公司资源')),
+        );
+        return;
+      }
     }
     setState(() {
       _currentZone = zone;
@@ -871,11 +904,26 @@ class _ResourceManagementPageState
     });
   }
 
-  void _handleOpenFile(Resource file) {
+  void _handleOpenFile(Resource file, {bool readOnly = false}) {
+    final category = FileIcon.getTypeFromName(file.name);
+    if (category == 'image') {
+      _showImagePreview(file);
+      return;
+    }
+
+    if (!FileIcon.isTextFile(file.name)) {
+      // 二进制文件不在内置预览范围，提示下载
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('该文件类型仅支持下载查看')),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => FileEditorModal(
         file: file,
+        readOnly: readOnly,
         onSuccess: () {
           _loadData();
         },
@@ -883,15 +931,83 @@ class _ResourceManagementPageState
     );
   }
 
+  void _showImagePreview(Resource file) {
+    final future = _resourceApi.downloadBytes(file.id);
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.6),
+      builder: (context) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.all(24),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: FutureBuilder<List<int>>(
+              future: future,
+              builder: (context, snapshot) {
+                Widget content;
+                if (snapshot.connectionState != ConnectionState.done) {
+                  content = const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  );
+                } else if (snapshot.hasError) {
+                  content = Center(
+                    child: Text(
+                      '图片加载失败: ${snapshot.error}',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  );
+                } else {
+                  final bytes = Uint8List.fromList(snapshot.data ?? const []);
+                  content = InteractiveViewer(
+                    minScale: 0.5,
+                    maxScale: 5,
+                    child: Image.memory(bytes, fit: BoxFit.contain),
+                  );
+                }
+
+                return Stack(
+                  children: [
+                    Positioned.fill(child: content),
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(LucideIcons.x, color: Colors.white),
+                      ),
+                    ),
+                    Positioned(
+                      left: 12,
+                      top: 10,
+                      child: Text(
+                        file.name,
+                        style:
+                            const TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _handleDownload(Resource file) async {
     if (kIsWeb) {
-      final url = _resourceApi.getDownloadUrl(file.id);
-      if (await canLaunchUrl(Uri.parse(url))) {
-        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-      } else {
+      try {
+        final bytes = await _resourceApi.downloadBytes(file.id);
+        await downloadBytesAsFile(bytes, file.name);
+      } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('无法打开下载链接')),
+            SnackBar(content: Text('下载失败: $e')),
           );
         }
       }
@@ -943,6 +1059,21 @@ class _ResourceManagementPageState
   }
 
   void _showEmptyContextMenu(Offset position) {
+    if (!_canEdit) {
+      showContextMenu(
+        context: context,
+        position: position,
+        items: [
+          ContextMenuItem(
+            label: '刷新',
+            icon: LucideIcons.refreshCw,
+            onTap: _loadData,
+          ),
+        ],
+      );
+      return;
+    }
+
     final pasteLabel = _clipboard.isNotEmpty ? '粘贴 (已复制${_clipboard.length}个项)' : '粘贴';
     showContextMenu(
       context: context,
@@ -983,11 +1114,15 @@ class _ResourceManagementPageState
       position: position,
       items: [
         ContextMenuItem(
-          label: file.isDirectory ? '打开' : '查看/编辑',
-          icon: file.isDirectory ? LucideIcons.folderOpen : LucideIcons.fileEdit,
+          label: file.isDirectory
+              ? '打开'
+              : (_canEdit ? '查看/编辑' : '查看'),
+          icon: file.isDirectory
+              ? LucideIcons.folderOpen
+              : (_canEdit ? LucideIcons.fileEdit : LucideIcons.fileText),
           onTap: file.isDirectory
               ? () => _handleFolderOpen(file)
-              : () => _handleOpenFile(file),
+              : () => _handleOpenFile(file, readOnly: !_canEdit),
         ),
         if (!file.isDirectory)
           ContextMenuItem(
@@ -995,20 +1130,20 @@ class _ResourceManagementPageState
             icon: LucideIcons.download,
             onTap: () => _handleDownload(file),
           ),
-        ContextMenuItem(
-          label: '复制',
-          icon: LucideIcons.copy,
-          onTap: () {
-            setState(() {
-              _clipboard = [file];
-              _isCut = false;
-            });
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('已复制到剪贴板')),
-            );
-          },
-        ),
-        if (_canEdit)
+        if (_canEdit) ...[
+          ContextMenuItem(
+            label: '复制',
+            icon: LucideIcons.copy,
+            onTap: () {
+              setState(() {
+                _clipboard = [file];
+                _isCut = false;
+              });
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('已复制到剪贴板')),
+              );
+            },
+          ),
           ContextMenuItem(
             label: '剪切',
             icon: LucideIcons.scissors,
@@ -1022,7 +1157,6 @@ class _ResourceManagementPageState
               );
             },
           ),
-        if (_canEdit)
           ContextMenuItem(
             label: '删除',
             icon: LucideIcons.trash2,
@@ -1030,6 +1164,7 @@ class _ResourceManagementPageState
             onTap: () => _handleDeleteFile(file),
             divider: true,
           ),
+        ],
       ],
     );
   }
@@ -1297,14 +1432,14 @@ class _ResourceManagementPageState
                   subtitle: _isAdmin ? null : '（只读）',
                 ),
                 const SizedBox(height: 4),
-                // 分公司资源只对非管理员显示
-                if (!_isAdmin)
+                if (!_isAdmin && _userGroupId > 0) ...[
                   _buildZoneButton(
                     ResourceZone.branch,
                     LucideIcons.building2,
-                    '分公司资源',
+                    '我的分公司资源',
                   ),
-                if (!_isAdmin) const SizedBox(height: 4),
+                  const SizedBox(height: 4),
+                ],
                 _buildZoneButton(
                   ResourceZone.shared,
                   LucideIcons.share2,
@@ -1320,8 +1455,10 @@ class _ResourceManagementPageState
 
   Widget _buildMobileZoneSelector() {
     final pills = <Widget>[
-      _buildZonePill(ResourceZone.headquarters, '总部', LucideIcons.shieldAlert, subtitle: _isAdmin ? null : '只读'),
-      if (!_isAdmin) _buildZonePill(ResourceZone.branch, '分公司', LucideIcons.building2),
+      _buildZonePill(ResourceZone.headquarters, '总部', LucideIcons.shieldAlert,
+          subtitle: _isAdmin ? null : '只读'),
+      if (!_isAdmin && _userGroupId > 0)
+        _buildZonePill(ResourceZone.branch, '我的分公司', LucideIcons.building2),
       _buildZonePill(ResourceZone.shared, '共享', LucideIcons.share2),
     ];
     return SafeArea(
@@ -1463,47 +1600,54 @@ class _ResourceManagementPageState
     if (_isMobile) {
       final actions = <Widget>[];
       if (_activeModule == ModuleTab.files) {
-        if (_selectedResources.isNotEmpty) {
-          actions.add(Text('已选 ${_selectedResources.length} 项', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)));
-          actions.addAll([
-            _buildBatchButton('复制', LucideIcons.copy, AppColors.iosBlue, _handleBatchCopy),
-            _buildBatchButton('剪切', LucideIcons.scissors, Colors.orange, _handleBatchCut, enabled: _canEdit),
-            _buildBatchButton('删除', LucideIcons.trash2, Colors.red, _handleBatchDelete, enabled: _canEdit),
-            if (_currentZone == ResourceZone.shared)
-              _buildBatchButton('拷贝到本网吧', LucideIcons.download, const Color(0xFF22C55E), _handleCopyToLocal),
-          ]);
+        if (_canEdit) {
+          if (_selectedResources.isNotEmpty) {
+            actions.add(Text('已选 ${_selectedResources.length} 项', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)));
+            actions.addAll([
+              _buildBatchButton('复制', LucideIcons.copy, AppColors.iosBlue, _handleBatchCopy),
+              _buildBatchButton('剪切', LucideIcons.scissors, Colors.orange, _handleBatchCut, enabled: _canEdit),
+              _buildBatchButton('删除', LucideIcons.trash2, Colors.red, _handleBatchDelete, enabled: _canEdit),
+              if (_currentZone == ResourceZone.shared)
+                _buildBatchButton('拷贝到本网吧', LucideIcons.download, const Color(0xFF22C55E), _handleCopyToLocal),
+            ]);
+          }
+          actions.add(_buildBatchButton(
+            '粘贴${_clipboard.isNotEmpty ? ' (${_clipboard.length})' : ''}',
+            LucideIcons.clipboard,
+            Colors.green,
+            _handlePaste,
+            enabled: _canEdit && _clipboard.isNotEmpty,
+          ));
+          actions.add(_buildSearchField(width: double.infinity));
+          actions.add(_buildLayoutToggle());
+          actions.add(_buildUploadButton());
+        } else {
+          actions.add(_buildSearchField(width: double.infinity));
+          actions.add(_buildLayoutToggle());
         }
-        actions.add(_buildBatchButton(
-          '粘贴${_clipboard.isNotEmpty ? ' (${_clipboard.length})' : ''}',
-          LucideIcons.clipboard,
-          Colors.green,
-          _handlePaste,
-          enabled: _canEdit && _clipboard.isNotEmpty,
-        ));
-        actions.add(_buildSearchField(width: double.infinity));
-        actions.add(_buildLayoutToggle());
-        actions.add(_buildUploadButton());
       } else {
-        if (_selectedStartupItems.isNotEmpty) {
-          actions.add(Text('已选 ${_selectedStartupItems.length} 项', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)));
-          actions.addAll([
-            _buildBatchButton('批量启用', LucideIcons.toggleRight, const Color(0xFF22C55E), () => _handleBatchStartupEnable(true), enabled: _canDisableStartupItem),
-            _buildBatchButton('批量禁用', LucideIcons.toggleLeft, Colors.grey.shade600, () => _handleBatchStartupEnable(false), enabled: _canDisableStartupItem),
-            _buildBatchButton('批量删除', LucideIcons.trash2, Colors.red, _handleBatchStartupDelete, enabled: _canDeleteStartupItem),
-          ]);
+        if (_canEdit) {
+          if (_selectedStartupItems.isNotEmpty) {
+            actions.add(Text('已选 ${_selectedStartupItems.length} 项', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)));
+            actions.addAll([
+              _buildBatchButton('批量启用', LucideIcons.toggleRight, const Color(0xFF22C55E), () => _handleBatchStartupEnable(true), enabled: _canDisableStartupItem),
+              _buildBatchButton('批量禁用', LucideIcons.toggleLeft, Colors.grey.shade600, () => _handleBatchStartupEnable(false), enabled: _canDisableStartupItem),
+              _buildBatchButton('批量删除', LucideIcons.trash2, Colors.red, _handleBatchStartupDelete, enabled: _canDeleteStartupItem),
+            ]);
+          }
+          actions.add(ElevatedButton.icon(
+            onPressed: _showAddStartupItemModal,
+            icon: const Icon(LucideIcons.plus, size: 14),
+            label: const Text('新增启动项'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF22C55E),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+            ),
+          ));
         }
-        actions.add(ElevatedButton.icon(
-          onPressed: _canEdit ? _showAddStartupItemModal : null,
-          icon: const Icon(LucideIcons.plus, size: 14),
-          label: const Text('新增启动项'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF22C55E),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-          ),
-        ));
       }
 
       return Container(
@@ -1546,7 +1690,7 @@ class _ResourceManagementPageState
           _buildModuleTab(ModuleTab.startup, LucideIcons.zap, '启动项'),
           const Spacer(),
           if (_activeModule == ModuleTab.files) ...[
-            if (_selectedResources.isNotEmpty) ...[
+            if (_canEdit && _selectedResources.isNotEmpty) ...[
               Text('已选 ${_selectedResources.length} 项',
                   style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
               const SizedBox(width: 12),
@@ -1561,15 +1705,17 @@ class _ResourceManagementPageState
                   '删除', LucideIcons.trash2, Colors.red, _handleBatchDelete,
                   enabled: _canEdit),
             ],
-            const SizedBox(width: 12),
-            _buildBatchButton(
-              '粘贴${_clipboard.isNotEmpty ? ' (${_clipboard.length})' : ''}',
-              LucideIcons.clipboard,
-              Colors.green,
-              _handlePaste,
-              enabled: _canEdit && _clipboard.isNotEmpty,
-            ),
-            const SizedBox(width: 16),
+            if (_canEdit) ...[
+              const SizedBox(width: 12),
+              _buildBatchButton(
+                '粘贴${_clipboard.isNotEmpty ? ' (${_clipboard.length})' : ''}',
+                LucideIcons.clipboard,
+                Colors.green,
+                _handlePaste,
+                enabled: _canEdit && _clipboard.isNotEmpty,
+              ),
+              const SizedBox(width: 16),
+            ],
             // 搜索框
             Container(
               width: 200,
@@ -1635,23 +1781,60 @@ class _ResourceManagementPageState
                 ],
               ),
             ),
-            const SizedBox(width: 8),
-            // 上传按钮
-            ElevatedButton.icon(
-              onPressed: _canEdit ? _showUploadModal : null,
-              icon: const Icon(LucideIcons.upload, size: 14),
-              label: const Text('上传'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.iosBlue,
-                foregroundColor: Colors.white,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8)),
-                textStyle:
-                    const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+            if (_canEdit) ...[
+              const SizedBox(width: 8),
+              // 上传按钮
+              ElevatedButton.icon(
+                onPressed: _showUploadModal,
+                icon: const Icon(LucideIcons.upload, size: 14),
+                label: const Text('上传'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.iosBlue,
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                  textStyle:
+                      const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                ),
               ),
-            ),
+            ],
+          ],
+          if (_activeModule == ModuleTab.startup) ...[
+            if (_canEdit && _selectedStartupItems.isNotEmpty) ...[
+              Text('已选 ${_selectedStartupItems.length} 项',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+              const SizedBox(width: 12),
+              _buildBatchButton(
+                  '批量启用', LucideIcons.toggleRight, const Color(0xFF22C55E),
+                  () => _handleBatchStartupEnable(true),
+                  enabled: _canDisableStartupItem),
+              const SizedBox(width: 8),
+              _buildBatchButton(
+                  '批量禁用', LucideIcons.toggleLeft, Colors.grey.shade600,
+                  () => _handleBatchStartupEnable(false),
+                  enabled: _canDisableStartupItem),
+              const SizedBox(width: 8),
+              _buildBatchButton(
+                  '批量删除', LucideIcons.trash2, Colors.red,
+                  _handleBatchStartupDelete,
+                  enabled: _canDeleteStartupItem),
+              const SizedBox(width: 12),
+            ],
+            if (_canEdit)
+              ElevatedButton.icon(
+                onPressed: _showAddStartupItemModal,
+                icon: const Icon(LucideIcons.plus, size: 14),
+                label: const Text('新增启动项'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF22C55E),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                ),
+              ),
           ],
         ],
       ),
@@ -2066,7 +2249,9 @@ class _ResourceManagementPageState
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
-          onDoubleTap: file.isDirectory ? () => _handleFolderOpen(file) : () => _handleOpenFile(file),
+          onDoubleTap: file.isDirectory
+              ? () => _handleFolderOpen(file)
+              : () => _handleOpenFile(file, readOnly: !_canEdit),
           onSecondaryTapDown: (details) {
             if (!isSelected) {
               setState(() {
@@ -2134,7 +2319,9 @@ class _ResourceManagementPageState
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
-          onDoubleTap: file.isDirectory ? () => _handleFolderOpen(file) : () => _handleOpenFile(file),
+          onDoubleTap: file.isDirectory
+              ? () => _handleFolderOpen(file)
+              : () => _handleOpenFile(file, readOnly: !_canEdit),
           onSecondaryTapDown: (details) {
             if (!isSelected) {
               setState(() {
@@ -2240,25 +2427,16 @@ class _ResourceManagementPageState
       );
     }
 
-    return Padding(
+    return GridView.builder(
       padding: const EdgeInsets.all(24),
-      child: Column(
-        children: [
-          // 启动项网格
-          Expanded(
-            child: GridView.builder(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 16,
-                childAspectRatio: 4.4,
-              ),
-              itemCount: items.length,
-              itemBuilder: (context, index) => _buildStartupCard(items[index]),
-            ),
-          ),
-        ],
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 400,
+        mainAxisExtent: 180,
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
       ),
+      itemCount: items.length,
+      itemBuilder: (context, index) => _buildStartupCard(items[index]),
     );
   }
 
@@ -2269,6 +2447,8 @@ class _ResourceManagementPageState
       item: item,
       isSelected: isSelected,
       canEdit: _canEdit,
+      updatedAtText: _formatDate(item.updatedAt),
+      onToggleEnabled: _canEdit ? (val) => _toggleStartupItemEnabled(item, val) : null,
       onTap: () {
         final isCtrlPressed = HardwareKeyboard.instance.isControlPressed;
         setState(() {
@@ -2347,6 +2527,7 @@ class _ResourceManagementPageState
   }
 
   Future<void> _handleDeleteStartupItem(StartupItem item) async {
+    if (!_ensureCanEdit('删除启动项')) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -2385,11 +2566,13 @@ class _ResourceManagementPageState
   }
 }
 
-/// 资源管理启动项卡片组件（简化版，无禁用/启用功能）
+/// 资源管理启动项卡片组件（样式与通道管理启动项一致）
 class _ResourceStartupCard extends StatefulWidget {
   final StartupItem item;
   final bool isSelected;
   final bool canEdit;
+  final String updatedAtText;
+  final ValueChanged<bool>? onToggleEnabled;
   final VoidCallback onTap;
   final VoidCallback? onDoubleTap;
   final Function(TapDownDetails) onSecondaryTapDown;
@@ -2401,6 +2584,8 @@ class _ResourceStartupCard extends StatefulWidget {
     required this.item,
     required this.isSelected,
     required this.canEdit,
+    required this.updatedAtText,
+    this.onToggleEnabled,
     required this.onTap,
     this.onDoubleTap,
     required this.onSecondaryTapDown,
@@ -2442,100 +2627,112 @@ class _ResourceStartupCardState extends State<_ResourceStartupCard> {
         onSecondaryTapDown: widget.onSecondaryTapDown,
         behavior: HitTestBehavior.opaque,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: widget.isSelected ? AppColors.iosBlue : Colors.grey.shade200,
               width: widget.isSelected ? 2 : 1,
             ),
-            boxShadow: widget.isSelected ? null : AppShadows.sm,
+            boxShadow: widget.isSelected
+                ? null
+                : (_isHovered ? AppShadows.lg : AppShadows.sm),
           ),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 图标
-              Container(
-                width: 32, height: 32,
-                decoration: BoxDecoration(
-                  color: AppColors.iosBlue.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(LucideIcons.zap, size: 16, color: AppColors.iosBlue),
-              ),
-              const SizedBox(width: 10),
-              // 名称和信息
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: widget.item.enabled
+                          ? Colors.green.shade50
+                          : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      LucideIcons.zap,
+                      color: widget.item.enabled ? Colors.green : Colors.grey,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Flexible(
-                          child: Text(
-                            widget.item.effectiveDisplayName,
-                            style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        if (widget.item.displayName?.isNotEmpty == true && widget.item.name.isNotEmpty) ...[
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              widget.item.name,
-                              style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-                              overflow: TextOverflow.ellipsis,
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                widget.item.effectiveDisplayName,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 16),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                          ),
-                        ],
+                            if (widget.canEdit)
+                              Switch.adaptive(
+                                value: widget.item.enabled,
+                                activeColor: AppColors.iosBlue,
+                                onChanged: widget.onToggleEnabled,
+                              ),
+                          ],
+                        ),
+                        Text(
+                          widget.item.path,
+                          style: TextStyle(
+                              color: Colors.grey.shade500, fontSize: 12),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ],
                     ),
+                  ),
+                ],
+              ),
+              const Spacer(),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  if (widget.item.delay > 0)
+                    _buildTag(
+                        LucideIcons.clock, '${widget.item.delay}s', Colors.orange),
+                  if (widget.item.args?.isNotEmpty == true)
+                    _buildTag(LucideIcons.terminal, '参数', Colors.blue),
+                  if (widget.item.forceRun)
+                    _buildTag(LucideIcons.alertCircle, '强制', Colors.red),
+                  if (widget.item.targetOs?.isNotEmpty == true)
+                    _buildTag(
+                        LucideIcons.monitor, widget.item.targetOs!, Colors.purple),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    widget.updatedAtText,
+                    style: TextStyle(
+                        color: Colors.grey.shade400, fontSize: 12),
+                  ),
+                  if (widget.canEdit)
                     Row(
                       children: [
-                        if (widget.item.delay > 0) ...[
-                          Icon(LucideIcons.clock, size: 10, color: Colors.grey.shade400),
-                          const SizedBox(width: 2),
-                          Text('${widget.item.delay}s', style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
-                          const SizedBox(width: 6),
-                        ],
-                        if (widget.item.forceRun) ...[
-                          Icon(LucideIcons.alertCircle, size: 10, color: Colors.orange.shade400),
-                          const SizedBox(width: 2),
-                          Text('强制', style: TextStyle(fontSize: 10, color: Colors.orange.shade500)),
-                          const SizedBox(width: 6),
-                        ],
-                        if (widget.item.targetOs != null && widget.item.targetOs!.isNotEmpty) ...[
-                          Icon(LucideIcons.monitor, size: 10, color: Colors.grey.shade400),
-                          const SizedBox(width: 2),
-                          Text(widget.item.targetOs!.toUpperCase(), style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
-                        ],
+                        _buildIconButton(LucideIcons.settings, widget.onEdit),
+                        const SizedBox(width: 4),
+                        _buildIconButton(LucideIcons.trash2, widget.onDelete,
+                            color: Colors.red),
                       ],
                     ),
-                  ],
-                ),
-              ),
-              // 操作按钮（hover 时显示）
-              AnimatedOpacity(
-                opacity: _isHovered || widget.isSelected ? 1.0 : 0.0,
-                duration: const Duration(milliseconds: 150),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (widget.canEdit)
-                      _buildCardActionButton(
-                        icon: LucideIcons.settings,
-                        tooltip: '配置',
-                        onTap: widget.onEdit,
-                      ),
-                    if (widget.canEdit)
-                      _buildCardActionButton(
-                        icon: LucideIcons.trash2,
-                        tooltip: '删除',
-                        onTap: widget.onDelete,
-                      ),
-                  ],
-                ),
+                ],
               ),
             ],
           ),
@@ -2544,19 +2741,41 @@ class _ResourceStartupCardState extends State<_ResourceStartupCard> {
     );
   }
 
-  Widget _buildCardActionButton({
-    required IconData icon,
-    required String tooltip,
-    required VoidCallback onTap,
-  }) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.all(6),
-          child: Icon(icon, size: 14, color: Colors.grey.shade400),
+  Widget _buildTag(IconData icon, String label, MaterialColor color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.shade50,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.shade100),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 10, color: color.shade700),
+          const SizedBox(width: 4),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 10,
+                  color: color.shade700,
+                  fontWeight: FontWeight.w500)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIconButton(IconData icon, VoidCallback onTap,
+      {Color color = Colors.grey}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.all(6),
+        child: Icon(
+          icon,
+          size: 16,
+          color:
+              color == Colors.red ? Colors.red.shade400 : Colors.grey.shade400,
         ),
       ),
     );

@@ -10,6 +10,9 @@ class AppColors {
   static const Color iosSeparator = Color(0xFFC6C6C8);
   static const Color iosHover = Color(0xFFF2F2F7);
 
+  // Alias for compatibility
+  static const Color primary = iosBlue;
+
   // 状态色
   static const Color green = Color(0xFF34C759);
   static const Color red = Color(0xFFFF3B30);
@@ -101,7 +104,7 @@ class AppTheme {
         surface: AppColors.iosCard,
         error: AppColors.red,
       ),
-      fontFamily: null, // 使用系统默认字体
+      fontFamily: 'Microsoft YaHei', // 使用微软雅黑以接近 Web 效果
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.white,
         foregroundColor: Colors.black87,

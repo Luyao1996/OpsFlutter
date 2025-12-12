@@ -1,0 +1,690 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:lucide_icons/lucide_icons.dart';
+import '../../../../core/theme/app_theme.dart';
+import '../data/terminal_api.dart';
+import '../../../../shared/providers/app_providers.dart';
+
+import 'widgets/file_manager_tab.dart';
+import 'widgets/process_manager_tab.dart';
+import 'widgets/console_manager_tab.dart';
+import 'widgets/hardware_info_tab.dart';
+import 'widgets/network_monitor_tab.dart';
+import 'widgets/log_manager_tab.dart';
+import 'widgets/chat_window_tab.dart';
+
+final terminalDetailProvider = FutureProvider.family<Terminal, int>((ref, terminalId) async {
+  final api = ref.read(terminalApiProvider);
+  return api.getById(terminalId);
+});
+
+class TerminalDetailPage extends ConsumerStatefulWidget {
+  final int terminalId;
+
+  const TerminalDetailPage({super.key, required this.terminalId});
+
+  @override
+  ConsumerState<TerminalDetailPage> createState() => _TerminalDetailPageState();
+}
+
+class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
+  // 当前选中的功能 Tab
+  String _selectedTab = '远程控制';
+  Terminal? _liveTerminal;
+  bool _refreshing = false;
+  Timer? _heartbeatTimer;
+
+  final List<Map<String, dynamic>> _tabs = [
+    {'icon': LucideIcons.gamepad2, 'label': '远程控制'},
+    {'icon': LucideIcons.fileText, 'label': '文件管理'},
+    {'icon': LucideIcons.activity, 'label': '进程管理'},
+    {'icon': LucideIcons.terminal, 'label': '终端命令'},
+    {'icon': LucideIcons.cpu, 'label': '硬件配置'},
+    {'icon': LucideIcons.network, 'label': '网络监控'},
+    {'icon': LucideIcons.fileSpreadsheet, 'label': '日志分析'},
+    {'icon': LucideIcons.messageSquare, 'label': '聊天窗口'},
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      _refreshHeartbeat(widget.terminalId, silent: true);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final terminalAsync = ref.watch(terminalDetailProvider(widget.terminalId));
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF3F4F6), // 接近 Vue 项目的背景灰
+      body: terminalAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, stack) => Center(child: Text('Error: $error')),
+        data: (terminal) => Column(
+          children: [
+            _buildHeader(_liveTerminal ?? terminal),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 左侧栏：实时画面 + 系统状态 + 备注
+                    SizedBox(
+                      width: 380,
+                      child: SingleChildScrollView(
+                        child: Column(
+                          children: [
+                            _buildScreenPreviewCard(terminal),
+                            const SizedBox(height: 16),
+                            _buildSystemStatusCard(terminal),
+                            const SizedBox(height: 16),
+                            _buildRemarkCard(terminal),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    // 右侧栏：功能区
+                    Expanded(
+                      child: Column(
+                        children: [
+                          _buildTabBar(),
+                          const SizedBox(height: 16),
+                          Expanded(
+                            child: _buildRightContent(_liveTerminal ?? terminal),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- Header ---
+
+  Widget _buildHeader(Terminal terminal) {
+    return Container(
+      height: 60,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(LucideIcons.arrowLeft, size: 20, color: Colors.black87),
+            onPressed: () => context.pop(),
+          ),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                '终端详情 - ${terminal.name}',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+              ),
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: terminal.status == 1 ? AppColors.green : Colors.grey,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${terminal.statusString} | ${terminal.ip}',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const Spacer(),
+          // 右侧统计与设置
+          Row(
+            children: [
+              Text(
+                'CPU使用率: ${terminal.cpuUsage.round()}%',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+              ),
+              const SizedBox(width: 16),
+              Text(
+                'GPU使用率: ${terminal.gpuUsage.round()}%',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+              ),
+              const SizedBox(width: 16),
+              Container(width: 1, height: 16, color: Colors.grey.shade300),
+              const SizedBox(width: 12),
+              TextButton.icon(
+                onPressed: _refreshing ? null : () => _refreshHeartbeat(terminal.id),
+                icon: _refreshing
+                    ? SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.grey.shade600),
+                      )
+                    : const Icon(LucideIcons.refreshCw, size: 14, color: Colors.black87),
+                label: Text(
+                  '刷新状态',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700, fontWeight: FontWeight.w600),
+                ),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  foregroundColor: Colors.black87,
+                  backgroundColor: Colors.grey.shade100,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: Icon(LucideIcons.settings, size: 18, color: Colors.grey.shade600),
+                onPressed: () {},
+              ),
+            ],
+          )
+        ],
+      ),
+    );
+  }
+
+  // --- Left Column Widgets ---
+
+  Widget _buildScreenPreviewCard(Terminal terminal) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('实时画面', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text('实时', style: TextStyle(fontSize: 10, color: Colors.green)),
+                ),
+              ],
+            ),
+          ),
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: Container(
+              color: Colors.black87,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Placeholder for screen image
+                  Image.network(
+                    'https://picsum.photos/seed/${terminal.id}/800/450',
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Center(
+                      child: Icon(LucideIcons.monitor, color: Colors.white24, size: 48),
+                    ),
+                  ),
+                  // Overlay gradient
+                  Positioned.fill(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.transparent, Colors.black.withOpacity(0.3)],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSystemStatusCard(Terminal terminal) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('系统状态', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+          const SizedBox(height: 16),
+          _buildStatusRow('运行时间', terminal.uptime, null),
+          const SizedBox(height: 12),
+          _buildStatusRow('CPU', '${terminal.cpuUsage.round()}%', terminal.cpuUsage / 100, color: Colors.blue),
+          const SizedBox(height: 12),
+          _buildStatusRow('内存', '${terminal.ramUsage.round()}%', terminal.ramUsage / 100, color: Colors.purple),
+          const SizedBox(height: 12),
+          _buildStatusRow('GPU', '${terminal.gpuUsage.round()}%', terminal.gpuUsage / 100, color: Colors.orange),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusRow(String label, String value, double? progress, {Color? color}) {
+    return Row(
+      children: [
+        SizedBox(width: 60, child: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600))),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (progress != null)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(2),
+                  child: LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 6,
+                    backgroundColor: Colors.grey.shade100,
+                    valueColor: AlwaysStoppedAnimation<Color>(color ?? Colors.blue),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        SizedBox(
+          width: 50,
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRemarkCard(Terminal terminal) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('备注信息', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              TextButton(
+                onPressed: () {}, // Save functionality
+                style: TextButton.styleFrom(
+                  padding: EdgeInsets.zero,
+                  minimumSize: const Size(40, 24),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text('保存', style: TextStyle(fontSize: 12)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            maxLines: 4,
+            decoration: InputDecoration(
+              hintText: '此电脑运行良好，暂无异常。',
+              hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+              filled: true,
+              fillColor: Colors.grey.shade50,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.all(12),
+            ),
+            style: const TextStyle(fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- Right Column Widgets ---
+
+  Widget _buildTabBar() {
+    return Container(
+      height: 48,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        itemCount: _tabs.length,
+        separatorBuilder: (context, index) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final tab = _tabs[index];
+          final isSelected = _selectedTab == tab['label'];
+          return InkWell(
+            onTap: () => setState(() => _selectedTab = tab['label']),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                border: isSelected
+                    ? const Border(bottom: BorderSide(color: AppColors.iosBlue, width: 2))
+                    : null,
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    tab['icon'],
+                    size: 16,
+                    color: isSelected ? AppColors.iosBlue : Colors.grey.shade600,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    tab['label'],
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      color: isSelected ? AppColors.iosBlue : Colors.grey.shade600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildRightContent(Terminal terminal) {
+    // 根据 _selectedTab 返回不同内容，目前仅实现 远程控制
+    if (_selectedTab == '远程控制') {
+      return SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildSectionTitle('电源管理'),
+            const SizedBox(height: 12),
+            _buildPowerGrid(terminal),
+            const SizedBox(height: 24),
+            _buildSectionTitle('远程协助'),
+            const SizedBox(height: 12),
+            _buildRemoteAssistRow(terminal),
+            const SizedBox(height: 24),
+            _buildSectionTitle('最近日志'),
+            const SizedBox(height: 12),
+            _buildRecentLogsTable(),
+          ],
+        ),
+      );
+    } else if (_selectedTab == '文件管理') {
+      return FileManagerTab(terminalId: terminal.id);
+    } else if (_selectedTab == '进程管理') {
+      return ProcessManagerTab(terminalId: terminal.id);
+    } else if (_selectedTab == '终端命令') {
+      return ConsoleManagerTab(terminalId: terminal.id);
+    } else if (_selectedTab == '硬件配置') {
+      return HardwareInfoTab(terminalId: terminal.id);
+    } else if (_selectedTab == '网络监控') {
+      return const NetworkMonitorTab();
+    } else if (_selectedTab == '日志分析') {
+      return LogManagerTab(terminalId: terminal.id);
+    } else if (_selectedTab == '聊天窗口') {
+      return ChatWindowTab(terminalId: terminal.id, terminalName: terminal.name);
+    }
+    return Center(child: Text('功能模块 [$_selectedTab] 开发中...'));
+  }
+
+  Widget _buildSectionTitle(String title) {
+    return Text(title, style: TextStyle(fontSize: 13, color: Colors.grey.shade600));
+  }
+
+  @override
+  void dispose() {
+    _heartbeatTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshHeartbeat(int terminalId, {bool silent = false}) async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    try {
+      final api = ref.read(terminalApiProvider);
+      final hb = await api.getHeartbeat(terminalId);
+      setState(() {
+        _liveTerminal = hb;
+      });
+      if (mounted && !silent) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已刷新状态')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('刷新失败：$e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  Widget _buildPowerGrid(Terminal terminal) {
+    return Row(
+      children: [
+        Expanded(child: _buildPowerCard('关机', LucideIcons.power, () => _remoteAction(terminal.id, 'shutdown'))),
+        const SizedBox(width: 12),
+        Expanded(child: _buildPowerCard('重启', LucideIcons.refreshCw, () => _remoteAction(terminal.id, 'restart'))),
+        const SizedBox(width: 12),
+        Expanded(child: _buildPowerCard('注销', LucideIcons.logOut, () => _remoteAction(terminal.id, 'logout'))), // logout not in API, placeholder
+        const SizedBox(width: 12),
+        Expanded(child: _buildPowerCard('锁定', LucideIcons.lock, () => _remoteAction(terminal.id, 'lock'))), // lock not in API, placeholder
+      ],
+    );
+  }
+
+  Widget _buildPowerCard(String label, IconData icon, VoidCallback onTap) {
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: Colors.grey.shade200),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, size: 20, color: Colors.grey.shade700),
+              ),
+              const SizedBox(height: 12),
+              Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRemoteAssistRow(Terminal terminal) {
+    return Row(
+      children: [
+        Expanded(
+          flex: 2,
+          child: _buildBigActionButton(
+            'VNC 远程桌面',
+            '极速连接，低延迟',
+            LucideIcons.monitor,
+            AppColors.iosBlue,
+            Colors.white,
+            () => _remoteAction(terminal.id, 'vnc'),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: 2,
+          child: _buildBigActionButton(
+            'RustDesk',
+            '备用远程方案',
+            LucideIcons.settings,
+            Colors.white,
+            Colors.black87,
+            () => _remoteAction(terminal.id, 'rustdesk'),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: 2,
+          child: _buildBigActionButton(
+            '截图',
+            '获取当前屏幕',
+            LucideIcons.moreHorizontal,
+            Colors.white,
+            Colors.black87,
+            () => _remoteAction(terminal.id, 'screenshot'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBigActionButton(
+      String title, String subtitle, IconData icon, Color bgColor, Color textColor, VoidCallback onTap) {
+    final isPrimary = bgColor == AppColors.iosBlue;
+    return Material(
+      color: bgColor,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: isPrimary ? BorderSide.none : BorderSide(color: Colors.grey.shade200),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 24, color: textColor),
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor)),
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                      style: TextStyle(
+                          fontSize: 10, color: isPrimary ? Colors.white.withOpacity(0.8) : Colors.grey.shade500)),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRecentLogsTable() {
+    // 模拟数据
+    final logs = [
+      {'time': '14:30:22', 'level': 'INFO', 'msg': '系统启动成功'},
+      {'time': '14:30:25', 'level': 'INFO', 'msg': '网络连接已建立'},
+      {'time': '14:35:10', 'level': 'WARN', 'msg': 'CPU 温度略高'},
+      {'time': '15:00:00', 'level': 'INFO', 'msg': '用户登录'},
+    ];
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        children: logs.map((log) {
+          final isWarn = log['level'] == 'WARN';
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: Color(0xFFF3F4F6))),
+            ),
+            child: Row(
+              children: [
+                SizedBox(width: 80, child: Text(log['time']!, style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontFamily: 'monospace'))),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: isWarn ? Colors.orange.withOpacity(0.1) : Colors.green.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    log['level']!,
+                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: isWarn ? Colors.orange : Colors.green),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Text(log['msg']!, style: const TextStyle(fontSize: 13, color: Colors.black87)),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Future<void> _remoteAction(int terminalId, String action) async {
+    try {
+      final api = ref.read(terminalApiProvider);
+      await api.remote(terminalId, action);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('指令 [$action] 已发送')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('操作失败: $e'), backgroundColor: Colors.red));
+      }
+    }
+  }
+}

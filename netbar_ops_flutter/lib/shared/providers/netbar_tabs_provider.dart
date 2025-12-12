@@ -132,7 +132,11 @@ class NetbarTabsNotifier extends StateNotifier<NetbarTabsState> {
 
   /// 关闭标签页
   Future<void> closeTab(int id) async {
+    if (state.tabs.length <= 1) return; // 保留至少一个网吧标签
+
     final tabs = state.tabs.where((t) => t.id != id).toList();
+    if (tabs.length == state.tabs.length) return;
+
     int? newActiveId = state.activeTabId;
     if (state.activeTabId == id) {
       newActiveId = tabs.isNotEmpty ? tabs.last.id : null;
@@ -153,4 +157,3 @@ class NetbarTabsNotifier extends StateNotifier<NetbarTabsState> {
 final netbarTabsProvider = StateNotifierProvider<NetbarTabsNotifier, NetbarTabsState>((ref) {
   return NetbarTabsNotifier();
 });
-

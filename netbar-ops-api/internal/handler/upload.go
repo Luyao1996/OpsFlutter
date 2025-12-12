@@ -20,10 +20,14 @@ import (
 )
 
 const uploadDir = "./uploads"
+const uploadImageDir = "./uploads/images"
 
 func init() {
 	// 确保上传目录存在
 	os.MkdirAll(uploadDir, 0755)
+	// 桌面壁纸/应用图标等静态资源的默认存储目录。
+	// TODO: 后续可能拆到独立存储服务或 CDN。
+	os.MkdirAll(uploadImageDir, 0755)
 }
 
 // ensureDirectoryExists 确保目录路径存在，如果不存在则创建
@@ -243,6 +247,97 @@ func UploadFile(c *gin.Context) {
 
 	if err := database.MainDB.Create(&resource).Error; err != nil {
 		os.Remove(savePath) // 删除已保存的文件
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建资源记录失败"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, resource)
+}
+
+// UploadDesktopImage 上传桌面壁纸/应用图标等图片到 uploads/images 目录。
+// 逻辑与 UploadFile 基本一致，只是强制落盘到 images 子目录，便于后续独立拆分。
+func UploadDesktopImage(c *gin.Context) {
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择文件"})
+		return
+	}
+
+	zone := c.PostForm("zone")
+	if zone == "" {
+		zone = "HEADQUARTERS"
+	}
+
+	parentIDStr := c.PostForm("parent_id")
+	var parentID *uint
+	if parentIDStr != "" && parentIDStr != "null" {
+		if id, convErr := strconv.ParseUint(parentIDStr, 10, 32); convErr == nil {
+			pid := uint(id)
+			parentID = &pid
+		}
+	}
+
+	netbarIDStr := c.PostForm("netbar_id")
+	var netbarID uint
+	if netbarIDStr != "" && netbarIDStr != "null" {
+		if id, convErr := strconv.ParseUint(netbarIDStr, 10, 32); convErr == nil {
+			netbarID = uint(id)
+		}
+	}
+
+	username, _ := c.Get("username")
+	userID, _ := c.Get("user_id")
+
+	fileName := file.Filename
+
+	ext := filepath.Ext(fileName)
+	timestamp := time.Now().UnixNano()
+	savedName := fmt.Sprintf("%d%s", timestamp, ext)
+	savePath := filepath.Join(uploadImageDir, savedName)
+
+	if err := c.SaveUploadedFile(file, savePath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败"})
+		return
+	}
+
+	f, _ := os.Open(savePath)
+	hash := md5.New()
+	io.Copy(hash, f)
+	f.Close()
+	md5Hash := hex.EncodeToString(hash.Sum(nil))
+
+	fileType := getFileType(fileName)
+
+	uniqueName := generateUniqueNameForUpload(fileName, parentID, zone)
+
+	var resourcePath string
+	if parentID != nil {
+		var parent model.Resource
+		if err := database.MainDB.First(&parent, *parentID).Error; err == nil {
+			resourcePath = parent.Path + "/" + uniqueName
+		}
+	} else {
+		resourcePath = uniqueName
+	}
+
+	resource := model.Resource{
+		Name:        uniqueName,
+		Path:        resourcePath,
+		StoragePath: savePath,
+		ParentID:    parentID,
+		NetbarID:    netbarID,
+		IsDirectory: false,
+		Type:        fileType,
+		Size:        file.Size,
+		Zone:        zone,
+		Uploader:    username.(string),
+		UploaderID:  userID.(uint),
+		Hash:        md5Hash,
+		IsGlobal:    true,
+	}
+
+	if err := database.MainDB.Create(&resource).Error; err != nil {
+		os.Remove(savePath)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建资源记录失败"})
 		return
 	}
