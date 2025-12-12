@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'dart:async';
 import '../../core/storage/token_store.dart';
 import '../../features/auth/data/auth_api.dart';
 import '../../features/dashboard/data/dashboard_api.dart';
@@ -42,11 +43,21 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   /// 登出
   Future<void> logout() async {
-    try {
-      await _authApi.logout();
-    } catch (_) {}
-    await TokenStore.clearAuth();
+    // 先切换到未登录状态，确保立即触发路由重定向
     state = AuthState(isLoggedIn: false);
+    // 异步通知后端登出（不阻塞 UI）
+    unawaited(() async {
+      try {
+        await _authApi.logout();
+      } catch (_) {}
+    }());
+    await TokenStore.clearAuth();
+  }
+
+  /// 401/强制登出：只更新状态，不发起网络请求
+  Future<void> forceLogout() async {
+    state = AuthState(isLoggedIn: false);
+    await TokenStore.clearAuth();
   }
 
   /// 加载当前用户
@@ -56,7 +67,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final user = await _authApi.getCurrentUser();
       state = AuthState(isLoggedIn: true, user: user);
     } catch (_) {
-      await logout();
+      await forceLogout();
     }
   }
 }
@@ -127,4 +138,3 @@ final dashboardStatsProvider = FutureProvider.autoDispose<DashboardStats>((ref) 
   final api = ref.read(dashboardApiProvider);
   return api.getStats(netbarId: netbar.id);
 });
-

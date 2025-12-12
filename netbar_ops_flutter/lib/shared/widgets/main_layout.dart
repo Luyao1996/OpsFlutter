@@ -11,6 +11,11 @@ import '../../features/netbar/data/netbar_api.dart';
 import 'netbar_tab_bar.dart';
 import 'upload_queue_overlay.dart';
 import '../../features/user/presentation/user_profile_dialog.dart';
+import '../services/terminal_window_bridge.dart';
+import '../services/terminal_dock_actions.dart';
+import 'terminal_dock_bar.dart';
+import '../providers/terminal_dock_provider.dart';
+import '../../core/network/api_client.dart';
 
 /// 主布局 - 对应 Vue 的 ClientMainLayout
 class MainLayout extends ConsumerStatefulWidget {
@@ -33,6 +38,16 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     super.initState();
     // 加载用户信息和统计
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      final container = ProviderScope.containerOf(context, listen: false);
+      TerminalWindowBridge.initMainWindowHandler(container);
+      TokenStore.onBeforeClearAuth = () async {
+        await TerminalDockActions.closeAllMinimized(container);
+        await TerminalWindowBridge.closeAllSubWindows();
+        container.read(terminalDockProvider.notifier).reset();
+      };
+      ApiClient.onUnauthorized = () {
+        container.read(authNotifierProvider.notifier).forceLogout();
+      };
       ref.read(authNotifierProvider.notifier).loadCurrentUser();
       _initializeNetbarTabs();
     });
@@ -52,12 +67,17 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
 
     return Scaffold(
       backgroundColor: AppColors.iosBg,
-      body: Column(
+      body: Stack(
         children: [
-          // 顶栏
-          _buildHeader(authState, isNarrow, stats), // Pass stats to header
-          // 主内容
-          Expanded(child: widget.child),
+          Column(
+            children: [
+              // 顶栏
+              _buildHeader(authState, isNarrow, stats),
+              // 主内容
+              Expanded(child: widget.child),
+            ],
+          ),
+          const TerminalDockBar(),
         ],
       ),
     );

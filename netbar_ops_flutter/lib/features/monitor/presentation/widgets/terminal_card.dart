@@ -100,7 +100,7 @@ class _TerminalCardState extends State<TerminalCard> {
         Container(
           color: const Color(0xFF1F2937), // bg-gray-800 作为占位背景
           child: Image.network(
-            'https://picsum.photos/seed/${t.id}/400/225', // 使用占位图
+            t.desktopPreviewUrl(width: 400, height: 225),
             fit: BoxFit.cover,
             errorBuilder: (context, error, stackTrace) => Container(
               color: const Color(0xFF1F2937),
@@ -245,4 +245,3 @@ class _TerminalCardState extends State<TerminalCard> {
     );
   }
 }
-

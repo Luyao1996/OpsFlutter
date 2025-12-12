@@ -5,6 +5,9 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/providers/terminal_dock_provider.dart';
+import '../../../shared/services/terminal_window_bridge.dart';
+import '../../../shared/utils/platform_utils.dart';
 import '../data/terminal_api.dart';
 import 'widgets/terminal_card.dart';
 
@@ -316,6 +319,16 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
 
   /// 打开终端详情
   void _openTerminalDetail(Terminal terminal) {
+    if (isDesktopPlatform) {
+      final lastTab =
+          ref.read(terminalDockProvider.notifier).lastTabFor(terminal.id);
+      TerminalWindowBridge.openTerminalWindow(
+        terminalId: terminal.id,
+        initialTab: lastTab,
+        terminalSnapshot: terminal,
+      );
+      return;
+    }
     context.push('/terminal/${terminal.id}');
   }
 

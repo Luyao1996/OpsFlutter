@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
@@ -163,7 +164,9 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
     return InkWell(
       onTap: () {
         Navigator.of(context).pop();
+        // 立即切回登录界面（路由重定向也会兜底）
         ref.read(authNotifierProvider.notifier).logout();
+        context.go('/login');
         // Router redirection handles the rest
       },
       borderRadius: BorderRadius.circular(12),

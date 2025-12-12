@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../core/storage/token_store.dart';
 import '../features/auth/presentation/login_page.dart';
 import '../features/channel/presentation/channel_management_page.dart';
 import '../features/dashboard/presentation/dashboard_page.dart';
@@ -14,13 +13,16 @@ import '../features/desktop/presentation/desktop_management_page.dart'; // Impor
 import '../shared/widgets/main_layout.dart';
 import '../features/monitor/presentation/terminal_detail_page.dart';
 import '../features/channel/presentation/channel_monitor_page.dart';
+import '../shared/providers/app_providers.dart';
 
 /// 路由配置
 final routerProvider = Provider<GoRouter>((ref) {
+  final refreshListenable = ref.watch(_routerRefreshListenableProvider);
   return GoRouter(
+    refreshListenable: refreshListenable,
     initialLocation: '/dashboard',
     redirect: (context, state) {
-      final isLoggedIn = TokenStore.isLoggedIn();
+      final isLoggedIn = ref.read(authNotifierProvider).isLoggedIn;
       final isLoginRoute = state.matchedLocation == '/login';
 
       if (!isLoggedIn && !isLoginRoute) {
@@ -159,3 +161,20 @@ final routerProvider = Provider<GoRouter>((ref) {
     ),
   );
 });
+
+final _routerRefreshListenableProvider =
+    Provider<_RouterRefreshListenable>((ref) {
+  final notifier = _RouterRefreshListenable(ref);
+  ref.onDispose(notifier.dispose);
+  return notifier;
+});
+
+class _RouterRefreshListenable extends ChangeNotifier {
+  _RouterRefreshListenable(this._ref) {
+    _ref.listen<AuthState>(authNotifierProvider, (_, __) {
+      notifyListeners();
+    });
+  }
+
+  final Ref _ref;
+}

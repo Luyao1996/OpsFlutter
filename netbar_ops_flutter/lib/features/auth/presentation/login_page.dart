@@ -19,6 +19,7 @@ class SavedUser {
   final String role;
   final Color avatarColor;
   final String lastLogin;
+  final String? password; // base64(utf8)
 
   SavedUser({
     required this.id,
@@ -27,6 +28,7 @@ class SavedUser {
     required this.role,
     required this.avatarColor,
     required this.lastLogin,
+    this.password,
   });
 
   Map<String, dynamic> toJson() => {
@@ -36,6 +38,7 @@ class SavedUser {
     'role': role,
     'avatarColor': avatarColor.value,
     'lastLogin': lastLogin,
+    if (password != null && password!.isNotEmpty) 'password': password,
   };
 
   factory SavedUser.fromJson(Map<String, dynamic> json) => SavedUser(
@@ -45,6 +48,7 @@ class SavedUser {
     role: json['role'] ?? '',
     avatarColor: Color(json['avatarColor'] ?? 0xFF007AFF),
     lastLogin: json['lastLogin'] ?? '',
+    password: json['password'],
   );
 }
 
@@ -128,7 +132,13 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
     }
   }
 
-  Future<void> _saveUser(String userId, String username, String displayName, String role) async {
+  Future<void> _saveUser(
+    String userId,
+    String username,
+    String displayName,
+    String role,
+    String encodedPassword,
+  ) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final colors = [
@@ -142,6 +152,7 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
         role: role == 'admin' ? '超级管理员' : '网吧运维',
         avatarColor: colors[math.Random().nextInt(colors.length)],
         lastLogin: '刚刚',
+        password: encodedPassword,
       );
 
       final exists = _savedUsers.indexWhere((u) => u.username == username);
@@ -153,6 +164,9 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
           role: _savedUsers[exists].role,
           avatarColor: _savedUsers[exists].avatarColor,
           lastLogin: '刚刚',
+          password: encodedPassword.isNotEmpty
+              ? encodedPassword
+              : _savedUsers[exists].password,
         );
       } else {
         _savedUsers.add(newUser);
@@ -209,6 +223,7 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
   }
 
   Future<void> _handleLogin() async {
+    if (_isLoggingIn) return;
     final username = _viewState == 'manual'
         ? _usernameController.text
         : _selectedUser?.username ?? '';  // 使用 username 而非 name
@@ -228,11 +243,13 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
       // 保存用户到历史记录
       final authState = ref.read(authNotifierProvider);
       if (authState.user != null) {
+        final encodedPassword = base64Encode(utf8.encode(password));
         await _saveUser(
           authState.user!.id.toString(),
           authState.user!.username,  // 登录用户名
           authState.user!.name,      // 显示名称
           authState.user!.role,
+          encodedPassword,
         );
       }
 
@@ -241,6 +258,17 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
       setState(() => _loginError = e.toString());
     } finally {
       if (mounted) setState(() => _isLoggingIn = false);
+    }
+  }
+
+  String? _decodeSavedPassword(SavedUser user) {
+    final raw = user.password;
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = utf8.decode(base64Decode(raw));
+      return decoded.isEmpty ? null : decoded;
+    } catch (_) {
+      return raw.isEmpty ? null : raw;
     }
   }
 
@@ -448,12 +476,19 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
   Widget _buildUserAvatar(SavedUser user) {
     return _HoverableUserAvatar(
       user: user,
-      onTap: () => setState(() {
-        _selectedUser = user;
-        _viewState = 'password';
-        _passwordController.clear();
-        _loginError = null;
-      }),
+      onTap: () {
+        final savedPassword = _decodeSavedPassword(user);
+        setState(() {
+          _selectedUser = user;
+          _viewState = 'password';
+          _passwordController.text = savedPassword ?? '';
+          _loginError = null;
+        });
+
+        if (savedPassword != null && savedPassword.isNotEmpty) {
+          Future.microtask(_handleLogin);
+        }
+      },
       onDelete: () => _showDeleteConfirm(user),
     );
   }

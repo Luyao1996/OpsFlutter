@@ -10,6 +10,7 @@ class TokenStore {
   static const String _autoConnectKey = 'auto_connect_last_netbar';
 
   static SharedPreferences? _prefs;
+  static Future<void> Function()? onBeforeClearAuth;
 
   /// 初始化
   static Future<void> init() async {
@@ -103,6 +104,9 @@ class TokenStore {
 
   /// 清除所有认证数据
   static Future<void> clearAuth() async {
+    try {
+      await onBeforeClearAuth?.call();
+    } catch (_) {}
     await removeToken();
     await removeUser();
     await removeCurrentNetbar();

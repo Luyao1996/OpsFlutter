@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,6 +8,10 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../data/terminal_api.dart';
 import '../../../../shared/providers/app_providers.dart';
+import '../../../../shared/providers/terminal_dock_provider.dart';
+import '../../../../shared/services/terminal_window_bridge.dart';
+import '../../../../shared/services/window_control.dart';
+import '../../../../shared/utils/platform_utils.dart';
 
 import 'widgets/file_manager_tab.dart';
 import 'widgets/process_manager_tab.dart';
@@ -23,8 +28,17 @@ final terminalDetailProvider = FutureProvider.family<Terminal, int>((ref, termin
 
 class TerminalDetailPage extends ConsumerStatefulWidget {
   final int terminalId;
+  final bool isStandaloneWindow;
+  final int? windowId;
+  final String? initialTab;
 
-  const TerminalDetailPage({super.key, required this.terminalId});
+  const TerminalDetailPage({
+    super.key,
+    required this.terminalId,
+    this.isStandaloneWindow = false,
+    this.windowId,
+    this.initialTab,
+  });
 
   @override
   ConsumerState<TerminalDetailPage> createState() => _TerminalDetailPageState();
@@ -35,6 +49,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   String _selectedTab = '远程控制';
   Terminal? _liveTerminal;
   bool _refreshing = false;
+  bool _isMaximized = false;
   Timer? _heartbeatTimer;
 
   final List<Map<String, dynamic>> _tabs = [
@@ -51,9 +66,20 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialTab != null && widget.initialTab!.isNotEmpty) {
+      _selectedTab = widget.initialTab!;
+    }
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       _refreshHeartbeat(widget.terminalId, silent: true);
     });
+
+    if (isDesktopPlatform && widget.isStandaloneWindow) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        final wid = widget.windowId ?? 0;
+        final maximized = await WindowControl.isMaximized(wid);
+        if (mounted) setState(() => _isMaximized = maximized);
+      });
+    }
   }
 
   @override
@@ -124,11 +150,6 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       ),
       child: Row(
         children: [
-          IconButton(
-            icon: const Icon(LucideIcons.arrowLeft, size: 20, color: Colors.black87),
-            onPressed: () => context.pop(),
-          ),
-          const SizedBox(width: 8),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.center,
@@ -157,22 +178,45 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
               ),
             ],
           ),
-          const Spacer(),
+          const SizedBox(width: 16),
+          Expanded(
+            child: MouseRegion(
+              cursor: widget.isStandaloneWindow && isDesktopPlatform
+                  ? SystemMouseCursors.move
+                  : MouseCursor.defer,
+              child: Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: widget.isStandaloneWindow && isDesktopPlatform
+                    ? (event) {
+                        if ((event.buttons & kPrimaryButton) == 0) return;
+                        final wid = widget.windowId ?? 0;
+                        WindowControl.startDragging(wid);
+                      }
+                    : null,
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'CPU使用率: ${terminal.cpuUsage.round()}%',
+                        style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                      ),
+                      const SizedBox(width: 16),
+                      Text(
+                        'GPU使用率: ${terminal.gpuUsage.round()}%',
+                        style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
           // 右侧统计与设置
           Row(
             children: [
-              Text(
-                'CPU使用率: ${terminal.cpuUsage.round()}%',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-              ),
-              const SizedBox(width: 16),
-              Text(
-                'GPU使用率: ${terminal.gpuUsage.round()}%',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-              ),
-              const SizedBox(width: 16),
-              Container(width: 1, height: 16, color: Colors.grey.shade300),
-              const SizedBox(width: 12),
               TextButton.icon(
                 onPressed: _refreshing ? null : () => _refreshHeartbeat(terminal.id),
                 icon: _refreshing
@@ -198,11 +242,67 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                 icon: Icon(LucideIcons.settings, size: 18, color: Colors.grey.shade600),
                 onPressed: () {},
               ),
+              if (isDesktopPlatform)
+                IconButton(
+                  icon: Icon(LucideIcons.minus, size: 18, color: Colors.grey.shade600),
+                  tooltip: '最小化到 Dock',
+                  onPressed: () => _handleMinimize(terminal),
+                ),
+              if (isDesktopPlatform && widget.isStandaloneWindow)
+                IconButton(
+                  icon: Icon(
+                    _isMaximized ? LucideIcons.minimize2 : LucideIcons.maximize2,
+                    size: 18,
+                    color: Colors.grey.shade600,
+                  ),
+                  tooltip: _isMaximized ? '还原窗口' : '最大化窗口',
+                  onPressed: _handleToggleMaximize,
+                ),
+              IconButton(
+                icon: Icon(LucideIcons.x, size: 18, color: Colors.grey.shade600),
+                tooltip: '关闭窗口',
+                onPressed: _handleClose,
+              ),
             ],
           )
         ],
       ),
     );
+  }
+
+  Future<void> _handleMinimize(Terminal terminal) async {
+    if (!isDesktopPlatform) return;
+    await TerminalWindowBridge.sendToMain('terminal_minimize', {
+      'terminalId': widget.terminalId,
+      'terminal': terminal.toJson(),
+      'lastTab': _selectedTab,
+      'windowId': widget.windowId,
+    });
+    if (widget.isStandaloneWindow && widget.windowId != null) {
+      await TerminalWindowBridge.closeWindowById(widget.windowId!);
+    } else if (mounted) {
+      context.pop();
+    }
+  }
+
+  Future<void> _handleClose() async {
+    if (isDesktopPlatform) {
+      await TerminalWindowBridge.sendToMain('terminal_close', {
+        'terminalId': widget.terminalId,
+      });
+      if (widget.isStandaloneWindow && widget.windowId != null) {
+        await TerminalWindowBridge.closeWindowById(widget.windowId!);
+        return;
+      }
+    }
+    if (mounted) context.pop();
+  }
+
+  Future<void> _handleToggleMaximize() async {
+    if (!isDesktopPlatform || !widget.isStandaloneWindow) return;
+    final wid = widget.windowId ?? 0;
+    final maximized = await WindowControl.toggleMaximize(wid);
+    if (mounted) setState(() => _isMaximized = maximized);
   }
 
   // --- Left Column Widgets ---
@@ -243,7 +343,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                 children: [
                   // Placeholder for screen image
                   Image.network(
-                    'https://picsum.photos/seed/${terminal.id}/800/450',
+                    terminal.desktopPreviewUrl(width: 800, height: 450),
                     fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => const Center(
                       child: Icon(LucideIcons.monitor, color: Colors.white24, size: 48),
@@ -395,7 +495,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           final tab = _tabs[index];
           final isSelected = _selectedTab == tab['label'];
           return InkWell(
-            onTap: () => setState(() => _selectedTab = tab['label']),
+            onTap: () => _selectTab(tab['label'] as String),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               alignment: Alignment.center,
@@ -427,6 +527,19 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         },
       ),
     );
+  }
+
+  void _selectTab(String label) {
+    setState(() => _selectedTab = label);
+
+    if (widget.isStandaloneWindow && isDesktopPlatform) {
+      TerminalWindowBridge.sendToMain('terminal_tab_changed', {
+        'terminalId': widget.terminalId,
+        'lastTab': label,
+      });
+    } else {
+      ref.read(terminalDockProvider.notifier).setLastTab(widget.terminalId, label);
+    }
   }
 
   Widget _buildRightContent(Terminal terminal) {

@@ -17,6 +17,7 @@ class Terminal {
   final double gpuUsage;
   final double diskUsage;
   final String uptime;
+  final String? screenshotUrl;
   final String? lastOnline;
   final String? lastHeartbeat;
   final String? createdAt;
@@ -38,6 +39,7 @@ class Terminal {
     required this.gpuUsage,
     required this.diskUsage,
     required this.uptime,
+    this.screenshotUrl,
     this.lastOnline,
     this.lastHeartbeat,
     this.createdAt,
@@ -61,12 +63,36 @@ class Terminal {
       gpuUsage: (json['gpu_usage'] ?? 0).toDouble(),
       diskUsage: (json['disk_usage'] ?? 0).toDouble(),
       uptime: json['uptime'] ?? '0天',
+      screenshotUrl: json['screenshot_url'] ?? json['screenshotUrl'],
       lastOnline: json['last_online'],
       lastHeartbeat: json['last_heartbeat'],
       createdAt: json['created_at'],
       updatedAt: json['updated_at'],
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'code': code,
+        'netbar_id': netbarId,
+        'area_id': areaId,
+        'ip': ip,
+        'mac': mac,
+        'os': os,
+        'type': type,
+        'status': status,
+        'cpu_usage': cpuUsage,
+        'ram_usage': ramUsage,
+        'gpu_usage': gpuUsage,
+        'disk_usage': diskUsage,
+        'uptime': uptime,
+        'screenshot_url': screenshotUrl,
+        'last_online': lastOnline,
+        'last_heartbeat': lastHeartbeat,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+      };
 
   /// 获取状态字符串
   String get statusString {
@@ -82,6 +108,15 @@ class Terminal {
 
   /// 是否为关键设备
   bool get isKeyDevice => ['server', 'console', 'cashier'].contains(type);
+
+  /// 桌面预览/缩略图 URL（有真实截图则优先使用）
+  String desktopPreviewUrl({int width = 400, int height = 225}) {
+    final url = screenshotUrl;
+    if (url != null && url.isNotEmpty) return url;
+    return 'https://picsum.photos/seed/$id/$width/$height';
+  }
+
+  String get desktopThumbnailUrl => desktopPreviewUrl();
 }
 
 class TerminalProcess {
