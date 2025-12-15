@@ -16,6 +16,8 @@ import '../services/terminal_dock_actions.dart';
 import 'terminal_dock_bar.dart';
 import '../providers/terminal_dock_provider.dart';
 import '../../core/network/api_client.dart';
+import '../../core/responsive/responsive.dart';
+import '../../features/channel/presentation/platform_helper.dart';
 
 /// 主布局 - 对应 Vue 的 ClientMainLayout
 class MainLayout extends ConsumerStatefulWidget {
@@ -58,9 +60,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     final authState = ref.watch(authNotifierProvider);
     final stats = ref.watch(dashboardStatsProvider);
     final tabsState = ref.watch(netbarTabsProvider);
-    final isNarrow = MediaQuery.of(context).size.width < 900 ||
-        Theme.of(context).platform == TargetPlatform.iOS ||
-        Theme.of(context).platform == TargetPlatform.android;
+    final isNarrow = platformHelper.isMobile || context.isNarrow;
 
     // 同步活动标签到 currentNetbarProvider
     _syncActiveTab(tabsState);
@@ -77,7 +77,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
               Expanded(child: widget.child),
             ],
           ),
-          const TerminalDockBar(),
+          if (platformHelper.isDesktop) const TerminalDockBar(),
         ],
       ),
     );
@@ -185,14 +185,12 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
   void _showNetbarSelector() {
     final tabsNotifier = ref.read(netbarTabsProvider.notifier);
     final current = ref.read(currentNetbarProvider);
-    final isMobile = MediaQuery.of(context).size.width < 768 ||
-        Theme.of(context).platform == TargetPlatform.iOS ||
-        Theme.of(context).platform == TargetPlatform.android;
+    final isMobile = platformHelper.isMobile || MediaQuery.of(context).size.width < 768;
     showDialog(
       context: context,
       builder: (context) => Dialog(
         backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.all(32),
+        insetPadding: EdgeInsets.all(isMobile ? 12 : 32),
         child: NetbarSelectorModal(
           selectedId: current.id,
           onSelect: (id, name, status) {
@@ -206,6 +204,26 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
   }
 
   Widget _buildHeader(AuthState authState, bool isNarrow, AsyncValue stats) {
+    if (isNarrow) {
+      return Container(
+        height: 56,
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.8),
+          border: Border(bottom: BorderSide(color: Colors.grey.withOpacity(0.2))),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          children: [
+            _buildLeftSection(authState, isNarrow: true),
+            const SizedBox(width: 10),
+            Expanded(child: _buildNetbarPicker(true)),
+            const SizedBox(width: 10),
+            _buildRightSection(authState, true),
+          ],
+        ),
+      );
+    }
+
     return Container(
       height: 56,
       decoration: BoxDecoration(
@@ -216,7 +234,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
       child: Row(
         children: [
           // 左侧: Logo & 菜单
-          _buildLeftSection(authState),
+          _buildLeftSection(authState, isNarrow: isNarrow),
           const SizedBox(width: 24),
           Container(width: 1, height: 24, color: Colors.grey.shade200),
           const SizedBox(width: 24),
@@ -242,7 +260,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     );
   }
 
-  Widget _buildLeftSection(AuthState authState) {
+  Widget _buildLeftSection(AuthState authState, {required bool isNarrow}) {
     return Row(
       children: [
         // 系统菜单按钮
@@ -256,9 +274,11 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
               borderRadius: BorderRadius.circular(8),
               color: _isSystemMenuOpen ? Colors.black.withValues(alpha: 0.05) : Colors.transparent,
             ),
-            child: Row(
-              children: [
-                Container(
+            child: SizedBox(
+              width: 48,
+              height: 48,
+              child: Center(
+                child: Container(
                   width: 32,
                   height: 32,
                   decoration: BoxDecoration(
@@ -268,7 +288,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                   ),
                   child: const Icon(LucideIcons.menu, size: 18, color: Colors.white),
                 ),
-              ],
+              ),
             ),
           ),
           itemBuilder: (context) => [
@@ -357,6 +377,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           onSelected: (path) => context.go(path),
           child: Container(
+            constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
             padding: EdgeInsets.symmetric(horizontal: isNarrow ? 8 : 12, vertical: 6),
             decoration: BoxDecoration(borderRadius: BorderRadius.circular(8)),
             child: Row(
@@ -383,7 +404,8 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
           onTap: () => _showUserProfile(authState),
           borderRadius: BorderRadius.circular(24),
           child: Container(
-            padding: const EdgeInsets.all(4),
+            constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+            padding: EdgeInsets.all(isNarrow ? 10 : 4),
             decoration: BoxDecoration(
               color: Colors.grey.shade100.withOpacity(0.5),
               borderRadius: BorderRadius.circular(24),
@@ -437,7 +459,19 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
   }
 
   void _showUserProfile(AuthState authState) {
-    showDialog(
+    final isNarrow = platformHelper.isMobile || context.isNarrow;
+    if (isNarrow) {
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        barrierColor: Colors.black.withOpacity(0.4),
+        builder: (context) => const UserProfileDialog(asBottomSheet: true),
+      );
+      return;
+    }
+
+    showDialog<void>(
       context: context,
       barrierColor: Colors.black.withOpacity(0.4),
       builder: (context) => const UserProfileDialog(),

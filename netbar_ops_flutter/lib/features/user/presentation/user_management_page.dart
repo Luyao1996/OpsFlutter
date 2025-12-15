@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/responsive/responsive.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../data/user_mock_data.dart';
@@ -228,104 +229,187 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
 
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F6),
-      body: Row(
-        children: [
-          // Sidebar
-            GroupSidebar(
-              groups: _groups,
-              selectedGroupId: _selectedGroupId,
-              onSelectGroup: (id) => setState(() => _selectedGroupId = id),
-              onAddGroup: _handleAddGroup,
-            ),
-          // Main Content
-          Expanded(
-            child: Column(
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = context.isNarrow;
+
+          final sidebar = GroupSidebar(
+            width: isNarrow ? null : 240,
+            groups: _groups,
+            selectedGroupId: _selectedGroupId,
+            onSelectGroup: (id) => setState(() => _selectedGroupId = id),
+            onAddGroup: _handleAddGroup,
+          );
+
+          final main = Column(
+            children: [
+              _buildTopBar(isNarrow),
+              Expanded(
+                child: UserGrid(
+                  users: _filteredUsers,
+                  onEditUser: _handleEditUser,
+                  onBind2FA: _handleBind2FA,
+                ),
+              ),
+            ],
+          );
+
+          if (!isNarrow) {
+            return Row(
               children: [
-                // Top Bar
-                Container(
-                  height: 64,
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: [
-                          Text(
-                            _selectedGroupName,
-                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
-                          ),
-                          const SizedBox(width: 12),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade100,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              '${_filteredUsers.length} 成员',
-                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.grey.shade600),
-                            ),
-                          ),
-                        ],
-                      ),
-                      Row(
-                        children: [
-                          // Search Box
-                          Container(
-                            width: 240,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade50,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.grey.shade200),
-                            ),
-                            child: TextField(
-                              onChanged: (v) => setState(() => _searchQuery = v),
-                              style: const TextStyle(fontSize: 13),
-                              decoration: InputDecoration(
-                                hintText: '搜索成员...',
-                                hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
-                                prefixIcon: Icon(LucideIcons.search, size: 14, color: Colors.grey.shade400),
-                                border: InputBorder.none,
-                                contentPadding: const EdgeInsets.only(bottom: 10),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          // Add Button
-                          ElevatedButton.icon(
-                            onPressed: _handleAddUser,
-                            icon: const Icon(LucideIcons.userPlus, size: 16),
-                            label: const Text('添加成员', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.iosBlue,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                              elevation: 0,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+                sidebar,
+                Expanded(child: main),
+              ],
+            );
+          }
+          return main;
+        },
+      ),
+    );
+  }
+
+  Widget _buildTopBar(bool isNarrow) {
+    return Container(
+      padding:
+          EdgeInsets.symmetric(horizontal: isNarrow ? 12 : 24, vertical: 12),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              if (isNarrow)
+                IconButton(
+                  onPressed: _showGroupSelectorSheet,
+                  icon: const Icon(LucideIcons.menu, size: 20),
+                  tooltip: '选择分组',
                 ),
-                // User Grid
-                Expanded(
-                  child: UserGrid(
-                    users: _filteredUsers,
-                    onEditUser: _handleEditUser,
-                    onBind2FA: _handleBind2FA,
-                  ),
+              Expanded(
+                child: Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        _selectedGroupName,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${_filteredUsers.length} 成员',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
+              ),
+              if (!isNarrow) ...[
+                const SizedBox(width: 12),
+                SizedBox(width: 260, child: _buildSearchField()),
+                const SizedBox(width: 12),
+                _buildAddUserButton(),
+              ],
+            ],
+          ),
+          if (isNarrow) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(child: _buildSearchField()),
+                const SizedBox(width: 12),
+                _buildAddUserButton(compact: true),
               ],
             ),
-          ),
+          ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildSearchField() {
+    return Container(
+      height: 44,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: TextField(
+        onChanged: (v) => setState(() => _searchQuery = v),
+        style: const TextStyle(fontSize: 13),
+        decoration: InputDecoration(
+          hintText: '搜索成员...',
+          hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+          prefixIcon:
+              Icon(LucideIcons.search, size: 16, color: Colors.grey.shade400),
+          border: InputBorder.none,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAddUserButton({bool compact = false}) {
+    return ElevatedButton.icon(
+      onPressed: _handleAddUser,
+      icon: const Icon(LucideIcons.userPlus, size: 16),
+      label: compact
+          ? const Text('添加',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold))
+          : const Text('添加成员',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: AppColors.iosBlue,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        elevation: 0,
+      ),
+    );
+  }
+
+  void _showGroupSelectorSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.of(context).size.height * 0.75,
+          child: GroupSidebar(
+            width: null,
+            groups: _groups,
+            selectedGroupId: _selectedGroupId,
+            onSelectGroup: (id) {
+              Navigator.pop(context);
+              setState(() => _selectedGroupId = id);
+            },
+            onAddGroup: () {
+              Navigator.pop(context);
+              _handleAddGroup();
+            },
+          ),
+        ),
       ),
     );
   }

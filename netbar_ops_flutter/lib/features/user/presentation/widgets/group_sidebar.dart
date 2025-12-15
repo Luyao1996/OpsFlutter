@@ -8,6 +8,7 @@ class GroupSidebar extends StatelessWidget {
   final int? selectedGroupId;
   final ValueChanged<int> onSelectGroup;
   final VoidCallback onAddGroup;
+  final double? width;
 
   const GroupSidebar({
     super.key,
@@ -15,12 +16,13 @@ class GroupSidebar extends StatelessWidget {
     required this.selectedGroupId,
     required this.onSelectGroup,
     required this.onAddGroup,
+    this.width = 240,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 240,
+      width: width,
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border(right: BorderSide(color: Colors.grey.shade200)),

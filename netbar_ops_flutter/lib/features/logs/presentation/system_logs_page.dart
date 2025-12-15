@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:go_router/go_router.dart';
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../data/log_types.dart';
 import '../data/log_api.dart';
@@ -56,6 +56,7 @@ class _SystemLogsPageState extends State<SystemLogsPage> {
         search: _search.isNotEmpty ? _search : null,
         module: _moduleFilter != null ? _moduleFilter!.name : null,
         level: _levelFilter != null ? _levelFilter!.name : null,
+        timeRange: _timeRange,
         page: _page,
         pageSize: _pageSize,
       );
@@ -88,6 +89,7 @@ class _SystemLogsPageState extends State<SystemLogsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = context.isPhone;
     final filteredLogs = _logs.where((log) {
       final matchSearch = _search.isEmpty ||
           log.action.toLowerCase().contains(_search.toLowerCase()) ||
@@ -99,41 +101,31 @@ class _SystemLogsPageState extends State<SystemLogsPage> {
       return matchSearch && matchModule && matchLevel;
     }).toList();
 
-    final content = _error != null
-        ? _buildErrorView()
-        : Column(
-            children: [
-              LogStats(data: _buildStats(filteredLogs)),
-              const SizedBox(height: 24),
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.grey.shade200),
-                    boxShadow: AppShadows.sm,
-                  ),
-                  child: Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: LogFilter(
-                          search: _search,
-                          onSearchChanged: (v) {
-                            setState(() => _search = v);
-                          },
-                          moduleFilter: _moduleFilter,
-                          onModuleFilterChanged: (v) => setState(() {
-                            _moduleFilter = v;
-                            _page = 1;
-                            _fetchLogs();
-                          }),
-                          levelFilter: _levelFilter,
-                          onLevelFilterChanged: (v) => setState(() {
-                            _levelFilter = v;
-                            _page = 1;
-                            _fetchLogs();
-                          }),
+    final pagePadding = isPhone ? const EdgeInsets.all(12) : const EdgeInsets.all(24);
+    final contentCardPadding = isPhone ? const EdgeInsets.all(12) : const EdgeInsets.all(24);
+    final sectionGap = isPhone ? 12.0 : 24.0;
+
+    final filter = LogFilter(
+      search: _search,
+      onSearchChanged: (v) {
+        setState(() {
+          _search = v;
+          _page = 1;
+        });
+        _fetchLogs();
+      },
+      moduleFilter: _moduleFilter,
+      onModuleFilterChanged: (v) => setState(() {
+        _moduleFilter = v;
+        _page = 1;
+        _fetchLogs();
+      }),
+      levelFilter: _levelFilter,
+      onLevelFilterChanged: (v) => setState(() {
+        _levelFilter = v;
+        _page = 1;
+        _fetchLogs();
+      }),
                           timeRange: _timeRange,
                           onTimeRangeChanged: (range) {
                             setState(() {
@@ -142,70 +134,198 @@ class _SystemLogsPageState extends State<SystemLogsPage> {
                             });
                             _fetchLogs();
                           },
-                          onRefresh: _handleRefresh,
-                        ),
-                      ),
-                      if (_loading)
-                        const Expanded(child: Center(child: CircularProgressIndicator()))
-                      else ...[
-                        Expanded(
-                          child: LogTable(
-                            logs: filteredLogs,
-                            onViewDetail: _handleViewDetail,
+      onRefresh: _handleRefresh,
+    );
+
+    final content = _error != null
+        ? _buildErrorView()
+        : isPhone
+            ? CustomScrollView(
+                slivers: [
+                  SliverToBoxAdapter(child: LogStats(data: _buildStats(filteredLogs))),
+                  SliverToBoxAdapter(child: SizedBox(height: sectionGap)),
+                  SliverPersistentHeader(
+                    pinned: true,
+                    delegate: _PinnedHeaderDelegate(
+                      height: (36 * 2) + 8 + contentCardPadding.vertical + 12,
+                      child: ColoredBox(
+                        color: const Color(0xFFF3F4F6),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.grey.shade200),
+                            boxShadow: AppShadows.sm,
+                          ),
+                          padding: contentCardPadding,
+                          child: KeyedSubtree(
+                            key: const ValueKey('system_logs_filter'),
+                            child: filter,
                           ),
                         ),
-                        _buildPagination(),
-                      ],
-                    ],
+                      ),
+                    ),
                   ),
-                ),
-              ),
-            ],
-          );
+                  const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                  if (_loading)
+                    const SliverToBoxAdapter(
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(vertical: 24),
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
+                    )
+                  else ...[
+                    SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final itemIndex = index ~/ 2;
+                          if (index.isOdd) return const SizedBox(height: 10);
+                          final log = filteredLogs[itemIndex];
+                          return LogPhoneCard(
+                            log: log,
+                            onTap: () => _handleViewDetail(log),
+                          );
+                        },
+                        childCount: filteredLogs.isEmpty ? 0 : (filteredLogs.length * 2 - 1),
+                      ),
+                    ),
+                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                    SliverToBoxAdapter(child: _buildPagination()),
+                  ],
+                ],
+              )
+            : Column(
+                children: [
+                  LogStats(data: _buildStats(filteredLogs)),
+                  SizedBox(height: sectionGap),
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.grey.shade200),
+                        boxShadow: AppShadows.sm,
+                      ),
+                      child: Column(
+                        children: [
+                          Padding(padding: contentCardPadding, child: filter),
+                          if (_loading)
+                            const Expanded(
+                              child: Center(child: CircularProgressIndicator()),
+                            )
+                          else ...[
+                            Expanded(
+                              child: LogTable(
+                                logs: filteredLogs,
+                                onViewDetail: _handleViewDetail,
+                              ),
+                            ),
+                            _buildPagination(),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              );
 
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F6),
       body: Column(
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            padding: EdgeInsets.symmetric(
+              horizontal: isPhone ? 12 : 24,
+              vertical: isPhone ? 12 : 16,
+            ),
             decoration: const BoxDecoration(
               color: Colors.white,
               border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    const Text(
-                      '系统日志',
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
-                    ),
-                    const SizedBox(width: 16),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(12),
+            child: isPhone
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '系统日志',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
                       ),
-                      child: Text(
-                        '${filteredLogs.length} 条记录（共 $_total 条）',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.grey.shade500),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                '${filteredLogs.length} 条记录（共 $_total 条）',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.grey.shade500,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            '数据保留: 180 天',
+                            style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
-                ),
-                Text(
-                  '数据保留周期: 180 天',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
-                ),
-              ],
-            ),
+                    ],
+                  )
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Text(
+                            '系统日志',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              '${filteredLogs.length} 条记录（共 $_total 条）',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.grey.shade500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Text(
+                        '数据保留周期: 180 天',
+                        style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                      ),
+                    ],
+                  ),
           ),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: pagePadding,
               child: content,
             ),
           ),
@@ -244,26 +364,90 @@ class _SystemLogsPageState extends State<SystemLogsPage> {
 
   Widget _buildPagination() {
     final totalPages = (_total / _pageSize).ceil().clamp(1, 9999);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: Colors.grey.shade200)),
-      ),
-      child: Row(
-        children: [
-          Text('第 $_page / $totalPages 页（共 $_total 条）', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-          const Spacer(),
-          IconButton(
-            onPressed: _page > 1 ? () { setState(() => _page -= 1); _fetchLogs(); } : null,
-            icon: const Icon(LucideIcons.chevronLeft, size: 16),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 420;
+        final text = Text(
+          '第 $_page / $totalPages 页（共 $_total 条）',
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+        );
+        final controls = Wrap(
+          spacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            IconButton(
+              onPressed: _page > 1
+                  ? () {
+                      setState(() => _page -= 1);
+                      _fetchLogs();
+                    }
+                  : null,
+              icon: const Icon(LucideIcons.chevronLeft, size: 16),
+            ),
+            IconButton(
+              onPressed: _page < totalPages
+                  ? () {
+                      setState(() => _page += 1);
+                      _fetchLogs();
+                    }
+                  : null,
+              icon: const Icon(LucideIcons.chevronRight, size: 16),
+            ),
+          ],
+        );
+
+        return Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: compact ? 8 : 12,
           ),
-          const SizedBox(width: 4),
-          IconButton(
-            onPressed: _page < totalPages ? () { setState(() => _page += 1); _fetchLogs(); } : null,
-            icon: const Icon(LucideIcons.chevronRight, size: 16),
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: Colors.grey.shade200)),
           ),
-        ],
-      ),
+          child: compact
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    text,
+                    const SizedBox(height: 6),
+                    Align(alignment: Alignment.centerRight, child: controls),
+                  ],
+                )
+              : Row(
+                  children: [
+                    text,
+                    const Spacer(),
+                    controls,
+                  ],
+                ),
+        );
+      },
     );
+  }
+}
+
+class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
+  final double height;
+  final Widget child;
+
+  _PinnedHeaderDelegate({
+    required this.height,
+    required this.child,
+  });
+
+  @override
+  double get minExtent => height;
+
+  @override
+  double get maxExtent => height;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return child;
+  }
+
+  @override
+  bool shouldRebuild(covariant _PinnedHeaderDelegate oldDelegate) {
+    return oldDelegate.height != height;
   }
 }

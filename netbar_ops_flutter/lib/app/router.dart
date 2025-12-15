@@ -164,17 +164,17 @@ final routerProvider = Provider<GoRouter>((ref) {
 
 final _routerRefreshListenableProvider =
     Provider<_RouterRefreshListenable>((ref) {
-  final notifier = _RouterRefreshListenable(ref);
-  ref.onDispose(notifier.dispose);
+  final notifier = _RouterRefreshListenable();
+  final sub = ref.listen<AuthState>(authNotifierProvider, (_, __) {
+    notifier.notifyListeners();
+  });
+  ref.onDispose(() {
+    sub.close();
+    notifier.dispose();
+  });
   return notifier;
 });
 
 class _RouterRefreshListenable extends ChangeNotifier {
-  _RouterRefreshListenable(this._ref) {
-    _ref.listen<AuthState>(authNotifierProvider, (_, __) {
-      notifyListeners();
-    });
-  }
-
-  final Ref _ref;
+  _RouterRefreshListenable();
 }

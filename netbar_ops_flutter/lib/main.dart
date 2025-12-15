@@ -55,14 +55,9 @@ class NetbarOpsApp extends ConsumerWidget {
     return MaterialApp.router(
       title: 'Netbar Ops Pro',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: AppColors.iosBlue,
-          brightness: Brightness.light,
-        ),
-        scaffoldBackgroundColor: AppColors.iosBg,
-        fontFamily: null, // 使用系统字体
+      theme: AppTheme.lightTheme.copyWith(
+        visualDensity: VisualDensity.adaptivePlatformDensity,
+        materialTapTargetSize: MaterialTapTargetSize.padded,
       ),
       routerConfig: router,
     );

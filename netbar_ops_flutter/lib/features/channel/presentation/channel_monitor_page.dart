@@ -101,6 +101,7 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isNarrow = MediaQuery.sizeOf(context).width < 900;
     final content = _error != null
         ? _buildError()
         : _loading
@@ -111,14 +112,66 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
       backgroundColor: const Color(0xFFF3F4F6),
       body: Column(
         children: [
-          _buildHeader(),
+          _buildHeader(isNarrow: isNarrow),
           Expanded(child: content),
         ],
       ),
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader({required bool isNarrow}) {
+    if (isNarrow) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text('通道监控',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${_data.length} 家网吧',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey.shade600),
+                  ),
+                ),
+                const Spacer(),
+                _buildChartsToggle(),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _buildStatusChip('全部', 'all', AppColors.iosBlue),
+                _buildStatusChip('在线', 'online', Colors.green),
+                _buildStatusChip('离线', 'offline', Colors.grey),
+                _buildAbnormalToggle(),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _buildSearch(width: double.infinity),
+          ],
+        ),
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
       decoration: const BoxDecoration(
@@ -156,7 +209,7 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
                   const SizedBox(width: 12),
                   _buildChartsToggle(),
                   const SizedBox(width: 12),
-                  _buildSearch(),
+                  _buildSearch(width: 220),
                 ],
               ),
             ],
@@ -166,56 +219,57 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
     );
   }
 
-  Widget _buildStatusChips() {
-    Widget chip(String label, String value, Color color) {
-      final isActive = _statusFilter == value;
-      return GestureDetector(
-        onTap: () => setState(() => _statusFilter = value),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          decoration: BoxDecoration(
-            color: isActive ? Colors.white : Colors.grey.shade100,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: isActive ? color.withOpacity(0.3) : Colors.grey.shade200,
-            ),
-            boxShadow: isActive
-                ? [BoxShadow(color: color.withOpacity(0.12), blurRadius: 12)]
-                : null,
+  Widget _buildStatusChip(String label, String value, Color color) {
+    final isActive = _statusFilter == value;
+    return GestureDetector(
+      onTap: () => setState(() => _statusFilter = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: isActive ? Colors.white : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isActive ? color.withOpacity(0.3) : Colors.grey.shade200,
           ),
-          child: Row(
-            children: [
-              if (value != 'all')
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              if (value != 'all') const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: isActive ? color : Colors.grey.shade700,
+          boxShadow: isActive
+              ? [BoxShadow(color: color.withOpacity(0.12), blurRadius: 12)]
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (value != 'all')
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
                 ),
               ),
-            ],
-          ),
+            if (value != 'all') const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: isActive ? color : Colors.grey.shade700,
+              ),
+            ),
+          ],
         ),
-      );
-    }
+      ),
+    );
+  }
 
-    return Row(
+  Widget _buildStatusChips() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
       children: [
-        chip('全部', 'all', AppColors.iosBlue),
-        const SizedBox(width: 8),
-        chip('在线', 'online', Colors.green),
-        const SizedBox(width: 8),
-        chip('离线', 'offline', Colors.grey),
+        _buildStatusChip('全部', 'all', AppColors.iosBlue),
+        _buildStatusChip('在线', 'online', Colors.green),
+        _buildStatusChip('离线', 'offline', Colors.grey),
       ],
     );
   }
@@ -236,6 +290,7 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
               isActive ? [BoxShadow(color: Colors.red.withOpacity(0.12), blurRadius: 12)] : null,
         ),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Icon(LucideIcons.alertTriangle,
                 size: 16, color: isActive ? Colors.red : Colors.grey.shade600),
@@ -274,26 +329,43 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
     );
   }
 
-  Widget _buildSearch() {
-    return Container(
-      width: 220,
+  Widget _buildSearch({required double width}) {
+    return SizedBox(
+      width: width,
       height: 38,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: TextField(
-        controller: _searchController,
-        onChanged: (_) => setState(() {}),
-        style: const TextStyle(fontSize: 13),
-        decoration: InputDecoration(
-          hintText: '搜索启动项...',
-          hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
-          prefixIcon:
-              Icon(LucideIcons.search, size: 16, color: Colors.grey.shade400),
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.only(bottom: 10),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: TextField(
+          controller: _searchController,
+          onChanged: (_) => setState(() {}),
+          textAlignVertical: TextAlignVertical.center,
+          style: const TextStyle(fontSize: 13),
+          decoration: InputDecoration(
+            hintText: '搜索启动项...',
+            hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+            isDense: true,
+            prefixIcon: Center(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 10, right: 6),
+                child:
+                    Icon(LucideIcons.search, size: 16, color: Colors.grey.shade400),
+              ),
+            ),
+            prefixIconConstraints:
+                const BoxConstraints(minWidth: 36, minHeight: 38),
+            border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            disabledBorder: InputBorder.none,
+            errorBorder: InputBorder.none,
+            focusedErrorBorder: InputBorder.none,
+            filled: false,
+            contentPadding: const EdgeInsets.symmetric(vertical: 10),
+          ),
         ),
       ),
     );
@@ -350,6 +422,7 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
 
   Widget _buildList() {
     final data = _filteredData;
+    final isNarrow = MediaQuery.sizeOf(context).width < 900;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
@@ -381,7 +454,7 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
           else
             Column(
               children: data
-                  .map((nb) => _buildNetbarCard(nb))
+                  .map((nb) => _buildNetbarCard(nb, isNarrow: isNarrow))
                   .toList(growable: false),
             ),
         ],
@@ -478,113 +551,213 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
     return list.take(5).toList();
   }
 
-  Widget _buildNetbarCard(NetbarMonitorData netbar) {
+  Widget _buildNetbarCard(NetbarMonitorData netbar, {required bool isNarrow}) {
     final abnormalCount =
         netbar.items.where((i) => _isItemAbnormal(i)).length;
+    final hasAbnormal = abnormalCount > 0;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.grey.shade200),
         boxShadow: AppShadows.sm,
       ),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (abnormalCount > 0)
-              Container(
+      child: Stack(
+        children: [
+          if (hasAbnormal)
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              child: Container(
                 width: 4,
                 decoration: BoxDecoration(
                   color: Colors.red,
                   borderRadius: BorderRadius.circular(4),
                 ),
               ),
-            if (abnormalCount > 0) const SizedBox(width: 12),
-            SizedBox(
-              width: 240,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: netbar.status == 'online'
-                          ? Colors.green.shade100
-                          : Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Icon(
-                      netbar.status == 'online'
-                          ? LucideIcons.wifi
-                          : LucideIcons.wifiOff,
-                      color: netbar.status == 'online'
-                          ? Colors.green
-                          : Colors.grey,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
+            ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(hasAbnormal ? 16 : 16, 16, 16, 16),
+            child: isNarrow
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              color: netbar.status == 'online'
+                                  ? Colors.green.shade100
+                                  : Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Icon(
+                              netbar.status == 'online'
+                                  ? LucideIcons.wifi
+                                  : LucideIcons.wifiOff,
+                              color: netbar.status == 'online'
+                                  ? Colors.green
+                                  : Colors.grey,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  netbar.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w700),
+                                ),
+                                const SizedBox(height: 6),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 6,
+                                  children: [
+                                    _buildTag(netbar.group, Colors.grey.shade100,
+                                        Colors.grey.shade600),
+                                    if (netbar.status == 'online')
+                                      _buildTag(
+                                          '${netbar.terminalCount} 终端',
+                                          Colors.green.shade50,
+                                          Colors.green.shade700),
+                                    if (abnormalCount > 0)
+                                      _buildTag(
+                                          '$abnormalCount 异常',
+                                          Colors.red.shade50,
+                                          Colors.red.shade700),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      if (netbar.items.isEmpty)
+                        Row(
+                          children: [
+                            Icon(LucideIcons.monitor,
+                                size: 16, color: Colors.grey.shade300),
+                            const SizedBox(width: 8),
+                            Text('暂无监控数据',
+                                style: TextStyle(color: Colors.grey.shade500)),
+                          ],
+                        )
+                      else
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: netbar.items
+                              .map((item) => _buildItemChip(item, netbar.name))
+                              .toList(),
+                        ),
+                    ],
+                  )
+                : IntrinsicHeight(
+                    child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(netbar.name,
-                            style: const TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 6),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: [
-                            _buildTag(netbar.group, Colors.grey.shade100,
-                                Colors.grey.shade600),
-                            if (netbar.status == 'online')
-                              _buildTag(
-                                  '${netbar.terminalCount} 终端',
-                                  Colors.green.shade50,
-                                  Colors.green.shade700),
-                            if (abnormalCount > 0)
-                              _buildTag(
-                                  '$abnormalCount 异常',
-                                  Colors.red.shade50,
-                                  Colors.red.shade700),
-                          ],
+                        SizedBox(
+                          width: 240,
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: 48,
+                                height: 48,
+                                decoration: BoxDecoration(
+                                  color: netbar.status == 'online'
+                                      ? Colors.green.shade100
+                                      : Colors.grey.shade100,
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                child: Icon(
+                                  netbar.status == 'online'
+                                      ? LucideIcons.wifi
+                                      : LucideIcons.wifiOff,
+                                  color: netbar.status == 'online'
+                                      ? Colors.green
+                                      : Colors.grey,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(netbar.name,
+                                        style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w700)),
+                                    const SizedBox(height: 6),
+                                    Wrap(
+                                      spacing: 6,
+                                      runSpacing: 6,
+                                      children: [
+                                        _buildTag(netbar.group,
+                                            Colors.grey.shade100,
+                                            Colors.grey.shade600),
+                                        if (netbar.status == 'online')
+                                          _buildTag(
+                                              '${netbar.terminalCount} 终端',
+                                              Colors.green.shade50,
+                                              Colors.green.shade700),
+                                        if (abnormalCount > 0)
+                                          _buildTag(
+                                              '$abnormalCount 异常',
+                                              Colors.red.shade50,
+                                              Colors.red.shade700),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: netbar.items.isEmpty
+                              ? Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 10),
+                                  child: Row(
+                                    children: [
+                                      Icon(LucideIcons.monitor,
+                                          size: 16,
+                                          color: Colors.grey.shade300),
+                                      const SizedBox(width: 8),
+                                      Text('暂无监控数据',
+                                          style: TextStyle(
+                                              color: Colors.grey.shade500)),
+                                    ],
+                                  ),
+                                )
+                              : Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: netbar.items
+                                      .map((item) =>
+                                          _buildItemChip(item, netbar.name))
+                                      .toList(),
+                                ),
                         ),
                       ],
                     ),
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: netbar.items.isEmpty
-                  ? Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      child: Row(
-                        children: [
-                          Icon(LucideIcons.monitor,
-                              size: 16, color: Colors.grey.shade300),
-                          const SizedBox(width: 8),
-                          Text('暂无监控数据',
-                              style: TextStyle(color: Colors.grey.shade500)),
-                        ],
-                      ),
-                    )
-                  : Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: netbar.items
-                          .map((item) => _buildItemChip(item, netbar.name))
-                          .toList(),
-                    ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

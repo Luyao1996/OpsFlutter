@@ -49,74 +49,96 @@ class _NetworkMonitorTabState extends State<NetworkMonitorTab> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          // Info Cards
-          Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isNarrow = constraints.maxWidth < 700;
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
             children: [
-              Expanded(
-                child: _buildInfoCard(
-                  '实时下载速度',
-                  '${(_downloadData.last.value / 1024).toStringAsFixed(2)} MB/s',
-                  Colors.green,
+              // Info Cards
+              if (isNarrow)
+                Column(
+                  children: [
+                    _buildInfoCard(
+                      '实时下载速度',
+                      '${(_downloadData.last.value / 1024).toStringAsFixed(2)} MB/s',
+                      Colors.green,
+                    ),
+                    const SizedBox(height: 12),
+                    _buildInfoCard(
+                      '实时上传速度',
+                      '${(_uploadData.last.value / 1024).toStringAsFixed(2)} MB/s',
+                      Colors.blue,
+                    ),
+                  ],
+                )
+              else
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildInfoCard(
+                        '实时下载速度',
+                        '${(_downloadData.last.value / 1024).toStringAsFixed(2)} MB/s',
+                        Colors.green,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: _buildInfoCard(
+                        '实时上传速度',
+                        '${(_uploadData.last.value / 1024).toStringAsFixed(2)} MB/s',
+                        Colors.blue,
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 16),
+              const SizedBox(height: 16),
+              // Chart
               Expanded(
-                child: _buildInfoCard(
-                  '实时上传速度',
-                  '${(_uploadData.last.value / 1024).toStringAsFixed(2)} MB/s',
-                  Colors.blue,
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: SfCartesianChart(
+                    title: const ChartTitle(text: '网络流量监控 (KB/s)', textStyle: TextStyle(fontSize: 14)),
+                    legend: const Legend(isVisible: true, position: LegendPosition.top),
+                    primaryXAxis: const NumericAxis(
+                      isVisible: false,
+                    ),
+                    primaryYAxis: const NumericAxis(
+                      title: AxisTitle(text: '速率 (KB/s)'),
+                    ),
+                    series: <CartesianSeries<_ChartData, int>>[
+                      AreaSeries<_ChartData, int>(
+                        dataSource: _downloadData,
+                        xValueMapper: (_ChartData data, _) => data.time,
+                        yValueMapper: (_ChartData data, _) => data.value,
+                        name: '下载',
+                        color: Colors.green.withOpacity(0.2),
+                        borderColor: Colors.green,
+                        borderWidth: 2,
+                      ),
+                      AreaSeries<_ChartData, int>(
+                        dataSource: _uploadData,
+                        xValueMapper: (_ChartData data, _) => data.time,
+                        yValueMapper: (_ChartData data, _) => data.value,
+                        name: '上传',
+                        color: Colors.blue.withOpacity(0.2),
+                        borderColor: Colors.blue,
+                        borderWidth: 2,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          // Chart
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade200),
-              ),
-              child: SfCartesianChart(
-                title: const ChartTitle(text: '网络流量监控 (KB/s)', textStyle: TextStyle(fontSize: 14)),
-                legend: const Legend(isVisible: true, position: LegendPosition.top),
-                primaryXAxis: const NumericAxis(
-                  isVisible: false,
-                ),
-                primaryYAxis: const NumericAxis(
-                  title: AxisTitle(text: '速率 (KB/s)'),
-                ),
-                series: <CartesianSeries<_ChartData, int>>[
-                  AreaSeries<_ChartData, int>(
-                    dataSource: _downloadData,
-                    xValueMapper: (_ChartData data, _) => data.time,
-                    yValueMapper: (_ChartData data, _) => data.value,
-                    name: '下载',
-                    color: Colors.green.withOpacity(0.2),
-                    borderColor: Colors.green,
-                    borderWidth: 2,
-                  ),
-                  AreaSeries<_ChartData, int>(
-                    dataSource: _uploadData,
-                    xValueMapper: (_ChartData data, _) => data.time,
-                    yValueMapper: (_ChartData data, _) => data.value,
-                    name: '上传',
-                    color: Colors.blue.withOpacity(0.2),
-                    borderColor: Colors.blue,
-                    borderWidth: 2,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 

@@ -982,6 +982,7 @@ class _HoverableUserAvatar extends StatefulWidget {
 class _HoverableUserAvatarState extends State<_HoverableUserAvatar>
     with SingleTickerProviderStateMixin {
   bool _isHovered = false;
+  bool _showActions = false;
   late AnimationController _scaleController;
   late Animation<double> _scaleAnimation;
 
@@ -1005,11 +1006,13 @@ class _HoverableUserAvatarState extends State<_HoverableUserAvatar>
 
   void _onEnter() {
     setState(() => _isHovered = true);
+    setState(() => _showActions = true);
     _scaleController.forward();
   }
 
   void _onExit() {
     setState(() => _isHovered = false);
+    setState(() => _showActions = false);
     _scaleController.reverse();
   }
 
@@ -1021,6 +1024,9 @@ class _HoverableUserAvatarState extends State<_HoverableUserAvatar>
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: widget.onTap,
+        onLongPress: () {
+          setState(() => _showActions = !_showActions);
+        },
         child: Column(
           children: [
             AnimatedBuilder(
@@ -1055,20 +1061,20 @@ class _HoverableUserAvatarState extends State<_HoverableUserAvatar>
                           ),
                         ),
                       ),
-                      // 删除按钮 - 悬停时显示
-                      if (_isHovered)
+                      // 删除按钮 - 悬停或长按时显示（移动端无 hover）
+                      if (_showActions)
                         Positioned(
                           top: 0, right: 0,
                           child: GestureDetector(
                             onTap: widget.onDelete,
                             child: Container(
-                              width: 28, height: 28,
+                              width: 40, height: 40,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 color: Colors.black.withValues(alpha: 0.7),
                                 border: Border.all(color: Colors.white.withValues(alpha: 0.4), width: 1),
                               ),
-                              child: const Icon(LucideIcons.x, size: 14, color: Colors.white),
+                              child: const Icon(LucideIcons.x, size: 18, color: Colors.white),
                             ),
                           ),
                         ),

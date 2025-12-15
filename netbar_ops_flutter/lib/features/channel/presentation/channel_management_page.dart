@@ -1415,13 +1415,13 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
                           color: isActive
                               ? Colors.white
                               : Colors.grey.shade700)),
-                  if (subtitle != null)
-                    Text(subtitle,
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: isActive
-                                ? Colors.white70
-                                : Colors.grey.shade400)),
+                  Text(subtitle ?? ' ',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 11,
+                          color:
+                              isActive ? Colors.white70 : Colors.grey.shade400)),
                 ],
               ),
             ],
@@ -1491,38 +1491,44 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   Widget _buildModuleTabs() {
     final actions = <Widget>[];
     if (_activeModule == ModuleTab.files) {
-      if (_canEdit) {
-        if (_selectedResources.isNotEmpty) {
-          actions.add(Text('已选 ${_selectedResources.length} 项',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade500)));
-          actions.addAll([
-            _buildBatchButton('复制', LucideIcons.copy, AppColors.iosBlue,
-                _handleBatchCopy),
-            _buildBatchButton('剪切', LucideIcons.scissors, Colors.orange,
-                _handleBatchCut,
-                enabled: _canEdit),
-            _buildBatchButton('删除', LucideIcons.trash2, Colors.red,
-                _handleBatchDelete,
-                enabled: _canEdit),
-          ]);
+      if (_isMobile) {
+        actions.add(_buildSearchBox(width: double.infinity));
+        actions.add(_buildLayoutToggle());
+        if (_canEdit) actions.add(_buildUploadButton());
+      } else {
+        if (_canEdit) {
+          if (_selectedResources.isNotEmpty) {
+            actions.add(Text('已选 ${_selectedResources.length} 项',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500)));
+            actions.addAll([
+              _buildBatchButton(
+                  '复制', LucideIcons.copy, AppColors.iosBlue, _handleBatchCopy),
+              _buildBatchButton('剪切', LucideIcons.scissors, Colors.orange,
+                  _handleBatchCut,
+                  enabled: _canEdit),
+              _buildBatchButton(
+                  '删除', LucideIcons.trash2, Colors.red, _handleBatchDelete,
+                  enabled: _canEdit),
+            ]);
+          }
+          actions.add(const SizedBox(width: 12));
+          actions.add(_buildBatchButton(
+            '粘贴${_clipboard.isNotEmpty ? ' (${_clipboard.length})' : ''}',
+            LucideIcons.clipboard,
+            Colors.green,
+            _handlePaste,
+            enabled: _canEdit && _clipboard.isNotEmpty,
+          ));
+          actions.add(const SizedBox(width: 16));
         }
-        actions.add(const SizedBox(width: 12));
-        actions.add(_buildBatchButton(
-          '粘贴${_clipboard.isNotEmpty ? ' (${_clipboard.length})' : ''}',
-          LucideIcons.clipboard,
-          Colors.green,
-          _handlePaste,
-          enabled: _canEdit && _clipboard.isNotEmpty,
-        ));
-        actions.add(const SizedBox(width: 16));
-      }
 
-      actions.add(_buildSearchBox());
-      actions.add(const SizedBox(width: 8));
-      actions.add(_buildLayoutToggle());
-      if (_canEdit) {
+        actions.add(_buildSearchBox());
         actions.add(const SizedBox(width: 8));
-        actions.add(_buildUploadButton());
+        actions.add(_buildLayoutToggle());
+        if (_canEdit) {
+          actions.add(const SizedBox(width: 8));
+          actions.add(_buildUploadButton());
+        }
       }
     } else {
       if (_canEdit) {
@@ -1556,6 +1562,34 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
           ),
         ));
       }
+    }
+
+    if (_isMobile) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _buildModuleTab(ModuleTab.files, LucideIcons.folderOpen, '文件管理'),
+                const SizedBox(width: 12),
+                _buildModuleTab(ModuleTab.startup, LucideIcons.zap, '启动项'),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: actions,
+            ),
+          ],
+        ),
+      );
     }
 
     return Container(
@@ -1639,10 +1673,11 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     );
   }
 
-  Widget _buildSearchBox() {
-    return Container(
-      width: 220,
+  Widget _buildSearchBox({double width = 220}) {
+    return SizedBox(
+      width: width,
       height: 32,
+      child: Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
@@ -1687,6 +1722,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
           style: const TextStyle(fontSize: 12),
           textAlignVertical: TextAlignVertical.center,
         ),
+      ),
       ),
     );
   }
@@ -1932,6 +1968,15 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
           onDoubleTap: file.isDirectory
               ? () => _handleFolderOpen(file)
               : () => _handleOpenFile(file, readOnly: !_canEdit),
+          onLongPressStart: (details) {
+            if (!isSelected) {
+              setState(() {
+                _selectedIds.clear();
+                _selectedIds.add(file.id.toString());
+              });
+            }
+            _showFileContextMenu(details.globalPosition, file);
+          },
           onSecondaryTapDown: (details) {
             if (!isSelected) {
               setState(() {
@@ -2002,6 +2047,15 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
           onDoubleTap: file.isDirectory
               ? () => _handleFolderOpen(file)
               : () => _handleOpenFile(file, readOnly: !_canEdit),
+          onLongPressStart: (details) {
+            if (!isSelected) {
+              setState(() {
+                _selectedIds.clear();
+                _selectedIds.add(file.id.toString());
+              });
+            }
+            _showFileContextMenu(details.globalPosition, file);
+          },
           onSecondaryTapDown: (details) {
             if (!isSelected) {
               setState(() {
@@ -2199,6 +2253,12 @@ class _ResourceStartupCard extends StatelessWidget {
         child: GestureDetector(
           onDoubleTap: onDoubleTap,
           onSecondaryTapDown: onSecondaryTapDown,
+          onLongPressStart: (details) {
+            onSecondaryTapDown(TapDownDetails(
+              globalPosition: details.globalPosition,
+              localPosition: details.localPosition,
+            ));
+          },
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 150),
             padding: const EdgeInsets.all(16),

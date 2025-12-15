@@ -1,3 +1,6 @@
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+
 import '../../../core/network/api_client.dart';
 import 'log_types.dart';
 
@@ -22,6 +25,7 @@ class LogApi {
     String? search,
     String? module,
     String? level,
+    DateTimeRange? timeRange,
     int page = 1,
     int pageSize = 50,
   }) async {
@@ -32,6 +36,11 @@ class LogApi {
     if (search != null && search.isNotEmpty) params['search'] = search;
     if (module != null && module.isNotEmpty) params['module'] = module;
     if (level != null && level.isNotEmpty) params['level'] = level;
+    if (timeRange != null) {
+      final fmt = DateFormat('yyyy-MM-dd');
+      params['start_date'] = fmt.format(timeRange.start);
+      params['end_date'] = fmt.format(timeRange.end);
+    }
 
     final response = await _client.get('/logs', queryParameters: params);
     final data = response.data is Map ? response.data as Map : {};

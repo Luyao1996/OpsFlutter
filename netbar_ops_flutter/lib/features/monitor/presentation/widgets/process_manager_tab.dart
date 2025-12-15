@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/responsive/responsive.dart';
 import '../../../../shared/providers/app_providers.dart';
 import '../../data/terminal_api.dart';
 
@@ -79,6 +80,7 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
 
   @override
   Widget build(BuildContext context) {
+    final isNarrow = context.isPhone || context.isNarrow;
     return Column(
       children: [
         // Toolbar
@@ -92,26 +94,29 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               // Search
-              Container(
-                width: 250,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: Colors.grey.shade300),
-                ),
-                child: TextField(
-                  onChanged: (v) => setState(() => _processSearch = v),
-                  style: const TextStyle(fontSize: 13),
-                  decoration: InputDecoration(
-                    prefixIcon: Icon(LucideIcons.search, size: 14, color: Colors.grey.shade400),
-                    hintText: '搜索进程...',
-                    hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.only(bottom: 12),
+              Expanded(
+                child: Container(
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.grey.shade300),
+                  ),
+                  child: TextField(
+                    onChanged: (v) => setState(() => _processSearch = v),
+                    style: const TextStyle(fontSize: 13),
+                    decoration: InputDecoration(
+                      prefixIcon: Icon(LucideIcons.search, size: 16, color: Colors.grey.shade400),
+                      hintText: '搜索进程...',
+                      hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      isDense: true,
+                    ),
                   ),
                 ),
               ),
+              const SizedBox(width: 12),
               // Actions
               Row(
                 children: [
@@ -123,23 +128,24 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
         ),
         
         // Header
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.grey.shade50,
-            border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+        if (!isNarrow)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+            ),
+            child: Row(
+              children: [
+                Expanded(child: _buildHeaderCell('进程名')),
+                SizedBox(width: 80, child: _buildHeaderCell('PID')),
+                SizedBox(width: 100, child: _buildHeaderCell('CPU %')),
+                SizedBox(width: 100, child: _buildHeaderCell('内存 (MB)')),
+                SizedBox(width: 120, child: _buildHeaderCell('用户')),
+                const SizedBox(width: 48), // Action col (touch-safe)
+              ],
+            ),
           ),
-          child: Row(
-            children: [
-              Expanded(child: _buildHeaderCell('进程名')),
-              SizedBox(width: 80, child: _buildHeaderCell('PID')),
-              SizedBox(width: 100, child: _buildHeaderCell('CPU %')),
-              SizedBox(width: 100, child: _buildHeaderCell('内存 (MB)')),
-              SizedBox(width: 120, child: _buildHeaderCell('用户')),
-              const SizedBox(width: 40), // Action col
-            ],
-          ),
-        ),
 
         // List
         Expanded(
@@ -152,8 +158,42 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
                     separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey.shade100),
                     itemBuilder: (context, index) {
                       final proc = _filteredProcesses[index];
+                      if (isNarrow) {
+                        return ListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          title: Text(
+                            proc.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                          ),
+                          subtitle: Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Wrap(
+                              spacing: 12,
+                              runSpacing: 6,
+                              children: [
+                                _metaChip('PID', '${proc.pid}'),
+                                _metaChip('CPU', '${proc.cpu}%'),
+                                _metaChip('内存', '${proc.mem} MB'),
+                                _metaChip('用户', proc.user),
+                              ],
+                            ),
+                          ),
+                          trailing: SizedBox(
+                            width: 48,
+                            height: 48,
+                            child: IconButton(
+                              icon: const Icon(LucideIcons.xCircle, size: 20, color: Colors.red),
+                              tooltip: '结束进程',
+                              onPressed: () => _killProcess(proc.pid),
+                            ),
+                          ),
+                        );
+                      }
+
                       return InkWell(
-                        onTap: () {}, 
+                        onTap: () {},
                         hoverColor: Colors.blue.shade50,
                         child: Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -161,20 +201,48 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
                             children: [
                               Expanded(
                                 child: Text(
-                                  proc.name, 
-                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Colors.black87)
-                                )
+                                  proc.name,
+                                  style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.black87),
+                                ),
                               ),
-                              SizedBox(width: 80, child: Text('${proc.pid}', style: TextStyle(fontSize: 12, color: Colors.grey.shade600, fontFamily: 'monospace'))),
-                              SizedBox(width: 100, child: Text('${proc.cpu}%', style: TextStyle(fontSize: 13, color: Colors.grey.shade800))),
-                              SizedBox(width: 100, child: Text('${proc.mem}', style: TextStyle(fontSize: 13, color: Colors.grey.shade800))),
-                              SizedBox(width: 120, child: Text(proc.user, style: TextStyle(fontSize: 12, color: Colors.grey.shade500))),
                               SizedBox(
-                                width: 40,
+                                width: 80,
+                                child: Text(
+                                  '${proc.pid}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey.shade600,
+                                    fontFamily: 'monospace',
+                                  ),
+                                ),
+                              ),
+                              SizedBox(
+                                  width: 100,
+                                  child: Text('${proc.cpu}%',
+                                      style: TextStyle(
+                                          fontSize: 13,
+                                          color: Colors.grey.shade800))),
+                              SizedBox(
+                                  width: 100,
+                                  child: Text('${proc.mem}',
+                                      style: TextStyle(
+                                          fontSize: 13,
+                                          color: Colors.grey.shade800))),
+                              SizedBox(
+                                  width: 120,
+                                  child: Text(proc.user,
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey.shade500))),
+                              SizedBox(
+                                width: 48,
                                 child: IconButton(
-                                  icon: const Icon(LucideIcons.xCircle, size: 16, color: Colors.red),
+                                  icon: const Icon(LucideIcons.xCircle,
+                                      size: 18, color: Colors.red),
                                   tooltip: '结束进程',
-                                  padding: EdgeInsets.zero,
                                   onPressed: () => _killProcess(proc.pid),
                                 ),
                               ),
@@ -215,6 +283,21 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
     return Text(
       text,
       style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontWeight: FontWeight.bold),
+    );
+  }
+
+  Widget _metaChip(String label, String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Text(
+        '$label: $value',
+        style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+      ),
     );
   }
 }

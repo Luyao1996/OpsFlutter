@@ -1509,58 +1509,72 @@ class _ResourceManagementPageState
     );
   }
 
-  Widget _buildZonePill(ResourceZone zone, String label, IconData icon, {String? subtitle}) {
-    final isActive = _currentZone == zone;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => _handleZoneChange(zone),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          margin: const EdgeInsets.symmetric(horizontal: 4),
-          decoration: BoxDecoration(
-            color: isActive ? AppColors.iosBlue : Colors.grey.shade100,
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: isActive
-                ? [BoxShadow(color: AppColors.iosBlue.withValues(alpha: 0.25), blurRadius: 12, offset: const Offset(0, 4))]
-                : null,
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 18, color: isActive ? Colors.white : Colors.grey.shade600),
-              const SizedBox(width: 8),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: isActive ? Colors.white : Colors.grey.shade700,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  if (subtitle != null)
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: isActive ? Colors.white70 : Colors.grey.shade500,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+	  Widget _buildZonePill(ResourceZone zone, String label, IconData icon, {String? subtitle}) {
+	    final isActive = _currentZone == zone;
+	    return Expanded(
+	      child: GestureDetector(
+	        onTap: () => _handleZoneChange(zone),
+	        child: AnimatedContainer(
+	          duration: const Duration(milliseconds: 160),
+	          height: 52,
+	          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+	          margin: const EdgeInsets.symmetric(horizontal: 4),
+	          decoration: BoxDecoration(
+	            color: isActive ? AppColors.iosBlue : Colors.grey.shade100,
+	            borderRadius: BorderRadius.circular(14),
+	            boxShadow: isActive
+	                ? [BoxShadow(color: AppColors.iosBlue.withValues(alpha: 0.25), blurRadius: 12, offset: const Offset(0, 4))]
+	                : null,
+	          ),
+	          child: Center(
+	            child: Row(
+	              mainAxisSize: MainAxisSize.min,
+	              children: [
+	                Icon(icon, size: 18, color: isActive ? Colors.white : Colors.grey.shade600),
+	                const SizedBox(width: 8),
+	                if (subtitle == null)
+	                  Text(
+	                    label,
+	                    style: TextStyle(
+	                      fontSize: 12,
+	                      fontWeight: FontWeight.w600,
+	                      color: isActive ? Colors.white : Colors.grey.shade700,
+	                    ),
+	                  )
+	                else
+	                  Column(
+	                    mainAxisSize: MainAxisSize.min,
+	                    crossAxisAlignment: CrossAxisAlignment.center,
+	                    children: [
+	                      Text(
+	                        label,
+	                        style: TextStyle(
+	                          fontSize: 12,
+	                          fontWeight: FontWeight.w600,
+	                          color: isActive ? Colors.white : Colors.grey.shade700,
+	                        ),
+	                        textAlign: TextAlign.center,
+	                        overflow: TextOverflow.ellipsis,
+	                      ),
+	                      Text(
+	                        subtitle,
+	                        maxLines: 1,
+	                        style: TextStyle(
+	                          fontSize: 11,
+	                          color: isActive ? Colors.white70 : Colors.grey.shade500,
+	                        ),
+	                        textAlign: TextAlign.center,
+	                        overflow: TextOverflow.ellipsis,
+	                      ),
+	                    ],
+	                  ),
+	              ],
+	            ),
+	          ),
+	        ),
+	      ),
+	    );
+	  }
 
   Widget _buildZoneButton(ResourceZone zone, IconData icon, String label,
       {String? subtitle}) {
@@ -1627,12 +1641,13 @@ class _ResourceManagementPageState
 
   Widget _buildModuleTabs() {
     if (_isMobile) {
-      final actions = <Widget>[];
+      final quickActions = <Widget>[];
+      final utilityActions = <Widget>[];
+
       if (_activeModule == ModuleTab.files) {
         if (_canEdit) {
           if (_selectedResources.isNotEmpty) {
-            actions.add(Text('已选 ${_selectedResources.length} 项', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)));
-            actions.addAll([
+            quickActions.addAll([
               _buildBatchButton('复制', LucideIcons.copy, AppColors.iosBlue, _handleBatchCopy),
               _buildBatchButton('剪切', LucideIcons.scissors, Colors.orange, _handleBatchCut, enabled: _canEdit),
               _buildBatchButton('删除', LucideIcons.trash2, Colors.red, _handleBatchDelete, enabled: _canEdit),
@@ -1640,31 +1655,31 @@ class _ResourceManagementPageState
                 _buildBatchButton('拷贝到本网吧', LucideIcons.download, const Color(0xFF22C55E), _handleCopyToLocal),
             ]);
           }
-          actions.add(_buildBatchButton(
+          quickActions.add(_buildBatchButton(
             '粘贴${_clipboard.isNotEmpty ? ' (${_clipboard.length})' : ''}',
             LucideIcons.clipboard,
             Colors.green,
             _handlePaste,
             enabled: _canEdit && _clipboard.isNotEmpty,
           ));
-          actions.add(_buildSearchField(width: double.infinity));
-          actions.add(_buildLayoutToggle());
-          actions.add(_buildUploadButton());
+
+          utilityActions.addAll([
+            _buildLayoutToggle(),
+            _buildUploadButton(),
+          ]);
         } else {
-          actions.add(_buildSearchField(width: double.infinity));
-          actions.add(_buildLayoutToggle());
+          utilityActions.add(_buildLayoutToggle());
         }
       } else {
         if (_canEdit) {
           if (_selectedStartupItems.isNotEmpty) {
-            actions.add(Text('已选 ${_selectedStartupItems.length} 项', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)));
-            actions.addAll([
+            quickActions.addAll([
               _buildBatchButton('批量启用', LucideIcons.toggleRight, const Color(0xFF22C55E), () => _handleBatchStartupEnable(true), enabled: _canDisableStartupItem),
               _buildBatchButton('批量禁用', LucideIcons.toggleLeft, Colors.grey.shade600, () => _handleBatchStartupEnable(false), enabled: _canDisableStartupItem),
               _buildBatchButton('批量删除', LucideIcons.trash2, Colors.red, _handleBatchStartupDelete, enabled: _canDeleteStartupItem),
             ]);
           }
-          actions.add(ElevatedButton.icon(
+          utilityActions.add(ElevatedButton.icon(
             onPressed: _showAddStartupItemModal,
             icon: const Icon(LucideIcons.plus, size: 14),
             label: const Text('新增启动项'),
@@ -1695,12 +1710,32 @@ class _ResourceManagementPageState
                 _buildModuleTab(ModuleTab.startup, LucideIcons.zap, '启动项'),
               ],
             ),
+            if (_activeModule == ModuleTab.files && _selectedResources.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text('已选 ${_selectedResources.length} 项', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+            ],
+            if (_activeModule == ModuleTab.startup && _selectedStartupItems.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text('已选 ${_selectedStartupItems.length} 项', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+            ],
+            if (quickActions.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(spacing: 8, runSpacing: 8, children: quickActions),
+            ],
             const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: actions,
-            ),
+            if (_activeModule == ModuleTab.files)
+              Row(
+                children: [
+                  Expanded(child: _buildSearchField(width: double.infinity)),
+                  const SizedBox(width: 8),
+                  for (int i = 0; i < utilityActions.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 8),
+                    utilityActions[i],
+                  ],
+                ],
+              )
+            else if (utilityActions.isNotEmpty)
+              Wrap(spacing: 8, runSpacing: 8, children: utilityActions),
           ],
         ),
       );
@@ -1905,12 +1940,14 @@ class _ResourceManagementPageState
     return GestureDetector(
       onTap: enabled ? onTap : null,
       child: Container(
+        constraints: const BoxConstraints(minHeight: 40),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           color: (enabled ? color : Colors.grey).withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, size: 14, color: enabled ? color : Colors.grey),
             const SizedBox(width: 6),
@@ -2281,6 +2318,15 @@ class _ResourceManagementPageState
           onDoubleTap: file.isDirectory
               ? () => _handleFolderOpen(file)
               : () => _handleOpenFile(file, readOnly: !_canEdit),
+          onLongPressStart: (details) {
+            if (!isSelected) {
+              setState(() {
+                _selectedIds.clear();
+                _selectedIds.add(file.id.toString());
+              });
+            }
+            _showFileContextMenu(details.globalPosition, file);
+          },
           onSecondaryTapDown: (details) {
             if (!isSelected) {
               setState(() {
@@ -2351,6 +2397,15 @@ class _ResourceManagementPageState
           onDoubleTap: file.isDirectory
               ? () => _handleFolderOpen(file)
               : () => _handleOpenFile(file, readOnly: !_canEdit),
+          onLongPressStart: (details) {
+            if (!isSelected) {
+              setState(() {
+                _selectedIds.clear();
+                _selectedIds.add(file.id.toString());
+              });
+            }
+            _showFileContextMenu(details.globalPosition, file);
+          },
           onSecondaryTapDown: (details) {
             if (!isSelected) {
               setState(() {
@@ -2654,6 +2709,12 @@ class _ResourceStartupCardState extends State<_ResourceStartupCard> {
       child: GestureDetector(
         onTapDown: (_) => _handleTap(),
         onSecondaryTapDown: widget.onSecondaryTapDown,
+        onLongPressStart: (details) {
+          widget.onSecondaryTapDown(TapDownDetails(
+            globalPosition: details.globalPosition,
+            localPosition: details.localPosition,
+          ));
+        },
         behavior: HitTestBehavior.opaque,
         child: Container(
           padding: const EdgeInsets.all(16),

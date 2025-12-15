@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/responsive/responsive.dart';
 import '../data/terminal_api.dart';
 import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/providers/terminal_dock_provider.dart';
@@ -85,6 +86,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   @override
   Widget build(BuildContext context) {
     final terminalAsync = ref.watch(terminalDetailProvider(widget.terminalId));
+    final isNarrow = context.isNarrow || context.isPhone;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F6), // 接近 Vue 项目的背景灰
@@ -93,43 +95,61 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         error: (error, stack) => Center(child: Text('Error: $error')),
         data: (terminal) => Column(
           children: [
-            _buildHeader(_liveTerminal ?? terminal),
+            _buildHeader(_liveTerminal ?? terminal, isNarrow: isNarrow),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // 左侧栏：实时画面 + 系统状态 + 备注
-                    SizedBox(
-                      width: 380,
-                      child: SingleChildScrollView(
-                        child: Column(
-                          children: [
-                            _buildScreenPreviewCard(terminal),
-                            const SizedBox(height: 16),
-                            _buildSystemStatusCard(terminal),
-                            const SizedBox(height: 16),
-                            _buildRemarkCard(terminal),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    // 右侧栏：功能区
-                    Expanded(
-                      child: Column(
+                padding: EdgeInsets.all(isNarrow ? 12.0 : 16.0),
+                child: isNarrow
+                    ? Column(
                         children: [
-                          _buildTabBar(),
-                          const SizedBox(height: 16),
+                          _buildTabBar(isNarrow: true),
+                          const SizedBox(height: 12),
                           Expanded(
-                            child: _buildRightContent(_liveTerminal ?? terminal),
+                            child: _buildRightContent(
+                              _liveTerminal ?? terminal,
+                              isNarrow: true,
+                              showOverviewCards: _selectedTab == '远程控制',
+                            ),
+                          ),
+                        ],
+                      )
+                    : Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 左侧栏：实时画面 + 系统状态 + 备注
+                          SizedBox(
+                            width: 380,
+                            child: SingleChildScrollView(
+                              child: Column(
+                                children: [
+                                  _buildScreenPreviewCard(terminal),
+                                  const SizedBox(height: 16),
+                                  _buildSystemStatusCard(terminal),
+                                  const SizedBox(height: 16),
+                                  _buildRemarkCard(terminal),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          // 右侧栏：功能区
+                          Expanded(
+                            child: Column(
+                              children: [
+                                _buildTabBar(isNarrow: false),
+                                const SizedBox(height: 16),
+                                Expanded(
+                                  child: _buildRightContent(
+                                    _liveTerminal ?? terminal,
+                                    isNarrow: false,
+                                    showOverviewCards: false,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
-                    ),
-                  ],
-                ),
               ),
             ),
           ],
@@ -140,104 +160,192 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   // --- Header ---
 
-  Widget _buildHeader(Terminal terminal) {
-    return Container(
-      height: 60,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
-      ),
-      child: Row(
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                '终端详情 - ${terminal.name}',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
-              ),
-              const SizedBox(height: 2),
-              Row(
-                children: [
-                  Container(
-                    width: 6,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      color: terminal.status == 1 ? AppColors.green : Colors.grey,
-                      shape: BoxShape.circle,
+  Widget _buildHeader(Terminal terminal, {required bool isNarrow}) {
+    if (!isNarrow) {
+      return Container(
+        height: 60,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
+        ),
+        child: Row(
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  '终端详情 - ${terminal.name}',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: terminal.status == 1 ? AppColors.green : Colors.grey,
+                        shape: BoxShape.circle,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    '${terminal.statusString} | ${terminal.ip}',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: MouseRegion(
-              cursor: widget.isStandaloneWindow && isDesktopPlatform
-                  ? SystemMouseCursors.move
-                  : MouseCursor.defer,
-              child: Listener(
-                behavior: HitTestBehavior.translucent,
-                onPointerDown: widget.isStandaloneWindow && isDesktopPlatform
-                    ? (event) {
-                        if ((event.buttons & kPrimaryButton) == 0) return;
-                        final wid = widget.windowId ?? 0;
-                        WindowControl.startDragging(wid);
-                      }
-                    : null,
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'CPU使用率: ${terminal.cpuUsage.round()}%',
-                        style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                      ),
-                      const SizedBox(width: 16),
-                      Text(
-                        'GPU使用率: ${terminal.gpuUsage.round()}%',
-                        style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                      ),
-                    ],
+                    const SizedBox(width: 6),
+                    Text(
+                      '${terminal.statusString} | ${terminal.ip}',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: MouseRegion(
+                cursor: widget.isStandaloneWindow && isDesktopPlatform ? SystemMouseCursors.move : MouseCursor.defer,
+                child: Listener(
+                  behavior: HitTestBehavior.translucent,
+                  onPointerDown: widget.isStandaloneWindow && isDesktopPlatform
+                      ? (event) {
+                          if ((event.buttons & kPrimaryButton) == 0) return;
+                          final wid = widget.windowId ?? 0;
+                          WindowControl.startDragging(wid);
+                        }
+                      : null,
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'CPU使用率: ${terminal.cpuUsage.round()}%',
+                          style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                        ),
+                        const SizedBox(width: 16),
+                        Text(
+                          'GPU使用率: ${terminal.gpuUsage.round()}%',
+                          style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          // 右侧统计与设置
+            const SizedBox(width: 8),
+            // 右侧统计与设置
+            Row(
+              children: [
+                TextButton.icon(
+                  onPressed: _refreshing ? null : () => _refreshHeartbeat(terminal.id),
+                  icon: _refreshing
+                      ? SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.grey.shade600),
+                        )
+                      : const Icon(LucideIcons.refreshCw, size: 14, color: Colors.black87),
+                  label: Text(
+                    '刷新状态',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700, fontWeight: FontWeight.w600),
+                  ),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    foregroundColor: Colors.black87,
+                    backgroundColor: Colors.grey.shade100,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: Icon(LucideIcons.settings, size: 18, color: Colors.grey.shade600),
+                  onPressed: () {},
+                ),
+                if (isDesktopPlatform)
+                  IconButton(
+                    icon: Icon(LucideIcons.minus, size: 18, color: Colors.grey.shade600),
+                    tooltip: '最小化到 Dock',
+                    onPressed: () => _handleMinimize(terminal),
+                  ),
+                if (isDesktopPlatform && widget.isStandaloneWindow)
+                  IconButton(
+                    icon: Icon(
+                      _isMaximized ? LucideIcons.minimize2 : LucideIcons.maximize2,
+                      size: 18,
+                      color: Colors.grey.shade600,
+                    ),
+                    tooltip: _isMaximized ? '还原窗口' : '最大化窗口',
+                    onPressed: _handleToggleMaximize,
+                  ),
+                IconButton(
+                  icon: Icon(LucideIcons.x, size: 18, color: Colors.grey.shade600),
+                  tooltip: '关闭窗口',
+                  onPressed: _handleClose,
+                ),
+              ],
+            )
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           Row(
             children: [
-              TextButton.icon(
-                onPressed: _refreshing ? null : () => _refreshHeartbeat(terminal.id),
-                icon: _refreshing
-                    ? SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.grey.shade600),
-                      )
-                    : const Icon(LucideIcons.refreshCw, size: 14, color: Colors.black87),
-                label: Text(
-                  '刷新状态',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700, fontWeight: FontWeight.w600),
-                ),
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  foregroundColor: Colors.black87,
-                  backgroundColor: Colors.grey.shade100,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '终端详情 - ${terminal.name}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: terminal.status == 1 ? AppColors.green : Colors.grey,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            '${terminal.statusString} | ${terminal.ip}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 8),
+              IconButton(
+                onPressed: _refreshing ? null : () => _refreshHeartbeat(terminal.id),
+                tooltip: '刷新状态',
+                icon: _refreshing
+                    ? SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.grey.shade600),
+                      )
+                    : Icon(LucideIcons.refreshCw, size: 18, color: Colors.grey.shade700),
+              ),
               IconButton(
                 icon: Icon(LucideIcons.settings, size: 18, color: Colors.grey.shade600),
                 onPressed: () {},
@@ -260,11 +368,18 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                 ),
               IconButton(
                 icon: Icon(LucideIcons.x, size: 18, color: Colors.grey.shade600),
-                tooltip: '关闭窗口',
+                tooltip: '关闭',
                 onPressed: _handleClose,
               ),
             ],
-          )
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'CPU: ${terminal.cpuUsage.round()}%  ·  GPU: ${terminal.gpuUsage.round()}%',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+          ),
         ],
       ),
     );
@@ -478,7 +593,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   // --- Right Column Widgets ---
 
-  Widget _buildTabBar() {
+  Widget _buildTabBar({required bool isNarrow}) {
     return Container(
       height: 48,
       decoration: BoxDecoration(
@@ -497,7 +612,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           return InkWell(
             onTap: () => _selectTab(tab['label'] as String),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+              padding: EdgeInsets.symmetric(horizontal: isNarrow ? 10 : 12),
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 border: isSelected
@@ -519,6 +634,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                       fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                       color: isSelected ? AppColors.iosBlue : Colors.grey.shade600,
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
@@ -542,20 +659,32 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     }
   }
 
-  Widget _buildRightContent(Terminal terminal) {
+  Widget _buildRightContent(
+    Terminal terminal, {
+    required bool isNarrow,
+    required bool showOverviewCards,
+  }) {
     // 根据 _selectedTab 返回不同内容，目前仅实现 远程控制
     if (_selectedTab == '远程控制') {
       return SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (showOverviewCards) ...[
+              _buildScreenPreviewCard(terminal),
+              const SizedBox(height: 16),
+              _buildSystemStatusCard(terminal),
+              const SizedBox(height: 16),
+              _buildRemarkCard(terminal),
+              const SizedBox(height: 24),
+            ],
             _buildSectionTitle('电源管理'),
             const SizedBox(height: 12),
-            _buildPowerGrid(terminal),
+            _buildPowerGrid(terminal, isNarrow: isNarrow),
             const SizedBox(height: 24),
             _buildSectionTitle('远程协助'),
             const SizedBox(height: 12),
-            _buildRemoteAssistRow(terminal),
+            _buildRemoteAssistRow(terminal, isNarrow: isNarrow),
             const SizedBox(height: 24),
             _buildSectionTitle('最近日志'),
             const SizedBox(height: 12),
@@ -616,16 +745,38 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     }
   }
 
-  Widget _buildPowerGrid(Terminal terminal) {
-    return Row(
+  Widget _buildPowerGrid(Terminal terminal, {required bool isNarrow}) {
+    if (!isNarrow) {
+      return Row(
+        children: [
+          Expanded(child: _buildPowerCard('关机', LucideIcons.power, () => _remoteAction(terminal.id, 'shutdown'))),
+          const SizedBox(width: 12),
+          Expanded(child: _buildPowerCard('重启', LucideIcons.refreshCw, () => _remoteAction(terminal.id, 'restart'))),
+          const SizedBox(width: 12),
+          Expanded(child: _buildPowerCard('注销', LucideIcons.logOut, () => _remoteAction(terminal.id, 'logout'))), // placeholder
+          const SizedBox(width: 12),
+          Expanded(child: _buildPowerCard('锁定', LucideIcons.lock, () => _remoteAction(terminal.id, 'lock'))), // placeholder
+        ],
+      );
+    }
+
+    return Column(
       children: [
-        Expanded(child: _buildPowerCard('关机', LucideIcons.power, () => _remoteAction(terminal.id, 'shutdown'))),
-        const SizedBox(width: 12),
-        Expanded(child: _buildPowerCard('重启', LucideIcons.refreshCw, () => _remoteAction(terminal.id, 'restart'))),
-        const SizedBox(width: 12),
-        Expanded(child: _buildPowerCard('注销', LucideIcons.logOut, () => _remoteAction(terminal.id, 'logout'))), // logout not in API, placeholder
-        const SizedBox(width: 12),
-        Expanded(child: _buildPowerCard('锁定', LucideIcons.lock, () => _remoteAction(terminal.id, 'lock'))), // lock not in API, placeholder
+        Row(
+          children: [
+            Expanded(child: _buildPowerCard('关机', LucideIcons.power, () => _remoteAction(terminal.id, 'shutdown'))),
+            const SizedBox(width: 12),
+            Expanded(child: _buildPowerCard('重启', LucideIcons.refreshCw, () => _remoteAction(terminal.id, 'restart'))),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(child: _buildPowerCard('注销', LucideIcons.logOut, () => _remoteAction(terminal.id, 'logout'))),
+            const SizedBox(width: 12),
+            Expanded(child: _buildPowerCard('锁定', LucideIcons.lock, () => _remoteAction(terminal.id, 'lock'))),
+          ],
+        ),
       ],
     );
   }
@@ -662,43 +813,76 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     );
   }
 
-  Widget _buildRemoteAssistRow(Terminal terminal) {
-    return Row(
+  Widget _buildRemoteAssistRow(Terminal terminal, {required bool isNarrow}) {
+    if (!isNarrow) {
+      return Row(
+        children: [
+          Expanded(
+            flex: 2,
+            child: _buildBigActionButton(
+              'VNC 远程桌面',
+              '极速连接，低延迟',
+              LucideIcons.monitor,
+              AppColors.iosBlue,
+              Colors.white,
+              () => _remoteAction(terminal.id, 'vnc'),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            flex: 2,
+            child: _buildBigActionButton(
+              'RustDesk',
+              '备用远程方案',
+              LucideIcons.settings,
+              Colors.white,
+              Colors.black87,
+              () => _remoteAction(terminal.id, 'rustdesk'),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            flex: 2,
+            child: _buildBigActionButton(
+              '截图',
+              '获取当前屏幕',
+              LucideIcons.moreHorizontal,
+              Colors.white,
+              Colors.black87,
+              () => _remoteAction(terminal.id, 'screenshot'),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Column(
       children: [
-        Expanded(
-          flex: 2,
-          child: _buildBigActionButton(
-            'VNC 远程桌面',
-            '极速连接，低延迟',
-            LucideIcons.monitor,
-            AppColors.iosBlue,
-            Colors.white,
-            () => _remoteAction(terminal.id, 'vnc'),
-          ),
+        _buildBigActionButton(
+          'VNC 远程桌面',
+          '极速连接，低延迟',
+          LucideIcons.monitor,
+          AppColors.iosBlue,
+          Colors.white,
+          () => _remoteAction(terminal.id, 'vnc'),
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          flex: 2,
-          child: _buildBigActionButton(
-            'RustDesk',
-            '备用远程方案',
-            LucideIcons.settings,
-            Colors.white,
-            Colors.black87,
-            () => _remoteAction(terminal.id, 'rustdesk'),
-          ),
+        const SizedBox(height: 12),
+        _buildBigActionButton(
+          'RustDesk',
+          '备用远程方案',
+          LucideIcons.settings,
+          Colors.white,
+          Colors.black87,
+          () => _remoteAction(terminal.id, 'rustdesk'),
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          flex: 2,
-          child: _buildBigActionButton(
-            '截图',
-            '获取当前屏幕',
-            LucideIcons.moreHorizontal,
-            Colors.white,
-            Colors.black87,
-            () => _remoteAction(terminal.id, 'screenshot'),
-          ),
+        const SizedBox(height: 12),
+        _buildBigActionButton(
+          '截图',
+          '获取当前屏幕',
+          LucideIcons.moreHorizontal,
+          Colors.white,
+          Colors.black87,
+          () => _remoteAction(terminal.id, 'screenshot'),
         ),
       ],
     );

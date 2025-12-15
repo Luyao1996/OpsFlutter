@@ -66,156 +66,346 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) return Center(child: Text('加载失败: $_error', style: const TextStyle(color: Colors.red)));
 
-    return Row(
-      children: [
-        // Left Sidebar: Log Categories
-        Container(
-          width: 240,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border(right: BorderSide(color: Colors.grey.shade200)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isNarrow = constraints.maxWidth < 900;
+        if (isNarrow) {
+          if (_filteredLogs.isEmpty) {
+            return Center(child: Text('暂无日志', style: TextStyle(color: Colors.grey.shade500)));
+          }
+
+          return Column(
             children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: const [
-                    Icon(LucideIcons.list, size: 20, color: Colors.black87),
-                    SizedBox(width: 8),
-                    Text('日志分类', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  itemCount: _categories.length,
-                  itemBuilder: (context, index) {
-                    final cat = _categories[index];
-                    final isSelected = cat == _selectedCategory;
-                    final count = cat == 'All' ? _logs.length : _logs.where((l) => l.category == cat).length;
-                    
-                    return InkWell(
-                      onTap: () => setState(() {
-                        _selectedCategory = cat;
-                        _selectedLogIndex = null;
-                      }),
-                      borderRadius: BorderRadius.circular(6),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                        margin: const EdgeInsets.only(bottom: 4),
-                        decoration: BoxDecoration(
-                          color: isSelected ? Colors.blue.shade50 : Colors.transparent,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(LucideIcons.fileText, size: 16, color: isSelected ? Colors.blue : Colors.grey.shade600),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                cat, 
-                                style: TextStyle(
-                                  fontSize: 13, 
-                                  color: isSelected ? Colors.blue : Colors.grey.shade700,
-                                  fontWeight: isSelected ? FontWeight.w500 : FontWeight.normal,
-                                )
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.grey.shade200,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                '$count',
-                                style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
-                              ),
-                            )
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-        
-        // Right Content Area
-        Expanded(
-          child: Column(
-            children: [
-              // Toolbar
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
                 ),
                 child: Row(
                   children: [
-                    const Spacer(),
-                    IconButton(icon: Icon(LucideIcons.refreshCw, size: 16, color: Colors.grey.shade500), onPressed: _loadLogs),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: _selectedCategory,
+                        items: _categories
+                            .map((c) => DropdownMenuItem<String>(
+                                  value: c,
+                                  child: Text(c, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                ))
+                            .toList(),
+                        onChanged: (v) {
+                          if (v == null) return;
+                          setState(() {
+                            _selectedCategory = v;
+                            _selectedLogIndex = null;
+                          });
+                        },
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      onPressed: _loadLogs,
+                      icon: Icon(LucideIcons.refreshCw, size: 18, color: Colors.grey.shade600),
+                      tooltip: '刷新',
+                    ),
                   ],
                 ),
               ),
-              
-              // Table Header
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                color: Colors.grey.shade50,
-                child: Row(
-                  children: [
-                    SizedBox(width: 80, child: _buildHeaderCell('级别')),
-                    SizedBox(width: 150, child: _buildHeaderCell('时间')),
-                    SizedBox(width: 150, child: _buildHeaderCell('来源')),
-                    SizedBox(width: 60, child: _buildHeaderCell('事件ID')),
-                    Expanded(child: _buildHeaderCell('消息')),
-                  ],
-                ),
-              ),
-              Divider(height: 1, color: Colors.grey.shade200),
-
-              // Table List
               Expanded(
-                child: ListView.builder(
+                child: ListView.separated(
                   itemCount: _filteredLogs.length,
+                  padding: const EdgeInsets.all(8),
+                  separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey.shade200),
                   itemBuilder: (context, index) {
                     final log = _filteredLogs[index];
                     final isSelected = _selectedLogIndex == index;
-                    return InkWell(
-                      onTap: () => setState(() => _selectedLogIndex = index),
-                      child: Container(
-                        color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.transparent,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                        child: Row(
-                          children: [
-                            SizedBox(width: 80, child: _buildLevelCell(log.level)),
-                            SizedBox(width: 150, child: Text(log.time, style: const TextStyle(fontSize: 12))),
-                            SizedBox(width: 150, child: Text(log.source, style: const TextStyle(fontSize: 12))),
-                            SizedBox(width: 60, child: Text('${log.eventId}', style: const TextStyle(fontSize: 12))),
-                            Expanded(child: Text(log.message, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis)),
-                          ],
-                        ),
+                    final levelColor = _levelColor(log.level);
+                    return ListTile(
+                      dense: true,
+                      selected: isSelected,
+                      selectedTileColor: Colors.blue.withOpacity(0.06),
+                      leading: Icon(_levelIcon(log.level), size: 18, color: levelColor),
+                      title: Text(
+                        log.message,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 13),
                       ),
+                      subtitle: Text(
+                        '${log.time} · ${log.source} · #${log.eventId}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                      ),
+                      trailing: Text(
+                        log.level,
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: levelColor),
+                      ),
+                      onTap: () {
+                        setState(() => _selectedLogIndex = index);
+                        _showLogDetailSheet(log);
+                      },
                     );
                   },
                 ),
               ),
-
-              // Bottom Detail Panel
-              if (_selectedLogIndex != null)
-                _buildDetailPanel(_filteredLogs[_selectedLogIndex!]),
             ],
-          ),
-        ),
-      ],
+          );
+        }
+
+        return Row(
+          children: [
+            // Left Sidebar: Log Categories
+            Container(
+              width: 240,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border(right: BorderSide(color: Colors.grey.shade200)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: const [
+                        Icon(LucideIcons.list, size: 20, color: Colors.black87),
+                        SizedBox(width: 8),
+                        Text('日志分类', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      itemCount: _categories.length,
+                      itemBuilder: (context, index) {
+                        final cat = _categories[index];
+                        final isSelected = cat == _selectedCategory;
+                        final count = cat == 'All' ? _logs.length : _logs.where((l) => l.category == cat).length;
+
+                        return InkWell(
+                          onTap: () => setState(() {
+                            _selectedCategory = cat;
+                            _selectedLogIndex = null;
+                          }),
+                          borderRadius: BorderRadius.circular(6),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                            margin: const EdgeInsets.only(bottom: 4),
+                            decoration: BoxDecoration(
+                              color: isSelected ? Colors.blue.shade50 : Colors.transparent,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(LucideIcons.fileText, size: 16, color: isSelected ? Colors.blue : Colors.grey.shade600),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    cat,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: isSelected ? Colors.blue : Colors.grey.shade700,
+                                      fontWeight: isSelected ? FontWeight.w500 : FontWeight.normal,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade200,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    '$count',
+                                    style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                                  ),
+                                )
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Right Content Area
+            Expanded(
+              child: Column(
+                children: [
+                  // Toolbar
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Spacer(),
+                        IconButton(
+                          icon: Icon(LucideIcons.refreshCw, size: 16, color: Colors.grey.shade500),
+                          onPressed: _loadLogs,
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Table Header
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    color: Colors.grey.shade50,
+                    child: Row(
+                      children: [
+                        SizedBox(width: 80, child: _buildHeaderCell('级别')),
+                        SizedBox(width: 150, child: _buildHeaderCell('时间')),
+                        SizedBox(width: 150, child: _buildHeaderCell('来源')),
+                        SizedBox(width: 60, child: _buildHeaderCell('事件ID')),
+                        Expanded(child: _buildHeaderCell('消息')),
+                      ],
+                    ),
+                  ),
+                  Divider(height: 1, color: Colors.grey.shade200),
+
+                  // Table List
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: _filteredLogs.length,
+                      itemBuilder: (context, index) {
+                        final log = _filteredLogs[index];
+                        final isSelected = _selectedLogIndex == index;
+                        return InkWell(
+                          onTap: () => setState(() => _selectedLogIndex = index),
+                          child: Container(
+                            color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.transparent,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            child: Row(
+                              children: [
+                                SizedBox(width: 80, child: _buildLevelCell(log.level)),
+                                SizedBox(width: 150, child: Text(log.time, style: const TextStyle(fontSize: 12))),
+                                SizedBox(width: 150, child: Text(log.source, style: const TextStyle(fontSize: 12))),
+                                SizedBox(width: 60, child: Text('${log.eventId}', style: const TextStyle(fontSize: 12))),
+                                Expanded(child: Text(log.message, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis)),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+
+                  // Bottom Detail Panel
+                  if (_selectedLogIndex != null) _buildDetailPanel(_filteredLogs[_selectedLogIndex!]),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
     );
+  }
+
+  void _showLogDetailSheet(TerminalLog log) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(_levelIcon(log.level), size: 18, color: _levelColor(log.level)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Event ${log.eventId} - ${log.source}',
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: Icon(LucideIcons.x, size: 18, color: Colors.grey.shade600),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _chip('级别', log.level, _levelColor(log.level)),
+                      _chip('分类', log.category, Colors.grey.shade700),
+                      _chip('时间', log.time, Colors.grey.shade700),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    log.message,
+                    style: const TextStyle(fontSize: 13, height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _chip(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Text(
+        '$label: $value',
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
+      ),
+    );
+  }
+
+  IconData _levelIcon(String level) {
+    switch (level.toLowerCase()) {
+      case 'error':
+        return LucideIcons.alertTriangle;
+      case 'warning':
+        return LucideIcons.alertTriangle;
+      default:
+        return LucideIcons.info;
+    }
+  }
+
+  Color _levelColor(String level) {
+    switch (level.toLowerCase()) {
+      case 'error':
+        return Colors.red;
+      case 'warning':
+        return Colors.orange;
+      default:
+        return Colors.blue;
+    }
   }
 
   Widget _buildHeaderCell(String text) {

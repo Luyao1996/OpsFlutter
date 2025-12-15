@@ -28,12 +28,14 @@ class LogStats extends StatelessWidget {
         // Responsive grid logic
         int crossAxisCount = 4;
         if (constraints.maxWidth < 800) crossAxisCount = 2;
-        if (constraints.maxWidth < 500) crossAxisCount = 1;
+        if (constraints.maxWidth < 500) crossAxisCount = 2;
+        if (constraints.maxWidth < 340) crossAxisCount = 1;
 
         // Calculate width for each item based on spacing
         final width = constraints.maxWidth;
         final spacing = 16.0;
         final itemWidth = (width - (spacing * (crossAxisCount - 1))) / crossAxisCount;
+        final compact = constraints.maxWidth < 500;
 
         return Wrap(
           spacing: spacing,
@@ -41,19 +43,43 @@ class LogStats extends StatelessWidget {
           children: [
             SizedBox(
               width: itemWidth,
-              child: _buildStatCard('日志总数', data.total.toString(), LucideIcons.fileText, Colors.blue),
+              child: _buildStatCard(
+                '日志总数',
+                data.total.toString(),
+                LucideIcons.fileText,
+                Colors.blue,
+                compact: compact,
+              ),
             ),
             SizedBox(
               width: itemWidth,
-              child: _buildStatCard('操作成功率', '${data.successRate.toStringAsFixed(1)}%', LucideIcons.activity, Colors.green),
+              child: _buildStatCard(
+                '操作成功率',
+                '${data.successRate.toStringAsFixed(1)}%',
+                LucideIcons.activity,
+                Colors.green,
+                compact: compact,
+              ),
             ),
             SizedBox(
               width: itemWidth,
-              child: _buildStatCard('安全警告', data.warning.toString(), LucideIcons.shieldAlert, Colors.orange),
+              child: _buildStatCard(
+                '安全警告',
+                data.warning.toString(),
+                LucideIcons.shieldAlert,
+                Colors.orange,
+                compact: compact,
+              ),
             ),
             SizedBox(
               width: itemWidth,
-              child: _buildStatCard('异常操作', data.error.toString(), LucideIcons.alertCircle, Colors.red),
+              child: _buildStatCard(
+                '异常操作',
+                data.error.toString(),
+                LucideIcons.alertCircle,
+                Colors.red,
+                compact: compact,
+              ),
             ),
           ],
         );
@@ -61,9 +87,15 @@ class LogStats extends StatelessWidget {
     );
   }
 
-  Widget _buildStatCard(String label, String value, IconData icon, Color color) {
+  Widget _buildStatCard(
+    String label,
+    String value,
+    IconData icon,
+    Color color, {
+    required bool compact,
+  }) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: compact ? const EdgeInsets.all(12) : const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -73,21 +105,25 @@ class LogStats extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 48,
-            height: 48,
+            width: compact ? 40 : 48,
+            height: compact ? 40 : 48,
             decoration: BoxDecoration(
               color: color.withOpacity(0.1),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, size: 24, color: color),
+            child: Icon(icon, size: compact ? 20 : 24, color: color),
           ),
-          const SizedBox(width: 16),
+          SizedBox(width: compact ? 12 : 16),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 value,
-                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87),
+                style: TextStyle(
+                  fontSize: compact ? 20 : 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
               ),
               Text(
                 label,

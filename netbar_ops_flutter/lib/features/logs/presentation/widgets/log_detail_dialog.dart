@@ -14,13 +14,17 @@ class LogDetailDialog extends StatelessWidget {
     final levelColor = levelConf['color'] as Color;
     final levelBg = levelConf['bg'] as Color;
     final levelLabel = levelConf['label'] as String;
+    final screenSize = MediaQuery.sizeOf(context);
+    final dialogWidth = (screenSize.width - 32).clamp(0.0, 640.0);
+    final dialogMaxHeight = (screenSize.height - 48).clamp(0.0, 700.0);
 
     return Dialog(
       backgroundColor: Colors.white,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
-        width: 640,
-        constraints: const BoxConstraints(maxHeight: 700),
+        width: dialogWidth,
+        constraints: BoxConstraints(maxHeight: dialogMaxHeight),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -88,6 +92,10 @@ class LogDetailDialog extends StatelessWidget {
                     // Grid Info
                     LayoutBuilder(
                       builder: (context, constraints) {
+                        final useSingleColumn = constraints.maxWidth < 520;
+                        final cardWidth = useSingleColumn
+                            ? constraints.maxWidth
+                            : (constraints.maxWidth - 16) / 2;
                         return Wrap(
                           spacing: 16,
                           runSpacing: 16,
@@ -107,25 +115,25 @@ class LogDetailDialog extends StatelessWidget {
                                   ],
                                 ),
                               ),
-                              width: (constraints.maxWidth - 16) / 2,
+                              width: cardWidth,
                             ),
                             _buildInfoCard(
                               icon: LucideIcons.clock,
                               label: '操作时间',
                               content: Text(log.timestamp, style: const TextStyle(fontWeight: FontWeight.w500, fontFamily: 'monospace')),
-                              width: (constraints.maxWidth - 16) / 2,
+                              width: cardWidth,
                             ),
                             _buildInfoCard(
                               icon: LucideIcons.mapPin,
                               label: '来源 IP',
                               content: Text(log.ip, style: const TextStyle(fontWeight: FontWeight.w500, fontFamily: 'monospace')),
-                              width: (constraints.maxWidth - 16) / 2,
+                              width: cardWidth,
                             ),
                             _buildInfoCard(
                               icon: LucideIcons.activity,
                               label: '所属模块',
                               content: Text(moduleLabels[log.module]!, style: const TextStyle(fontWeight: FontWeight.w500)),
-                              width: (constraints.maxWidth - 16) / 2,
+                              width: cardWidth,
                             ),
                           ],
                         );

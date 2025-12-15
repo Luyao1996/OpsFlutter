@@ -2,13 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/responsive/responsive.dart';
 import '../../../../shared/widgets/search_field.dart';
 import '../data/netbar_api.dart';
 import 'widgets/create_netbar_modal.dart';
 import 'widgets/netbar_list_view.dart';
 import 'widgets/netbar_grid_view.dart';
 
-final netbarListProvider = FutureProvider.autoDispose((ref) async {
+final netbarListProvider = FutureProvider.autoDispose<List<Netbar>>((ref) async {
   final api = NetbarApi();
   return api.getList();
 });
@@ -28,6 +29,8 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
   @override
   Widget build(BuildContext context) {
     final netbarsAsync = ref.watch(netbarListProvider);
+    final isNarrow = context.isNarrow;
+    final padding = context.isPhone ? 16.0 : 24.0;
 
     return Scaffold(
       backgroundColor: AppColors.iosBg,
@@ -35,112 +38,60 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
         children: [
           // Header Section
           Container(
-            padding: const EdgeInsets.all(24),
+            padding: EdgeInsets.all(padding),
             color: Colors.white,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Top Row: Title & Stats
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          '网吧管理',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        netbarsAsync.maybeWhen(
-                          data: (netbars) {
-                            final online = netbars.where((n) => n.status == 'online').length;
-                            final offline = netbars.length - online;
-                            return Row(
-                              children: [
-                                _buildStatusBadge(Colors.green, '$online 在线'),
-                                const SizedBox(width: 12),
-                                _buildStatusBadge(Colors.grey, '$offline 离线'),
-                              ],
-                            );
-                          },
-                          orElse: () => const SizedBox.shrink(),
-                        ),
-                      ],
-                    ),
-                    Row(
-                      children: [
-                        ElevatedButton.icon(
-                          onPressed: () {
-                            // TODO: Implement Export
-                          },
-                          icon: const Icon(LucideIcons.download, size: 16),
-                          label: const Text('导出CSV'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.grey.shade100,
-                            foregroundColor: Colors.black87,
-                            elevation: 0,
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        ElevatedButton.icon(
-                          onPressed: () {
-                             showDialog(
-                               context: context,
-                               builder: (context) => const CreateNetbarModal(),
-                             ).then((created) {
-                               if (created == true) {
-                                 ref.refresh(netbarListProvider);
-                               }
-                             });
-                          },
-                          icon: const Icon(LucideIcons.plus, size: 16),
-                          label: const Text('新增网吧'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: Colors.white,
-                            elevation: 0,
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                if (!isNarrow)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildHeaderTitle(netbarsAsync),
+                      _buildHeaderActions(),
+                    ],
+                  )
+                else
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildHeaderTitle(netbarsAsync),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [_buildHeaderActions()],
+                      ),
+                    ],
+                  ),
                 const SizedBox(height: 24),
                 // Bottom Row: Search & Filters
-                Row(
-                  children: [
-                    Expanded(
-                      child: SearchField(
+                if (!isNarrow)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SearchField(
+                          hintText: '搜索名称、ID、拼音或Token...',
+                          onChanged: (value) => setState(() => _searchQuery = value),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      _buildViewToggle(),
+                    ],
+                  )
+                else
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SearchField(
                         hintText: '搜索名称、ID、拼音或Token...',
                         onChanged: (value) => setState(() => _searchQuery = value),
                       ),
-                    ),
-                    const SizedBox(width: 16),
-                    // View Toggle
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      padding: const EdgeInsets.all(4),
-                      child: Row(
-                        children: [
-                          _buildViewToggleButton(true, LucideIcons.list),
-                          _buildViewToggleButton(false, LucideIcons.layoutGrid),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+                      const SizedBox(height: 12),
+                      Align(alignment: Alignment.centerRight, child: _buildViewToggle()),
+                    ],
+                  ),
               ],
             ),
           ),
@@ -185,6 +136,99 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
               },
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeaderTitle(AsyncValue<List<Netbar>> netbarsAsync) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '网吧管理',
+          style: TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        const SizedBox(height: 8),
+        netbarsAsync.maybeWhen(
+          data: (netbars) {
+            final online = netbars.where((n) => n.status == 'online').length;
+            final offline = netbars.length - online;
+            return Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                _buildStatusBadge(Colors.green, '$online 在线'),
+                _buildStatusBadge(Colors.grey, '$offline 离线'),
+              ],
+            );
+          },
+          orElse: () => const SizedBox.shrink(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHeaderActions() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ElevatedButton.icon(
+          onPressed: () {
+            // TODO: Implement Export
+          },
+          icon: const Icon(LucideIcons.download, size: 16),
+          label: const Text('导出CSV'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.grey.shade100,
+            foregroundColor: Colors.black87,
+            elevation: 0,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
+        const SizedBox(width: 12),
+        ElevatedButton.icon(
+          onPressed: () {
+            showDialog(
+              context: context,
+              builder: (context) => const CreateNetbarModal(),
+            ).then((created) {
+              if (created == true) {
+                ref.refresh(netbarListProvider);
+              }
+            });
+          },
+          icon: const Icon(LucideIcons.plus, size: 16),
+          label: const Text('新增网吧'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primary,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildViewToggle() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildViewToggleButton(true, LucideIcons.list),
+          _buildViewToggleButton(false, LucideIcons.layoutGrid),
         ],
       ),
     );

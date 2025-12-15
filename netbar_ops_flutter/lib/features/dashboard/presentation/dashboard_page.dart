@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/responsive/responsive.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../data/dashboard_api.dart';
 import 'widgets/stat_card.dart';
@@ -34,6 +35,7 @@ class DashboardPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final dashboardStats = ref.watch(dashboardStatsProvider);
+    final pagePadding = context.isPhone ? 16.0 : (context.isNarrow ? 24.0 : 32.0);
 
     return Scaffold(
       backgroundColor: AppColors.iosBg,
@@ -57,14 +59,16 @@ class DashboardPage extends ConsumerWidget {
         ),
         data: (DashboardStats stats) => LayoutBuilder(
           builder: (context, constraints) {
-            // Padding is 32 on each side, so available width for content is maxWidth - 64
-            final width = constraints.maxWidth - 64; 
-            const gap = 24.0;
+            final isPhone = context.isPhone;
+            final width = (constraints.maxWidth - pagePadding * 2).clamp(0.0, double.infinity);
+            final gap = isPhone ? 12.0 : 24.0;
             
             // Determine columns based on breakpoints (matching Vue: lg=1024, md=768)
             int columns;
             // Use the original constraint width for breakpoint checking
-            if (constraints.maxWidth >= 1024) {
+            if (isPhone) {
+              columns = 2;
+            } else if (constraints.maxWidth >= 1024) {
               columns = 4;
             } else if (constraints.maxWidth >= 768) {
               columns = 2;
@@ -78,7 +82,7 @@ class DashboardPage extends ConsumerWidget {
             final itemWidth = (width - (columns - 1) * gap) / columns;
 
             return SingleChildScrollView(
-              padding: const EdgeInsets.all(32),
+              padding: EdgeInsets.all(pagePadding),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -86,9 +90,12 @@ class DashboardPage extends ConsumerWidget {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         '概览',
-                        style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          fontSize: context.isPhone ? 22 : 30,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -106,13 +113,13 @@ class DashboardPage extends ConsumerWidget {
                     children: [
                       _buildStatItem(itemWidth, '总网吧数', stats.totalNetbars.toString(), 
                           '${stats.onlineNetbars} 个在线 / ${stats.totalNetbars - stats.onlineNetbars} 个离线',
-                          LucideIcons.server, Colors.blue, null),
+                          LucideIcons.server, Colors.blue, null, compact: isPhone),
                       _buildStatItem(itemWidth, '终端总数', stats.totalDesktops.toString(), null,
-                          LucideIcons.monitor, Colors.indigo, 2.4),
+                          LucideIcons.monitor, Colors.indigo, 2.4, compact: isPhone),
                       _buildStatItem(itemWidth, '在线终端', stats.onlineDesktops.toString(), null,
-                          LucideIcons.activity, Colors.green, 12.5),
+                          LucideIcons.activity, Colors.green, 12.5, compact: isPhone),
                       _buildStatItem(itemWidth, '活跃通道', '${stats.activeChannels}/${stats.totalChannels}', null,
-                          LucideIcons.wifi, Colors.orange, null),
+                          LucideIcons.wifi, Colors.orange, null, compact: isPhone),
                     ],
                   ),
                   
@@ -127,7 +134,7 @@ class DashboardPage extends ConsumerWidget {
                           width: itemWidth * 3 + gap * 2,
                           child: const TrendChart(),
                         ),
-                        const SizedBox(width: gap),
+                        SizedBox(width: gap),
                         SizedBox(
                           width: itemWidth,
                           child: const QuickActions(),
@@ -151,21 +158,31 @@ class DashboardPage extends ConsumerWidget {
     );
   }
 
-  Widget _buildStatItem(double width, String title, String value, String? subtext, IconData icon, Color color, double? trend) {
+  Widget _buildStatItem(
+    double width,
+    String title,
+    String value,
+    String? subtext,
+    IconData icon,
+    Color color,
+    double? trend, {
+    required bool compact,
+  }) {
     // Aspect ratio 1.6 approx, but let content drive height or fixed height?
     // Vue uses fixed padding/height. Let's give it a min-height or let it be flexible but constrained width.
     return SizedBox(
       width: width,
       // Fixed height to ensure alignment, similar to GridView aspect ratio approach
       // but 'StatCard' is flexible. Let's fix height to match the look.
-      height: 220, 
+      height: compact ? 170 : 220,
       child: StatCard(
         title: title,
         value: value,
-        subtext: subtext,
+        subtext: compact ? null : subtext,
         icon: icon,
         color: color,
         trend: trend,
+        compact: compact,
       ),
     );
   }

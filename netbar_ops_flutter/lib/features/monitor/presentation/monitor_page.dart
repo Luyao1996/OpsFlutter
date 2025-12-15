@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:intl/intl.dart';
+import '../../../core/responsive/responsive.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/providers/terminal_dock_provider.dart';
@@ -159,6 +160,108 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
       }
       return _sortAscending ? cmp : -cmp;
     });
+
+    if (context.isPhone) {
+      return DefaultTabController(
+        length: 2,
+        initialIndex: 0, // 默认“关键设备状态”
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Container(
+                height: 40,
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: AppColors.iosCard,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.iosSeparator),
+                  boxShadow: AppShadows.sm,
+                ),
+                child: TabBar(
+                  indicator: BoxDecoration(
+                    color: AppColors.iosBlue,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  labelColor: Colors.white,
+                  unselectedLabelColor: Colors.grey.shade600,
+                  dividerColor: Colors.transparent,
+                  indicatorSize: TabBarIndicatorSize.tab,
+                  labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  unselectedLabelStyle:
+                      const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  tabs: const [
+                    Tab(text: '关键设备状态'),
+                    Tab(text: '终端列表'),
+                  ],
+                ),
+              ),
+            ),
+            Expanded(
+              child: TabBarView(
+                children: [
+                  // 关键设备状态
+                  CustomScrollView(
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: _buildDevicesSection(
+                          devices,
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                        ),
+                      ),
+                    ],
+                  ),
+                  // 终端列表
+                  CustomScrollView(
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: _buildToolbar(filteredClients.length),
+                      ),
+                      SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                        sliver: _isListView
+                            ? SliverToBoxAdapter(
+                                child: _buildTerminalDataTable(filteredClients),
+                              )
+                            : SliverLayoutBuilder(
+                                builder: (context, constraints) {
+                                  final width = constraints.crossAxisExtent;
+                                  int columns = 2;
+                                  if (width >= 640) columns = 3;
+
+                                  return SliverGrid(
+                                    gridDelegate:
+                                        SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: columns,
+                                      childAspectRatio: 0.9,
+                                      crossAxisSpacing: 12,
+                                      mainAxisSpacing: 12,
+                                    ),
+                                    delegate: SliverChildBuilderDelegate(
+                                      (context, index) {
+                                        final terminal = filteredClients[index];
+                                        return TerminalCard(
+                                          terminal: terminal,
+                                          onTap: () => _openTerminalDetail(terminal),
+                                          onSecondaryTapDown: (details) =>
+                                              _showContextMenu(details, terminal),
+                                        );
+                                      },
+                                      childCount: filteredClients.length,
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     return CustomScrollView(
       slivers: [
@@ -451,29 +554,49 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
     }
   }
 
-  Widget _buildDevicesSection(List<Terminal> devices) {
+  Widget _buildDevicesSection(List<Terminal> devices, {EdgeInsets? padding}) {
     return Padding(
-      padding: const EdgeInsets.all(32),
+      padding: padding ?? const EdgeInsets.all(32),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const Text('关键设备状态', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-              const SizedBox(width: 8),
-              Text(
-                '服务器 / 控制台 / 收银机 / 路由器',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
-              ),
-            ],
-          ),
+          if (context.isPhone)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '关键设备状态',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '服务器 / 控制台 / 收银机 / 路由器',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                ),
+              ],
+            )
+          else
+            Row(
+              children: [
+                const Text('关键设备状态',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                const SizedBox(width: 8),
+                Text(
+                  '服务器 / 控制台 / 收银机 / 路由器',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                ),
+              ],
+            ),
           const SizedBox(height: 16),
           // 使用响应式网格布局
           LayoutBuilder(
             builder: (context, constraints) {
               final width = constraints.maxWidth;
+              final isPhone = context.isPhone;
               int columns;
-              if (width >= 1024) {
+              if (isPhone) {
+                columns = width >= 320 ? 2 : 1;
+              } else if (width >= 1024) {
                 columns = 4;
               } else if (width >= 640) {
                 columns = 2;
@@ -481,16 +604,18 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                 columns = 1;
               }
 
-              final itemWidth = (width - (columns - 1) * 16) / columns;
+              final gap = isPhone ? 12.0 : 16.0;
+              final itemWidth = (width - (columns - 1) * gap) / columns;
+              final itemHeight = isPhone ? 160.0 : 200.0;
 
               return Wrap(
-                spacing: 16,
-                runSpacing: 16,
+                spacing: gap,
+                runSpacing: gap,
                 children: [
                   // 关键设备卡片 (使用 TerminalCard 样式)
                   ...devices.map((d) => SizedBox(
                     width: itemWidth,
-                    height: 200, // 固定高度
+                    height: itemHeight, // 固定高度
                     child: TerminalCard(
                       terminal: d,
                       onTap: () => _openTerminalDetail(d),
@@ -500,7 +625,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                   // 路由器卡片
                   SizedBox(
                     width: itemWidth,
-                    height: 200,
+                    height: itemHeight,
                     child: _buildRouterCard(),
                   ),
                 ],
@@ -616,6 +741,12 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
 
   Widget _buildToolbar(int count) {
     final isNarrow = MediaQuery.of(context).size.width < 900;
+    if (isNarrow && _isListView) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _isListView = false);
+      });
+    }
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: isNarrow ? 16 : 32),
       child: Column(
@@ -668,35 +799,37 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
               Container(width: 1, height: 24, color: AppColors.iosSeparator),
               const SizedBox(width: 8),
               // 视图切换
-              Container(
-                decoration: BoxDecoration(
-                  color: AppColors.iosCard,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.iosSeparator),
-                  boxShadow: AppShadows.sm,
+              if (!isNarrow)
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.iosCard,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.iosSeparator),
+                    boxShadow: AppShadows.sm,
+                  ),
+                  padding: const EdgeInsets.all(4),
+                  child: Row(
+                    children: [
+                      _buildToolbarSwitchItem(
+                        icon: LucideIcons.layoutGrid,
+                        isSelected: !_isListView,
+                        onTap: () => setState(() => _isListView = false),
+                      ),
+                      _buildToolbarSwitchItem(
+                        icon: LucideIcons.list,
+                        isSelected: _isListView,
+                        onTap: () => setState(() => _isListView = true),
+                      ),
+                    ],
+                  ),
                 ),
-                padding: const EdgeInsets.all(4),
-                child: Row(
-                  children: [
-                    _buildToolbarSwitchItem(
-                      icon: LucideIcons.layoutGrid,
-                      isSelected: !_isListView,
-                      onTap: () => setState(() => _isListView = false),
-                    ),
-                    _buildToolbarSwitchItem(
-                      icon: LucideIcons.list,
-                      isSelected: _isListView,
-                      onTap: () => setState(() => _isListView = true),
-                    ),
-                  ],
-                ),
-              ),
               const SizedBox(width: 12),
               // 刷新按钮
               _buildToolbarButton(
                 icon: LucideIcons.refreshCw,
                 tooltip: '刷新',
                 onPressed: () => ref.invalidate(terminalsProvider),
+                size: isNarrow ? 40 : 44,
               ),
             ],
           ),
@@ -708,8 +841,16 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
   }
 
   /// 构建工具栏按钮
-  Widget _buildToolbarButton({required IconData icon, required String tooltip, required VoidCallback onPressed}) {
-    return Container(
+  Widget _buildToolbarButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+    double size = 44,
+  }) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Container(
       decoration: BoxDecoration(
         color: AppColors.iosCard,
         borderRadius: BorderRadius.circular(12),
@@ -720,6 +861,10 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
         onPressed: onPressed,
         icon: Icon(icon, size: 18, color: Colors.grey.shade600),
         tooltip: tooltip,
+        padding: EdgeInsets.zero,
+        constraints: BoxConstraints.tightFor(width: size, height: size),
+        splashRadius: size / 2,
+      ),
       ),
     );
   }
@@ -771,9 +916,15 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
             child: TextField(
               onChanged: (v) => setState(() => _searchQuery = v),
               decoration: InputDecoration(
+                filled: false,
                 hintText: '搜索机号...',
                 hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
                 border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                disabledBorder: InputBorder.none,
+                errorBorder: InputBorder.none,
+                focusedErrorBorder: InputBorder.none,
                 contentPadding: EdgeInsets.zero,
                 isDense: true,
               ),

@@ -3,12 +3,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../core/responsive/responsive.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../core/storage/token_store.dart';
 
 class UserProfileDialog extends ConsumerStatefulWidget {
-  const UserProfileDialog({super.key});
+  final bool asBottomSheet;
+
+  const UserProfileDialog({super.key, this.asBottomSheet = false});
 
   @override
   ConsumerState<UserProfileDialog> createState() => _UserProfileDialogState();
@@ -34,86 +37,211 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
     final userRole = user?.role == 'admin' ? '管理员' : '操作员';
     final userAccount = user?.username ?? 'N/A';
 
-    return Center(
-      child: Material(
-        color: Colors.transparent,
-        child: Container(
-          width: 800,
-          height: 500,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: AppShadows.xl,
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Stack(
-            children: [
-              Row(
-                children: [
-                  // Sidebar
-                  Container(
-                    width: 256, // w-64 = 16rem = 256px
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFF9FAFB), // gray-50
-                      border: Border(
-                        right: BorderSide(color: Color(0xFFF3F4F6)), // gray-100
-                      ),
-                    ),
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Padding(
-                          padding: EdgeInsets.only(left: 8, bottom: 24, top: 8),
-                          child: Text(
-                            '个人中心',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF111827), // gray-900
-                            ),
-                          ),
-                        ),
-                        _buildNavItem('overview', LucideIcons.user, '账户概览'),
-                        const SizedBox(height: 4),
-                        _buildNavItem('security', LucideIcons.shield, '安全设置'),
-                        const SizedBox(height: 4),
-                        _buildNavItem('settings', LucideIcons.settings, '偏好设置'),
-                        const Spacer(),
-                        _buildLogoutButton(),
-                      ],
-                    ),
-                  ),
+    final isNarrow = context.isNarrow || context.isPhone;
+    final screen = MediaQuery.sizeOf(context);
+    final maxWidth = isNarrow ? 560.0 : 800.0;
+    final narrowMaxLimit = (screen.height - 24).clamp(0.0, 900.0);
+    final maxHeight = isNarrow
+        ? (screen.height * 0.92).clamp(320.0, narrowMaxLimit >= 320 ? narrowMaxLimit : 320.0)
+        : 500.0;
 
-                  // Content
-                  Expanded(
-                    child: Column(
-                      children: [
-                        Expanded(
-                          child: SingleChildScrollView(
-                            padding: const EdgeInsets.fromLTRB(32, 64, 32, 32),
-                            child: _buildActiveTabContent(userName, userRole, userAccount),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              // Close Button
+    final panel = Material(
+      color: Colors.white,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Stack(
+          children: [
+            isNarrow
+                ? _buildMobileBody(userName, userRole, userAccount)
+                : _buildDesktopBody(userName, userRole, userAccount),
+            if (!isNarrow)
               Positioned(
                 top: 16,
                 right: 16,
                 child: IconButton(
                   onPressed: () => Navigator.of(context).pop(),
                   icon: const Icon(LucideIcons.x, size: 20),
-                  color: const Color(0xFF9CA3AF), // gray-400
-                  hoverColor: const Color(0xFFF3F4F6), // gray-100
+                  color: const Color(0xFF9CA3AF),
+                  hoverColor: const Color(0xFFF3F4F6),
                   splashRadius: 20,
                 ),
               ),
+          ],
+        ),
+      ),
+    );
+
+    if (widget.asBottomSheet) {
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: SizedBox(
+            height: maxHeight,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: AppShadows.xl,
+              ),
+              child: panel,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Center(
+      child: Material(
+        color: Colors.transparent,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: maxWidth,
+            maxHeight: maxHeight,
+          ),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: AppShadows.xl,
+            ),
+            child: panel,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDesktopBody(String userName, String role, String account) {
+    return Row(
+      children: [
+        Container(
+          width: 256,
+          decoration: const BoxDecoration(
+            color: Color(0xFFF9FAFB),
+            border: Border(
+              right: BorderSide(color: Color(0xFFF3F4F6)),
+            ),
+          ),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(left: 8, bottom: 24, top: 8),
+                child: Text(
+                  '个人中心',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF111827),
+                  ),
+                ),
+              ),
+              _buildNavItem('overview', LucideIcons.user, '账户概览'),
+              const SizedBox(height: 4),
+              _buildNavItem('security', LucideIcons.shield, '安全设置'),
+              const SizedBox(height: 4),
+              _buildNavItem('settings', LucideIcons.settings, '偏好设置'),
+              const Spacer(),
+              _buildLogoutButton(),
             ],
           ),
+        ),
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(32, 64, 32, 32),
+            child: _buildActiveTabContent(
+              userName,
+              role,
+              account,
+              isNarrow: false,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMobileBody(String userName, String role, String account) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+          child: Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  '个人中心',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                ),
+              ),
+              IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(LucideIcons.x, size: 20),
+                splashRadius: 22,
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              Expanded(child: _buildMobileTab('overview', LucideIcons.user, '概览')),
+              const SizedBox(width: 8),
+              Expanded(child: _buildMobileTab('security', LucideIcons.shield, '安全')),
+              const SizedBox(width: 8),
+              Expanded(child: _buildMobileTab('settings', LucideIcons.settings, '偏好')),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: _buildActiveTabContent(
+              userName,
+              role,
+              account,
+              isNarrow: true,
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: _buildLogoutButton(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMobileTab(String id, IconData icon, String label) {
+    final isActive = _activeTab == id;
+    return InkWell(
+      onTap: () => setState(() => _activeTab = id),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        height: 44,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: isActive ? AppColors.iosBlue.withValues(alpha: 0.1) : const Color(0xFFF3F4F6),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isActive ? AppColors.iosBlue.withValues(alpha: 0.35) : const Color(0xFFE5E7EB),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 16, color: isActive ? AppColors.iosBlue : const Color(0xFF6B7280)),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isActive ? AppColors.iosBlue : const Color(0xFF6B7280),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -172,6 +300,7 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
       borderRadius: BorderRadius.circular(12),
       child: Container(
         width: double.infinity,
+        constraints: const BoxConstraints(minHeight: 48),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
@@ -194,10 +323,15 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
     );
   }
 
-  Widget _buildActiveTabContent(String userName, String role, String account) {
+  Widget _buildActiveTabContent(
+    String userName,
+    String role,
+    String account, {
+    required bool isNarrow,
+  }) {
     switch (_activeTab) {
       case 'overview':
-        return _buildOverviewTab(userName, role, account);
+        return _buildOverviewTab(userName, role, account, isNarrow: isNarrow);
       case 'security':
         return _buildSecurityTab();
       case 'settings':
@@ -207,13 +341,14 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
     }
   }
 
-  Widget _buildOverviewTab(String userName, String role, String account) {
+  Widget _buildOverviewTab(String userName, String role, String account,
+      {required bool isNarrow}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Gradient Card
         Container(
-          height: 160, // approximate height based on visual
+          constraints: const BoxConstraints(minHeight: 160),
           decoration: BoxDecoration(
             gradient: const LinearGradient(
               colors: [Color(0xFF3B82F6), Color(0xFF4F46E5)], // blue-500 to indigo-600
@@ -243,96 +378,182 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.all(24),
-                child: Row(
-                  children: [
-                    // Avatar
-                    Container(
-                      width: 80,
-                      height: 80,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        userName.isNotEmpty ? userName[0].toUpperCase() : 'A',
-                        style: const TextStyle(
-                          fontSize: 30,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 24),
-                    // Info
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          userName,
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                        Text(
-                          role,
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: const Color(0xFFDBEAFE).withOpacity(0.9), // blue-100
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: Colors.white.withOpacity(0.1)),
+                padding: const EdgeInsets.all(20),
+                child: isNarrow
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                width: 64,
+                                height: 64,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.2),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                      color: Colors.white.withOpacity(0.3), width: 2),
+                                ),
+                                alignment: Alignment.center,
+                                child: Text(
+                                  userName.isNotEmpty
+                                      ? userName[0].toUpperCase()
+                                      : 'A',
+                                  style: const TextStyle(
+                                    fontSize: 26,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
                               ),
-                              child: Text(
-                                '账号: $account',
-                                style: TextStyle(color: Colors.white, fontSize: 12),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF4ADE80).withOpacity(0.3), // green-400/30
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: const Color(0xFF4ADE80).withOpacity(0.2)),
-                              ),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 6,
-                                    height: 6,
-                                    decoration: const BoxDecoration(
-                                      color: Color(0xFF4ADE80),
-                                      shape: BoxShape.circle,
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      userName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  const Text(
-                                    '在线',
-                                    style: TextStyle(color: Color(0xFFF0FDF4), fontSize: 12), // green-50
-                                  ),
-                                ],
+                                    Text(
+                                      role,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: const Color(0xFFDBEAFE).withOpacity(0.9),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              _pill(
+                                child: Text('账号: $account',
+                                    style: const TextStyle(
+                                        color: Colors.white, fontSize: 12)),
+                              ),
+                              _pill(
+                                background: const Color(0xFF4ADE80).withOpacity(0.25),
+                                border: const Color(0xFF4ADE80).withOpacity(0.2),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      width: 6,
+                                      height: 6,
+                                      decoration: const BoxDecoration(
+                                        color: Color(0xFF4ADE80),
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    const Text('在线',
+                                        style: TextStyle(
+                                            color: Color(0xFFF0FDF4),
+                                            fontSize: 12)),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      )
+                    : Row(
+                        children: [
+                          Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: Colors.white.withOpacity(0.3), width: 2),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              userName.isNotEmpty
+                                  ? userName[0].toUpperCase()
+                                  : 'A',
+                              style: const TextStyle(
+                                fontSize: 30,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
                               ),
                             ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                          ),
+                          const SizedBox(width: 24),
+                          Expanded(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  userName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                Text(
+                                  role,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: const Color(0xFFDBEAFE).withOpacity(0.9),
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    _pill(
+                                      child: Text('账号: $account',
+                                          style: const TextStyle(
+                                              color: Colors.white, fontSize: 12)),
+                                    ),
+                                    _pill(
+                                      background: const Color(0xFF4ADE80).withOpacity(0.25),
+                                      border: const Color(0xFF4ADE80).withOpacity(0.2),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Container(
+                                            width: 6,
+                                            height: 6,
+                                            decoration: const BoxDecoration(
+                                              color: Color(0xFF4ADE80),
+                                              shape: BoxShape.circle,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          const Text('在线',
+                                              style: TextStyle(
+                                                  color: Color(0xFFF0FDF4),
+                                                  fontSize: 12)),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
               ),
             ],
           ),
@@ -362,30 +583,36 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
               Padding(
                 padding: const EdgeInsets.all(12),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Chrome (Windows)',
-                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Color(0xFF111827)),
-                        ),
-                        Text(
-                          '成都, 中国 (192.168.1.102)',
-                          style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
-                        ),
-                      ],
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Chrome (Windows)',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Color(0xFF111827)),
+                          ),
+                          Text(
+                            '成都, 中国 (192.168.1.102)',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                          ),
+                        ],
+                      ),
                     ),
+                    const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF0FDF4), // green-50
+                        color: const Color(0xFFF0FDF4),
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: const Text(
                         '当前设备',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF16A34A)), // green-600
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF16A34A)),
                       ),
                     ),
                   ],
@@ -395,6 +622,18 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _pill({required Widget child, Color? background, Color? border}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: (background ?? Colors.white.withOpacity(0.2)),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: border ?? Colors.white.withOpacity(0.1)),
+      ),
+      child: child,
     );
   }
 
