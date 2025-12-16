@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:cross_file/cross_file.dart';
 import '../../../../shared/providers/app_providers.dart';
+import '../../../../shared/utils/top_notice.dart';
 import '../../data/terminal_api.dart';
+import '../../../desktop/data/desktop_asset_api.dart';
+import '../../../../core/config/app_config.dart';
+import '../../../../core/storage/token_store.dart';
 
 class ChatWindowTab extends ConsumerStatefulWidget {
   final int terminalId;
@@ -19,6 +25,8 @@ class _ChatWindowTabState extends ConsumerState<ChatWindowTab> {
   final ScrollController _scrollController = ScrollController();
   List<TerminalChatMessage> _messages = [];
   bool _loading = false;
+  bool _sendingImage = false;
+  final DesktopAssetApi _assetApi = DesktopAssetApi();
 
   @override
   void initState() {
@@ -65,11 +73,77 @@ class _ChatWindowTabState extends ConsumerState<ChatWindowTab> {
       // Ideally re-fetch or confirm sent
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('发送失败: $e'), backgroundColor: Colors.red),
-        );
+        showTopNotice(context, '发送失败: $e', level: NoticeLevel.error);
       }
     }
+  }
+
+  Future<void> _pickAndSendImage() async {
+    if (_sendingImage) return;
+    setState(() => _sendingImage = true);
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        withData: true,
+      );
+      final file = result?.files.single;
+      if (file == null) return;
+
+      final bytes = file.bytes ?? (file.path != null ? await XFile(file.path!).readAsBytes() : null);
+      if (bytes == null) {
+        if (mounted) {
+          showTopNotice(context, '无法读取图片内容，请重试', level: NoticeLevel.warning);
+        }
+        return;
+      }
+
+      final path = await _assetApi.uploadImageBytes(bytes, file.name);
+
+      // Optimistic update (store relative path)
+      final newMessage = TerminalChatMessage(
+        content: path,
+        sender: 'admin',
+        time: '${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
+      );
+      setState(() => _messages.add(newMessage));
+      _scrollToBottom();
+
+      final api = ref.read(terminalApiProvider);
+      await api.sendChatMessage(widget.terminalId, path);
+    } catch (e) {
+      if (mounted) {
+        showTopNotice(context, '发送图片失败: $e', level: NoticeLevel.error);
+      }
+    } finally {
+      if (mounted) setState(() => _sendingImage = false);
+    }
+  }
+
+  Map<String, String>? _authHeaders() {
+    final token = TokenStore.getToken();
+    if (token == null) return null;
+    return {'Authorization': 'Bearer $token'};
+  }
+
+  String _normalizeUrl(String url) {
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) {
+      return url;
+    }
+    final base = AppConfig.baseUrl.endsWith('/')
+        ? AppConfig.baseUrl.substring(0, AppConfig.baseUrl.length - 1)
+        : AppConfig.baseUrl;
+    if (url.startsWith('/')) return '$base$url';
+    return '$base/$url';
+  }
+
+  bool _isProbablyImageMessage(String content) {
+    final lower = content.toLowerCase();
+    if (lower.contains('/resources/') && lower.contains('/download')) return true;
+    return lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.gif') ||
+        lower.endsWith('.webp');
   }
 
   void _scrollToBottom() {
@@ -116,8 +190,12 @@ class _ChatWindowTabState extends ConsumerState<ChatWindowTab> {
           child: Row(
             children: [
               IconButton(
-                onPressed: () {}, 
-                icon: Icon(LucideIcons.image, size: 20, color: Colors.grey.shade500),
+                onPressed: _sendingImage ? null : _pickAndSendImage,
+                icon: Icon(
+                  LucideIcons.image,
+                  size: 20,
+                  color: _sendingImage ? Colors.grey.shade300 : Colors.grey.shade500,
+                ),
                 tooltip: '发送图片',
               ),
               const SizedBox(width: 8),
@@ -186,10 +264,32 @@ class _ChatWindowTabState extends ConsumerState<ChatWindowTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    text,
-                    style: TextStyle(fontSize: 14, color: isAdmin ? Colors.white : Colors.black87),
-                  ),
+                  if (_isProbablyImageMessage(text))
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: AspectRatio(
+                        aspectRatio: 16 / 9,
+                        child: Image.network(
+                          _normalizeUrl(text),
+                          headers: _authHeaders(),
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            color: Colors.black.withOpacity(0.06),
+                            alignment: Alignment.center,
+                            child: Icon(
+                              LucideIcons.imageOff,
+                              size: 18,
+                              color: isAdmin ? Colors.white.withOpacity(0.9) : Colors.grey.shade500,
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    Text(
+                      text,
+                      style: TextStyle(fontSize: 14, color: isAdmin ? Colors.white : Colors.black87),
+                    ),
                   const SizedBox(height: 4),
                   Text(
                     time,

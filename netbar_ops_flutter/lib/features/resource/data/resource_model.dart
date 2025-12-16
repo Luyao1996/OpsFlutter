@@ -1,5 +1,4 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
-import 'package:flutter/foundation.dart';
 
 part 'resource_model.freezed.dart';
 part 'resource_model.g.dart';
@@ -18,5 +17,6 @@ class Resource with _$Resource {
     String? content,
   }) = _Resource;
 
-  factory Resource.fromJson(Map<String, Object?> json) => _ResourceFromJson(json);
+  factory Resource.fromJson(Map<String, Object?> json) =>
+      _ResourceFromJson(json);
 }

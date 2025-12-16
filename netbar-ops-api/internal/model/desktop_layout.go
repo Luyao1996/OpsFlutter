@@ -22,6 +22,8 @@ type DesktopLayoutIcon struct {
 // DesktopLayout 桌面布局配置
 type DesktopLayout struct {
 	ID              uint           `gorm:"primarykey" json:"id"`
+	NetbarID        *uint          `gorm:"index" json:"netbar_id,omitempty"`
+	BaseLayoutID    *uint          `gorm:"index" json:"base_layout_id,omitempty"`
 	Name            string         `gorm:"size:100;not null" json:"name"`
 	Resolution      string         `gorm:"size:20;default:'1920*1080'" json:"resolution"`
 	BackgroundURL   string         `gorm:"size:500" json:"background_url"`

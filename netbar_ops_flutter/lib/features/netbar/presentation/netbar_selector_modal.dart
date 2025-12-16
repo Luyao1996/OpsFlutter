@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../shared/utils/top_notice.dart';
 import '../data/netbar_api.dart';
 import 'group_picker.dart';
 import 'edit_netbar_modal.dart';
@@ -584,8 +585,11 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
     return GestureDetector(
       onTap: () {
         Clipboard.setData(ClipboardData(text: token));
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Token 已复制'), duration: Duration(seconds: 1)),
+        showTopNotice(
+          context,
+          'Token 已复制',
+          level: NoticeLevel.success,
+          duration: const Duration(seconds: 1),
         );
       },
       child: MouseRegion(

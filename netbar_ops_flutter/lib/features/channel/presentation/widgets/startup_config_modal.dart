@@ -1,6 +1,11 @@
+import 'dart:convert';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/utils/top_notice.dart';
 import '../../data/startup_item_api.dart';
 import '../../../netbar/data/area_api.dart';
 import 'executable_path_picker_field.dart';
@@ -12,15 +17,30 @@ class ConfigFileInput {
   String mode; // 'edit' | 'upload'
   String? fileName;
 
-  ConfigFileInput({this.path = '', this.content = '', this.mode = 'edit', this.fileName});
+  ConfigFileInput({
+    this.path = '',
+    this.content = '',
+    this.mode = 'edit',
+    this.fileName,
+  });
 }
 
 /// IP范围输入模型
 class IpRangeInput {
-  String start;
-  String end;
+  final TextEditingController startController;
+  final TextEditingController endController;
 
-  IpRangeInput({this.start = '', this.end = ''});
+  IpRangeInput({String start = '', String end = ''})
+    : startController = TextEditingController(text: start),
+      endController = TextEditingController(text: end);
+
+  String get start => startController.text;
+  String get end => endController.text;
+
+  void dispose() {
+    startController.dispose();
+    endController.dispose();
+  }
 }
 
 /// 启动项配置弹窗 - 与 Web StartupConfigModal.vue 1:1 对齐
@@ -29,6 +49,7 @@ class StartupConfigModal extends StatefulWidget {
   final bool isAdmin;
   final List<NetbarArea> areas;
   final VoidCallback onSuccess;
+  final bool fullscreenSheet;
 
   const StartupConfigModal({
     super.key,
@@ -36,6 +57,7 @@ class StartupConfigModal extends StatefulWidget {
     this.isAdmin = false,
     this.areas = const [],
     required this.onSuccess,
+    this.fullscreenSheet = false,
   });
 
   @override
@@ -74,16 +96,27 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
   String? _error;
 
   // Windows 版本选项（与 Web WINDOWS_VERSIONS 对应）
-  static const List<String> _windowsVersions = ['win7', 'win10', 'win11', 'win12'];
+  static const List<String> _windowsVersions = [
+    'win7',
+    'win10',
+    'win11',
+    'win12',
+  ];
 
   @override
   void initState() {
     super.initState();
-    _displayNameController = TextEditingController(text: widget.item.displayName ?? '');
+    _displayNameController = TextEditingController(
+      text: widget.item.displayName ?? '',
+    );
     _nameController = TextEditingController(text: widget.item.name);
-    _workingDirController = TextEditingController(text: widget.item.workingDir ?? '');
+    _workingDirController = TextEditingController(
+      text: widget.item.workingDir ?? '',
+    );
     _argsController = TextEditingController(text: widget.item.args ?? '');
-    _delayController = TextEditingController(text: widget.item.delay.toString());
+    _delayController = TextEditingController(
+      text: widget.item.delay.toString(),
+    );
 
     _enabled = widget.item.enabled;
     _forceRun = widget.item.forceRun;
@@ -110,6 +143,9 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
     _workingDirController.dispose();
     _argsController.dispose();
     _delayController.dispose();
+    for (final r in _targetIpRanges) {
+      r.dispose();
+    }
     super.dispose();
   }
 
@@ -117,7 +153,10 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
     if (!_formKey.currentState!.validate()) return;
     if (_nameController.text.trim().isEmpty) return;
 
-    setState(() { _saving = true; _error = null; });
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
     try {
       // 清理释放文件
       final cleanFiles = _releaseFiles
@@ -135,7 +174,9 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
       await _api.updateFull(
         widget.item.id,
         name: _nameController.text.trim(),
-        displayName: _displayNameController.text.trim().isEmpty ? null : _displayNameController.text.trim(),
+        displayName: _displayNameController.text.trim().isEmpty
+            ? null
+            : _displayNameController.text.trim(),
         path: _nameController.text.trim(),
         enabled: _enabled,
         args: _argsController.text,
@@ -155,16 +196,12 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
         final displayText = _displayNameController.text.trim().isNotEmpty
             ? _displayNameController.text.trim()
             : _nameController.text.trim();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存成功: $displayText'), backgroundColor: Colors.green),
-        );
+        showTopNotice(context, '保存成功: $displayText', level: NoticeLevel.success);
         Navigator.of(context).pop();
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存失败: $e'), backgroundColor: Colors.red),
-        );
+        showTopNotice(context, '保存失败: $e', level: NoticeLevel.error);
       }
       setState(() => _error = '保存失败: $e');
     } finally {
@@ -179,7 +216,10 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
         title: const Text('确认删除'),
         content: Text('确定要删除启动项 "${widget.item.effectiveDisplayName}" 吗？'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: const Text('删除', style: TextStyle(color: Colors.red)),
@@ -192,16 +232,16 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
       await _api.delete(widget.item.id);
       widget.onSuccess();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已删除: ${widget.item.effectiveDisplayName}'), backgroundColor: Colors.green),
+        showTopNotice(
+          context,
+          '已删除: ${widget.item.effectiveDisplayName}',
+          level: NoticeLevel.success,
         );
         Navigator.of(context).pop();
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('删除失败: $e'), backgroundColor: Colors.red),
-        );
+        showTopNotice(context, '删除失败: $e', level: NoticeLevel.error);
       }
     }
   }
@@ -234,7 +274,8 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
 
   void _removeIpRange(int index) {
     setState(() {
-      _targetIpRanges.removeAt(index);
+      final item = _targetIpRanges.removeAt(index);
+      item.dispose();
     });
   }
 
@@ -250,33 +291,86 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
     });
   }
 
+  Future<void> _pickReleaseFile(int index) async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: false,
+      withData: true,
+      type: FileType.any,
+    );
+    final picked = result?.files.single;
+    if (picked == null) return;
+    final bytes = picked.bytes;
+    if (bytes == null) {
+      if (!mounted) return;
+      showTopNotice(context, '无法读取文件内容，请重试', level: NoticeLevel.error);
+      return;
+    }
+    final content = utf8.decode(bytes, allowMalformed: true);
+    setState(() {
+      final file = _releaseFiles[index];
+      file.fileName = picked.name;
+      file.content = content;
+      if (file.path.isEmpty) file.path = picked.name;
+      file.mode = 'upload';
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isSheet = widget.fullscreenSheet;
+    final sheetHeight = MediaQuery.sizeOf(context).height * 0.92;
+    final content = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildHeader(isSheet: isSheet),
+        Flexible(
+          child: SingleChildScrollView(child: _buildForm(isSheet: isSheet)),
+        ),
+        _buildFooter(isSheet: isSheet),
+      ],
+    );
+
+    if (isSheet) {
+      return SafeArea(
+        top: false,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            height: sheetHeight,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(18),
+                topRight: Radius.circular(18),
+              ),
+              boxShadow: AppShadows.xl,
+            ),
+            child: content,
+          ),
+        ),
+      );
+    }
+
     return Dialog(
       backgroundColor: Colors.transparent,
       child: Container(
         width: 700,
-        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.9),
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.9,
+        ),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
           boxShadow: AppShadows.xl,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildHeader(),
-            Flexible(child: SingleChildScrollView(child: _buildForm())),
-            _buildFooter(),
-          ],
-        ),
+        child: content,
       ),
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader({required bool isSheet}) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      padding: EdgeInsets.fromLTRB(24, isSheet ? 12 : 16, 16, 16),
       decoration: BoxDecoration(
         color: Colors.grey.shade50,
         border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
@@ -289,16 +383,26 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
               color: AppColors.iosBlue.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(LucideIcons.settings, size: 20, color: AppColors.iosBlue),
+            child: const Icon(
+              LucideIcons.settings,
+              size: 20,
+              color: AppColors.iosBlue,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('编辑启动项', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const Text(
+                  '编辑启动项',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 2),
-                Text(widget.item.name, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                Text(
+                  widget.item.name,
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
               ],
             ),
           ),
@@ -312,9 +416,9 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
     );
   }
 
-  Widget _buildForm() {
+  Widget _buildForm({required bool isSheet}) {
     return Padding(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.all(isSheet ? 16 : 24),
       child: Form(
         key: _formKey,
         child: Column(
@@ -330,16 +434,23 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                   TextFormField(
                     controller: _displayNameController,
                     decoration: _inputDecoration('例如: Steam游戏平台'),
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                   const SizedBox(height: 4),
-                  Text('用于显示的名称，不填则使用程序路径', style: TextStyle(fontSize: 10, color: Colors.grey.shade400)),
+                  Text(
+                    '用于显示的名称，不填则使用程序路径',
+                    style: TextStyle(fontSize: 10, color: Colors.grey.shade400),
+                  ),
                   const SizedBox(height: 16),
                   _buildLabel('执行程序路径/文件名', required: true),
                   const SizedBox(height: 8),
                   ExecutablePathPickerField(
                     controller: _nameController,
-                    validator: (v) => v == null || v.isEmpty ? '请选择执行程序路径' : null,
+                    validator: (v) =>
+                        v == null || v.isEmpty ? '请选择执行程序路径' : null,
                     decoration: _inputDecoration('请选择 exe 文件'),
                   ),
                   const SizedBox(height: 16),
@@ -348,7 +459,10 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                   TextFormField(
                     controller: _workingDirController,
                     decoration: _inputDecoration('例如: C:\\Games\\Pubg'),
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                 ],
               ),
@@ -382,9 +496,21 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                 ),
                 child: Row(
                   children: [
-                    Icon(LucideIcons.alertCircle, size: 16, color: Colors.red.shade600),
+                    Icon(
+                      LucideIcons.alertCircle,
+                      size: 16,
+                      color: Colors.red.shade600,
+                    ),
                     const SizedBox(width: 8),
-                    Expanded(child: Text(_error!, style: TextStyle(fontSize: 12, color: Colors.red.shade600))),
+                    Expanded(
+                      child: Text(
+                        _error!,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.red.shade600,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -405,7 +531,11 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
             children: [
               Row(
                 children: [
-                  Icon(LucideIcons.fileText, size: 14, color: Colors.grey.shade600),
+                  Icon(
+                    LucideIcons.fileText,
+                    size: 14,
+                    color: Colors.grey.shade600,
+                  ),
                   const SizedBox(width: 8),
                   _buildLabel('释放文件 (可选)'),
                 ],
@@ -416,7 +546,10 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                 label: const Text('添加文件', style: TextStyle(fontSize: 12)),
                 style: TextButton.styleFrom(
                   foregroundColor: AppColors.iosBlue,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                 ),
               ),
             ],
@@ -431,11 +564,17 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                 border: Border.all(color: Colors.grey.shade200),
               ),
               child: Center(
-                child: Text('暂无需要释放的配置文件或脚本', style: TextStyle(fontSize: 13, color: Colors.grey.shade400)),
+                child: Text(
+                  '暂无需要释放的配置文件或脚本',
+                  style: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+                ),
               ),
             )
           else
-            ...List.generate(_releaseFiles.length, (index) => _buildFileItem(index)),
+            ...List.generate(
+              _releaseFiles.length,
+              (index) => _buildFileItem(index),
+            ),
         ],
       ),
     );
@@ -460,13 +599,23 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('目标路径', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey.shade500)),
+                    Text(
+                      '目标路径',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
                     const SizedBox(height: 4),
                     TextFormField(
                       initialValue: file.path,
                       onChanged: (v) => file.path = v,
                       decoration: _inputDecoration('例如: config.ini').copyWith(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 6,
+                        ),
                       ),
                       style: const TextStyle(fontSize: 12),
                     ),
@@ -476,7 +625,11 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
               const SizedBox(width: 8),
               IconButton(
                 onPressed: () => _removeFile(index),
-                icon: Icon(LucideIcons.trash2, size: 14, color: Colors.red.shade400),
+                icon: Icon(
+                  LucideIcons.trash2,
+                  size: 14,
+                  color: Colors.red.shade400,
+                ),
                 splashRadius: 16,
               ),
             ],
@@ -484,9 +637,17 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
           const SizedBox(height: 12),
           Row(
             children: [
-              _buildRadioOption('直接编辑内容', file.mode == 'edit', () => setState(() => file.mode = 'edit')),
+              _buildRadioOption(
+                '直接编辑内容',
+                file.mode == 'edit',
+                () => setState(() => file.mode = 'edit'),
+              ),
               const SizedBox(width: 16),
-              _buildRadioOption('上传文件', file.mode == 'upload', () => setState(() => file.mode = 'upload')),
+              _buildRadioOption(
+                '上传文件',
+                file.mode == 'upload',
+                () => setState(() => file.mode = 'upload'),
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -495,26 +656,44 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
               initialValue: file.content,
               onChanged: (v) => file.content = v,
               maxLines: 3,
-              decoration: _inputDecoration('在此输入文件内容...').copyWith(
-                contentPadding: const EdgeInsets.all(8),
-              ),
+              decoration: _inputDecoration(
+                '在此输入文件内容...',
+              ).copyWith(contentPadding: const EdgeInsets.all(8)),
               style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
             )
           else
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey.shade300),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(LucideIcons.upload, size: 14, color: Colors.grey.shade400),
-                  const SizedBox(width: 8),
-                  Text(file.fileName ?? '点击选择文件', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-                ],
+            InkWell(
+              onTap: () => _pickReleaseFile(index),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      LucideIcons.upload,
+                      size: 14,
+                      color: Colors.grey.shade400,
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        file.fileName ?? '点击选择文件',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
         ],
@@ -529,17 +708,33 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 16, height: 16,
+            width: 16,
+            height: 16,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              border: Border.all(color: selected ? AppColors.iosBlue : Colors.grey.shade400, width: 2),
+              border: Border.all(
+                color: selected ? AppColors.iosBlue : Colors.grey.shade400,
+                width: 2,
+              ),
             ),
             child: selected
-                ? Center(child: Container(width: 8, height: 8, decoration: const BoxDecoration(shape: BoxShape.circle, color: AppColors.iosBlue)))
+                ? Center(
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: AppColors.iosBlue,
+                      ),
+                    ),
+                  )
                 : null,
           ),
           const SizedBox(width: 6),
-          Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+          Text(
+            label,
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+          ),
         ],
       ),
     );
@@ -557,11 +752,14 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('开机自动运行', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+              const Text(
+                '开机自动运行',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+              ),
               Switch(
                 value: _enabled,
                 onChanged: (v) => setState(() => _enabled = v),
-                activeColor: const Color(0xFF22C55E),
+                activeThumbColor: const Color(0xFF22C55E),
               ),
             ],
           ),
@@ -571,7 +769,8 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
             Row(
               children: [
                 SizedBox(
-                  width: 20, height: 20,
+                  width: 20,
+                  height: 20,
                   child: Checkbox(
                     value: _forceRun,
                     onChanged: (v) => setState(() => _forceRun = v ?? false),
@@ -579,7 +778,10 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text('强制下级执行 (分公司不可禁用)', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+                Text(
+                  '强制下级执行 (分公司不可禁用)',
+                  style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                ),
               ],
             ),
           ],
@@ -591,7 +793,14 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('启动参数', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.grey.shade500)),
+                    Text(
+                      '启动参数',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
                     const SizedBox(height: 6),
                     TextFormField(
                       controller: _argsController,
@@ -606,7 +815,14 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('延时启动 (秒)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.grey.shade500)),
+                    Text(
+                      '延时启动 (秒)',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
                     const SizedBox(height: 6),
                     TextFormField(
                       controller: _delayController,
@@ -638,7 +854,14 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
           ),
           const SizedBox(height: 16),
           // 指定操作系统
-          Text('指定操作系统', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Colors.grey.shade800)),
+          Text(
+            '指定操作系统',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey.shade800,
+            ),
+          ),
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,
@@ -651,7 +874,8 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     SizedBox(
-                      width: 18, height: 18,
+                      width: 18,
+                      height: 18,
                       child: Checkbox(
                         value: isSelected,
                         onChanged: (_) => _handleOsChange(os),
@@ -659,7 +883,13 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                       ),
                     ),
                     const SizedBox(width: 4),
-                    Text(os.toUpperCase(), style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
+                    Text(
+                      os.toUpperCase(),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
                     const SizedBox(width: 12),
                   ],
                 ),
@@ -668,7 +898,14 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
           ),
           const SizedBox(height: 16),
           // 指定网吧区域
-          Text('指定网吧区域', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Colors.grey.shade800)),
+          Text(
+            '指定网吧区域',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey.shade800,
+            ),
+          ),
           const SizedBox(height: 8),
           if (widget.areas.isNotEmpty)
             Wrap(
@@ -679,17 +916,27 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                 return GestureDetector(
                   onTap: () => _handleAreaChange(area.name),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
-                      color: isSelected ? Colors.purple.shade50 : Colors.grey.shade50,
+                      color: isSelected
+                          ? Colors.purple.shade50
+                          : Colors.grey.shade50,
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: isSelected ? Colors.purple : Colors.grey.shade200),
+                      border: Border.all(
+                        color: isSelected
+                            ? Colors.purple
+                            : Colors.grey.shade200,
+                      ),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         SizedBox(
-                          width: 16, height: 16,
+                          width: 16,
+                          height: 16,
                           child: Checkbox(
                             value: isSelected,
                             onChanged: (_) => _handleAreaChange(area.name),
@@ -697,7 +944,13 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                           ),
                         ),
                         const SizedBox(width: 4),
-                        Text(area.name, style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
+                        Text(
+                          area.name,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -705,7 +958,14 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
               }).toList(),
             )
           else
-            Text('当前网吧未配置区域', style: TextStyle(fontSize: 13, color: Colors.grey.shade400, fontStyle: FontStyle.italic)),
+            Text(
+              '当前网吧未配置区域',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey.shade400,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
           const SizedBox(height: 16),
           // 指定IP范围
           _buildIpRangesSection(),
@@ -721,7 +981,14 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('指定IP范围', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Colors.grey.shade800)),
+            Text(
+              '指定IP范围',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: Colors.grey.shade800,
+              ),
+            ),
             TextButton.icon(
               onPressed: _addIpRange,
               icon: const Icon(LucideIcons.plus, size: 12),
@@ -743,17 +1010,45 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
               border: Border.all(color: Colors.grey.shade200),
             ),
             child: Center(
-              child: Text('暂无IP范围限制', style: TextStyle(fontSize: 13, color: Colors.grey.shade400)),
+              child: Text(
+                '暂无IP范围限制',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+              ),
             ),
           )
         else
-          ...List.generate(_targetIpRanges.length, (index) => _buildIpRangeItem(index)),
+          ...List.generate(
+            _targetIpRanges.length,
+            (index) => _buildIpRangeItem(index),
+          ),
       ],
     );
   }
 
   Widget _buildIpRangeItem(int index) {
     final range = _targetIpRanges[index];
+    final isPhone = context.isPhone;
+
+    Widget ipField({
+      required TextEditingController controller,
+      required String hintText,
+    }) {
+      return TextField(
+        controller: controller,
+        decoration: InputDecoration(
+          hintText: hintText,
+          hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: 10,
+          ),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+        ),
+        style: const TextStyle(fontSize: 12),
+      );
+    }
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(8),
@@ -762,50 +1057,76 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Colors.grey.shade200),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: TextEditingController(text: range.start),
-              onChanged: (v) => range.start = v,
-              decoration: InputDecoration(
-                hintText: '起始IP',
-                hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
-              ),
-              style: const TextStyle(fontSize: 12),
+      child: isPhone
+          ? Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: ipField(
+                        controller: range.startController,
+                        hintText: '起始IP',
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      onPressed: () => _removeIpRange(index),
+                      icon: Icon(
+                        LucideIcons.trash2,
+                        size: 16,
+                        color: Colors.red.shade400,
+                      ),
+                      splashRadius: 16,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 40,
+                        minHeight: 40,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ipField(controller: range.endController, hintText: '结束IP'),
+              ],
+            )
+          : Row(
+              children: [
+                Expanded(
+                  child: ipField(
+                    controller: range.startController,
+                    hintText: '起始IP',
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Text(
+                    '—',
+                    style: TextStyle(color: Colors.grey.shade400),
+                  ),
+                ),
+                Expanded(
+                  child: ipField(
+                    controller: range.endController,
+                    hintText: '结束IP',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: () => _removeIpRange(index),
+                  icon: Icon(
+                    LucideIcons.trash2,
+                    size: 14,
+                    color: Colors.red.shade400,
+                  ),
+                  splashRadius: 16,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                ),
+              ],
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Text('—', style: TextStyle(color: Colors.grey.shade400)),
-          ),
-          Expanded(
-            child: TextField(
-              controller: TextEditingController(text: range.end),
-              onChanged: (v) => range.end = v,
-              decoration: InputDecoration(
-                hintText: '结束IP',
-                hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
-              ),
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            onPressed: () => _removeIpRange(index),
-            icon: Icon(LucideIcons.trash2, size: 14, color: Colors.red.shade400),
-            splashRadius: 16,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-        ],
-      ),
     );
   }
 
@@ -846,7 +1167,14 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('进程崩溃动作', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.grey.shade500)),
+              Text(
+                '进程崩溃动作',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.grey.shade500,
+                ),
+              ),
               const SizedBox(height: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -860,11 +1188,21 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                     value: _crashAction,
                     isExpanded: true,
                     items: const [
-                      DropdownMenuItem(value: 'none', child: Text('无动作', style: TextStyle(fontSize: 13))),
-                      DropdownMenuItem(value: 'restart', child: Text('自动重启进程', style: TextStyle(fontSize: 13))),
-                      DropdownMenuItem(value: 'reboot_os', child: Text('重启操作系统', style: TextStyle(fontSize: 13))),
+                      DropdownMenuItem(
+                        value: 'none',
+                        child: Text('无动作', style: TextStyle(fontSize: 13)),
+                      ),
+                      DropdownMenuItem(
+                        value: 'restart',
+                        child: Text('自动重启进程', style: TextStyle(fontSize: 13)),
+                      ),
+                      DropdownMenuItem(
+                        value: 'reboot_os',
+                        child: Text('重启操作系统', style: TextStyle(fontSize: 13)),
+                      ),
                     ],
-                    onChanged: (v) => setState(() => _crashAction = v ?? 'none'),
+                    onChanged: (v) =>
+                        setState(() => _crashAction = v ?? 'none'),
                   ),
                 ),
               ),
@@ -894,8 +1232,20 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-                    Text(subtitle, style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -911,14 +1261,28 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
     );
   }
 
-  Widget _buildSection({required Widget child, Color? color, bool highlighted = false}) {
+  Widget _buildSection({
+    required Widget child,
+    Color? color,
+    bool highlighted = false,
+  }) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: color ?? Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: highlighted ? Colors.grey.shade200 : Colors.grey.shade100),
-        boxShadow: highlighted ? [BoxShadow(color: Colors.grey.shade100, blurRadius: 8, spreadRadius: 2)] : null,
+        border: Border.all(
+          color: highlighted ? Colors.grey.shade200 : Colors.grey.shade100,
+        ),
+        boxShadow: highlighted
+            ? [
+                BoxShadow(
+                  color: Colors.grey.shade100,
+                  blurRadius: 8,
+                  spreadRadius: 2,
+                ),
+              ]
+            : null,
       ),
       child: child,
     );
@@ -930,10 +1294,22 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
       children: [
         Text(
           text.toUpperCase(),
-          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey.shade500, letterSpacing: 0.5),
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color: Colors.grey.shade500,
+            letterSpacing: 0.5,
+          ),
         ),
         if (required)
-          Text(' *', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.red.shade500)),
+          Text(
+            ' *',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: Colors.red.shade500,
+            ),
+          ),
       ],
     );
   }
@@ -944,26 +1320,44 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
       hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
       filled: true,
       fillColor: Colors.white,
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade200)),
-      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade200)),
-      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.iosBlue, width: 2)),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide(color: Colors.grey.shade200),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide(color: Colors.grey.shade200),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppColors.iosBlue, width: 2),
+      ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
     );
   }
 
-  Widget _buildFooter() {
+  Widget _buildFooter({required bool isSheet}) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      padding: EdgeInsets.fromLTRB(24, 12, 24, isSheet ? 24 : 16),
       decoration: BoxDecoration(
         color: Colors.grey.shade50,
         border: Border(top: BorderSide(color: Colors.grey.shade100)),
-        borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(16), bottomRight: Radius.circular(16)),
+        borderRadius: isSheet
+            ? BorderRadius.zero
+            : const BorderRadius.only(
+                bottomLeft: Radius.circular(16),
+                bottomRight: Radius.circular(16),
+              ),
       ),
       child: Row(
         children: [
           TextButton.icon(
             onPressed: _handleDelete,
-            icon: Icon(LucideIcons.trash2, size: 16, color: Colors.red.shade600),
+            icon: Icon(
+              LucideIcons.trash2,
+              size: 16,
+              color: Colors.red.shade600,
+            ),
             label: Text('删除', style: TextStyle(color: Colors.red.shade600)),
           ),
           const Spacer(),
@@ -971,23 +1365,46 @@ class _StartupConfigModalState extends State<StartupConfigModal> {
             onPressed: () => Navigator.of(context).pop(),
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
-            child: Text('取消', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.grey.shade600)),
+            child: Text(
+              '取消',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: Colors.grey.shade600,
+              ),
+            ),
           ),
           const SizedBox(width: 12),
           ElevatedButton(
-            onPressed: _saving || _nameController.text.isEmpty ? null : _handleSave,
+            onPressed: _saving || _nameController.text.isEmpty
+                ? null
+                : _handleSave,
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.iosBlue,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
               elevation: 2,
             ),
             child: _saving
-                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : const Text('保存修改', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Text(
+                    '保存修改',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                  ),
           ),
         ],
       ),

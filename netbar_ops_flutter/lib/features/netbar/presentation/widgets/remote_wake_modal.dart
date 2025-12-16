@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
-import '../../../monitor/data/terminal_api.dart';
 import '../../../../shared/providers/app_providers.dart';
 
 class RemoteWakeModal extends ConsumerStatefulWidget {
@@ -32,14 +31,14 @@ class _RemoteWakeModalState extends ConsumerState<RemoteWakeModal> {
       // Construct IDs or params based on mode
       // For now, we mock the ID list generation as we don't have full terminal list here easily without fetching
       // In a real app, this might call a specific endpoint like /netbar/:id/wake with params
-      
+
       // Simulating API call delay
       await Future.delayed(const Duration(seconds: 1));
-      
+
       // If we had an API that took MAC or Range directly, we'd use that.
-      // Assuming api.wakeOnLan takes list of IDs. 
+      // Assuming api.wakeOnLan takes list of IDs.
       // Here we just simulate success for the demo as the backend might not support raw MAC/Range wake directly via Client API.
-      
+
       if (mounted) {
         setState(() {
           _resultMessage = '唤醒指令已发送';
@@ -72,11 +71,17 @@ class _RemoteWakeModalState extends ConsumerState<RemoteWakeModal> {
                 children: [
                   const Icon(LucideIcons.power, color: AppColors.iosBlue),
                   const SizedBox(width: 12),
-                  Text('远程唤醒 - ${widget.netbarName}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text(
+                    '远程唤醒 - ${widget.netbarName}',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 24),
-              
+
               // Mode Selection
               Row(
                 children: [
@@ -104,40 +109,67 @@ class _RemoteWakeModalState extends ConsumerState<RemoteWakeModal> {
                     Expanded(
                       child: TextField(
                         controller: _rangeStartController,
-                        decoration: const InputDecoration(labelText: '起始号', border: OutlineInputBorder()),
+                        decoration: const InputDecoration(
+                          labelText: '起始号',
+                          border: OutlineInputBorder(),
+                        ),
                         keyboardType: TextInputType.number,
                       ),
                     ),
-                    const Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text('至')),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12),
+                      child: Text('至'),
+                    ),
                     Expanded(
                       child: TextField(
                         controller: _rangeEndController,
-                        decoration: const InputDecoration(labelText: '结束号', border: OutlineInputBorder()),
+                        decoration: const InputDecoration(
+                          labelText: '结束号',
+                          border: OutlineInputBorder(),
+                        ),
                         keyboardType: TextInputType.number,
                       ),
                     ),
                   ],
                 )
               else
-                const Text('将唤醒该网吧所有离线终端，请谨慎操作。', style: TextStyle(color: Colors.red)),
+                const Text(
+                  '将唤醒该网吧所有离线终端，请谨慎操作。',
+                  style: TextStyle(color: Colors.red),
+                ),
 
               if (_resultMessage != null) ...[
                 const SizedBox(height: 16),
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: _resultMessage!.contains('失败') ? Colors.red.shade50 : Colors.green.shade50,
+                    color: _resultMessage!.contains('失败')
+                        ? Colors.red.shade50
+                        : Colors.green.shade50,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(
                     children: [
                       Icon(
-                        _resultMessage!.contains('失败') ? LucideIcons.alertCircle : LucideIcons.checkCircle2,
+                        _resultMessage!.contains('失败')
+                            ? LucideIcons.alertCircle
+                            : LucideIcons.checkCircle2,
                         size: 16,
-                        color: _resultMessage!.contains('失败') ? Colors.red : Colors.green,
+                        color: _resultMessage!.contains('失败')
+                            ? Colors.red
+                            : Colors.green,
                       ),
                       const SizedBox(width: 8),
-                      Expanded(child: Text(_resultMessage!, style: TextStyle(color: _resultMessage!.contains('失败') ? Colors.red : Colors.green))),
+                      Expanded(
+                        child: Text(
+                          _resultMessage!,
+                          style: TextStyle(
+                            color: _resultMessage!.contains('失败')
+                                ? Colors.red
+                                : Colors.green,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -149,19 +181,31 @@ class _RemoteWakeModalState extends ConsumerState<RemoteWakeModal> {
                 children: [
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: const Text('关闭', style: TextStyle(color: Colors.grey)),
+                    child: const Text(
+                      '关闭',
+                      style: TextStyle(color: Colors.grey),
+                    ),
                   ),
                   const SizedBox(width: 12),
                   ElevatedButton.icon(
                     onPressed: _isWaking ? null : _handleWake,
-                    icon: _isWaking 
-                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    icon: _isWaking
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
                         : const Icon(LucideIcons.power, size: 16),
                     label: Text(_isWaking ? '发送中...' : '立即唤醒'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.iosBlue,
                       foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                   ),
                 ],
@@ -185,9 +229,13 @@ class _RemoteWakeModalState extends ConsumerState<RemoteWakeModal> {
         }
       }),
       selectedColor: AppColors.iosBlue.withOpacity(0.1),
-      labelStyle: TextStyle(color: isSelected ? AppColors.iosBlue : Colors.black87),
+      labelStyle: TextStyle(
+        color: isSelected ? AppColors.iosBlue : Colors.black87,
+      ),
       backgroundColor: Colors.white,
-      side: BorderSide(color: isSelected ? AppColors.iosBlue : Colors.grey.shade300),
+      side: BorderSide(
+        color: isSelected ? AppColors.iosBlue : Colors.grey.shade300,
+      ),
     );
   }
 }

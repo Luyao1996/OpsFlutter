@@ -20,7 +20,7 @@ class _ConsoleManagerTabState extends ConsumerState<ConsoleManagerTab> {
     'Microsoft Windows [版本 10.0.19045.3693]',
     '(c) Microsoft Corporation。保留所有权利。',
     '',
-    'C:\Users\Administrator>'
+    'C:UsersAdministrator>',
   ];
 
   Future<void> _sendCommand() async {
@@ -28,7 +28,7 @@ class _ConsoleManagerTabState extends ConsumerState<ConsoleManagerTab> {
     if (cmd.isEmpty) return;
 
     setState(() {
-      _history.add('$cmd'); 
+      _history.add(cmd);
     });
     _controller.clear();
     _scrollToBottom();
@@ -38,10 +38,10 @@ class _ConsoleManagerTabState extends ConsumerState<ConsoleManagerTab> {
       setState(() {
         _history.clear();
         _history.addAll([
-            'Microsoft Windows [版本 10.0.19045.3693]',
-            '(c) Microsoft Corporation。保留所有权利。',
-            '',
-            'C:\Users\Administrator>'
+          'Microsoft Windows [版本 10.0.19045.3693]',
+          '(c) Microsoft Corporation。保留所有权利。',
+          '',
+          'C:UsersAdministrator>',
         ]);
       });
       return;
@@ -55,7 +55,7 @@ class _ConsoleManagerTabState extends ConsumerState<ConsoleManagerTab> {
         setState(() {
           _history.add(output);
           _history.add('');
-          _history.add('C:\Users\Administrator>');
+          _history.add('C:UsersAdministrator>');
         });
         _scrollToBottom();
       }
@@ -64,12 +64,12 @@ class _ConsoleManagerTabState extends ConsumerState<ConsoleManagerTab> {
         setState(() {
           _history.add('Error: $e');
           _history.add('');
-          _history.add('C:\Users\Administrator>');
+          _history.add('C:UsersAdministrator>');
         });
         _scrollToBottom();
       }
     }
-    
+
     _focusNode.requestFocus();
   }
 
@@ -110,7 +110,7 @@ class _ConsoleManagerTabState extends ConsumerState<ConsoleManagerTab> {
           Row(
             children: [
               const Text(
-                'C:\Users\Administrator>',
+                'C:UsersAdministrator>',
                 style: TextStyle(
                   color: Color(0xFFCCCCCC),
                   fontFamily: 'Consolas',

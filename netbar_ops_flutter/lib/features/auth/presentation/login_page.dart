@@ -9,12 +9,11 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
-import '../data/auth_api.dart';
 
 /// 保存的用户
 class SavedUser {
   final String id;
-  final String username;  // 登录用户名
+  final String username; // 登录用户名
   final String displayName; // 显示名称
   final String role;
   final Color avatarColor;
@@ -59,7 +58,8 @@ class LoginPage extends ConsumerStatefulWidget {
   ConsumerState<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateMixin {
+class _LoginPageState extends ConsumerState<LoginPage>
+    with TickerProviderStateMixin {
   // 视图状态: users, password, qrcode, manual
   String _viewState = 'manual';
   SavedUser? _selectedUser;
@@ -74,7 +74,8 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
   DateTime _currentTime = DateTime.now();
 
   // QR码相关
-  String _qrStatus = 'loading'; // loading, pending, scanned, confirmed, expired, error
+  String _qrStatus =
+      'loading'; // loading, pending, scanned, confirmed, expired, error
   String _qrData = '';
   String _qrSessionId = '';
   String? _qrError;
@@ -142,8 +143,12 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
     try {
       final prefs = await SharedPreferences.getInstance();
       final colors = [
-        Colors.blue, Colors.purple, Colors.orange,
-        Colors.pink, Colors.green, Colors.teal,
+        Colors.blue,
+        Colors.purple,
+        Colors.orange,
+        Colors.pink,
+        Colors.green,
+        Colors.teal,
       ];
       final newUser = SavedUser(
         id: userId,
@@ -226,7 +231,7 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
     if (_isLoggingIn) return;
     final username = _viewState == 'manual'
         ? _usernameController.text
-        : _selectedUser?.username ?? '';  // 使用 username 而非 name
+        : _selectedUser?.username ?? ''; // 使用 username 而非 name
     final password = _passwordController.text;
 
     if (username.isEmpty || password.isEmpty) return;
@@ -246,8 +251,8 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
         final encodedPassword = base64Encode(utf8.encode(password));
         await _saveUser(
           authState.user!.id.toString(),
-          authState.user!.username,  // 登录用户名
-          authState.user!.name,      // 显示名称
+          authState.user!.username, // 登录用户名
+          authState.user!.name, // 显示名称
           authState.user!.role,
           encodedPassword,
         );
@@ -357,7 +362,8 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
                 child: ImageFiltered(
                   imageFilter: ImageFilter.blur(sigmaX: 120, sigmaY: 120),
                   child: Container(
-                    width: baseSize, height: baseSize,
+                    width: baseSize,
+                    height: baseSize,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: Colors.purple.withValues(alpha: opacity),
@@ -382,7 +388,8 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
                 child: ImageFiltered(
                   imageFilter: ImageFilter.blur(sigmaX: 120, sigmaY: 120),
                   child: Container(
-                    width: baseSize, height: baseSize,
+                    width: baseSize,
+                    height: baseSize,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: Colors.blue.withValues(alpha: opacity),
@@ -407,7 +414,8 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
                 child: ImageFiltered(
                   imageFilter: ImageFilter.blur(sigmaX: 100, sigmaY: 100),
                   child: Container(
-                    width: baseSize * 0.6, height: baseSize * 0.6,
+                    width: baseSize * 0.6,
+                    height: baseSize * 0.6,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: Colors.pink.withValues(alpha: opacity),
@@ -424,13 +432,16 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
 
   Widget _buildTimeDisplay() {
     return Positioned(
-      top: 48, left: 0, right: 0,
+      top: 48,
+      left: 0,
+      right: 0,
       child: Column(
         children: [
           Text(
             _formattedTime,
             style: TextStyle(
-              fontSize: 72, fontWeight: FontWeight.w300,
+              fontSize: 72,
+              fontWeight: FontWeight.w300,
               color: Colors.white.withValues(alpha: 0.9),
               letterSpacing: -2,
             ),
@@ -439,7 +450,8 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
           Text(
             _formattedDate,
             style: TextStyle(
-              fontSize: 18, fontWeight: FontWeight.w500,
+              fontSize: 18,
+              fontWeight: FontWeight.w500,
               color: Colors.white.withValues(alpha: 0.8),
             ),
           ),
@@ -450,10 +462,14 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
 
   Widget _buildMainContent() {
     switch (_viewState) {
-      case 'users': return _buildUserSelection();
-      case 'password': return _buildPasswordInput();
-      case 'qrcode': return _buildQRCodeLogin();
-      default: return _buildManualLogin();
+      case 'users':
+        return _buildUserSelection();
+      case 'password':
+        return _buildPasswordInput();
+      case 'qrcode':
+        return _buildQRCodeLogin();
+      default:
+        return _buildManualLogin();
     }
   }
 
@@ -462,7 +478,8 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
       mainAxisSize: MainAxisSize.min,
       children: [
         Wrap(
-          spacing: 24, runSpacing: 24,
+          spacing: 24,
+          runSpacing: 24,
           alignment: WrapAlignment.center,
           children: [
             ..._savedUsers.map((user) => _buildUserAvatar(user)),
@@ -507,7 +524,10 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('取消', style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
+            child: Text(
+              '取消',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
+            ),
           ),
           TextButton(
             onPressed: () {
@@ -531,15 +551,29 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
       child: Column(
         children: [
           Container(
-            width: 112, height: 112,
+            width: 112,
+            height: 112,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              border: Border.all(color: Colors.white.withValues(alpha: 0.2), width: 2),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.2),
+                width: 2,
+              ),
             ),
-            child: Icon(LucideIcons.user, size: 32, color: Colors.white.withValues(alpha: 0.5)),
+            child: Icon(
+              LucideIcons.user,
+              size: 32,
+              color: Colors.white.withValues(alpha: 0.5),
+            ),
           ),
           const SizedBox(height: 12),
-          Text('其他账户', style: TextStyle(fontSize: 18, color: Colors.white.withValues(alpha: 0.8))),
+          Text(
+            '其他账户',
+            style: TextStyle(
+              fontSize: 18,
+              color: Colors.white.withValues(alpha: 0.8),
+            ),
+          ),
         ],
       ),
     );
@@ -550,24 +584,46 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 96, height: 96,
+          width: 96,
+          height: 96,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             gradient: LinearGradient(
-              colors: [_selectedUser?.avatarColor ?? AppColors.iosBlue,
-                      (_selectedUser?.avatarColor ?? AppColors.iosBlue).withValues(alpha: 0.7)],
+              colors: [
+                _selectedUser?.avatarColor ?? AppColors.iosBlue,
+                (_selectedUser?.avatarColor ?? AppColors.iosBlue).withValues(
+                  alpha: 0.7,
+                ),
+              ],
             ),
           ),
           child: Center(
             child: Text(
               (_selectedUser?.displayName ?? 'U')[0].toUpperCase(),
-              style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
+              style: const TextStyle(
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
             ),
           ),
         ),
         const SizedBox(height: 16),
-        Text(_selectedUser?.displayName ?? '', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
-        Text(_selectedUser?.role ?? '', style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.5))),
+        Text(
+          _selectedUser?.displayName ?? '',
+          style: const TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+        Text(
+          _selectedUser?.role ?? '',
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.white.withValues(alpha: 0.5),
+          ),
+        ),
         const SizedBox(height: 24),
         SizedBox(
           width: 280,
@@ -577,20 +633,32 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
               if (_loginError != null) ...[
                 const SizedBox(height: 12),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.redAccent.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+                    border: Border.all(
+                      color: Colors.redAccent.withValues(alpha: 0.3),
+                    ),
                   ),
                   child: Row(
                     children: [
-                      const Icon(LucideIcons.alertCircle, size: 16, color: Colors.redAccent),
+                      const Icon(
+                        LucideIcons.alertCircle,
+                        size: 16,
+                        color: Colors.redAccent,
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           _loginError!,
-                          style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                          style: const TextStyle(
+                            color: Colors.redAccent,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
                     ],
@@ -606,12 +674,19 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
             if (_savedUsers.isNotEmpty) {
               _viewState = 'users';
               _selectedUser = null;
-              _loginError = null;  // 清除错误
-              _passwordController.clear();  // 清除密码
+              _loginError = null; // 清除错误
+              _passwordController.clear(); // 清除密码
             }
           }),
-          icon: Icon(LucideIcons.chevronLeft, size: 16, color: Colors.white.withValues(alpha: 0.5)),
-          label: Text('切换用户', style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
+          icon: Icon(
+            LucideIcons.chevronLeft,
+            size: 16,
+            color: Colors.white.withValues(alpha: 0.5),
+          ),
+          label: Text(
+            '切换用户',
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+          ),
         ),
       ],
     );
@@ -622,16 +697,37 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 96, height: 96,
+          width: 96,
+          height: 96,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white.withValues(alpha: 0.2), width: 2),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.2),
+              width: 2,
+            ),
           ),
-          child: Icon(LucideIcons.user, size: 40, color: Colors.white.withValues(alpha: 0.5)),
+          child: Icon(
+            LucideIcons.user,
+            size: 40,
+            color: Colors.white.withValues(alpha: 0.5),
+          ),
         ),
         const SizedBox(height: 16),
-        const Text('欢迎登录', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
-        Text('请输入账号和密码', style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.5))),
+        const Text(
+          '欢迎登录',
+          style: TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+        Text(
+          '请输入账号和密码',
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.white.withValues(alpha: 0.5),
+          ),
+        ),
         const SizedBox(height: 24),
         SizedBox(
           width: 280,
@@ -643,20 +739,32 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
               if (_loginError != null) ...[
                 const SizedBox(height: 12),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.redAccent.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+                    border: Border.all(
+                      color: Colors.redAccent.withValues(alpha: 0.3),
+                    ),
                   ),
                   child: Row(
                     children: [
-                      const Icon(LucideIcons.alertCircle, size: 16, color: Colors.redAccent),
+                      const Icon(
+                        LucideIcons.alertCircle,
+                        size: 16,
+                        color: Colors.redAccent,
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           _loginError!,
-                          style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                          style: const TextStyle(
+                            color: Colors.redAccent,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
                     ],
@@ -670,15 +778,26 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
           const SizedBox(height: 24),
           TextButton.icon(
             onPressed: () => setState(() => _viewState = 'users'),
-            icon: Icon(LucideIcons.chevronLeft, size: 16, color: Colors.white.withValues(alpha: 0.5)),
-            label: Text('返回用户列表', style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
+            icon: Icon(
+              LucideIcons.chevronLeft,
+              size: 16,
+              color: Colors.white.withValues(alpha: 0.5),
+            ),
+            label: Text(
+              '返回用户列表',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+            ),
           ),
         ],
       ],
     );
   }
 
-  Widget _buildTextField(TextEditingController controller, String hint, bool obscure) {
+  Widget _buildTextField(
+    TextEditingController controller,
+    String hint,
+    bool obscure,
+  ) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.3),
@@ -693,7 +812,10 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
           hintText: hint,
           hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.4)),
           border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 14,
+          ),
         ),
       ),
     );
@@ -716,9 +838,14 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
               onSubmitted: (_) => _handleLogin(),
               decoration: InputDecoration(
                 hintText: '密码',
-                hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.4)),
+                hintStyle: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.4),
+                ),
                 border: InputBorder.none,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 14,
+                ),
               ),
             ),
           ),
@@ -726,17 +853,24 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: SizedBox(
-                width: 20, height: 20,
+                width: 20,
+                height: 20,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation(Colors.white.withValues(alpha: 0.7)),
+                  valueColor: AlwaysStoppedAnimation(
+                    Colors.white.withValues(alpha: 0.7),
+                  ),
                 ),
               ),
             )
           else
             IconButton(
               onPressed: _handleLogin,
-              icon: Icon(LucideIcons.arrowRight, size: 18, color: Colors.white.withValues(alpha: 0.7)),
+              icon: Icon(
+                LucideIcons.arrowRight,
+                size: 18,
+                color: Colors.white.withValues(alpha: 0.7),
+              ),
             ),
         ],
       ),
@@ -755,16 +889,34 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('扫码安全登录', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+          const Text(
+            '扫码安全登录',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
           const SizedBox(height: 24),
           _buildQRContent(),
           const SizedBox(height: 16),
           if (_qrStatus == 'pending')
-            Text('请使用 网维助手 App 扫一扫', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 14)),
+            Text(
+              '请使用 网维助手 App 扫一扫',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.6),
+                fontSize: 14,
+              ),
+            ),
           const SizedBox(height: 16),
           TextButton(
-            onPressed: () => setState(() => _viewState = _savedUsers.isNotEmpty ? 'users' : 'manual'),
-            child: Text('返回账号登录', style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
+            onPressed: () => setState(
+              () => _viewState = _savedUsers.isNotEmpty ? 'users' : 'manual',
+            ),
+            child: Text(
+              '返回账号登录',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+            ),
           ),
         ],
       ),
@@ -777,7 +929,8 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
     }
     if (_qrStatus == 'error') {
       return Container(
-        width: 192, height: 192,
+        width: 192,
+        height: 192,
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(12),
@@ -785,7 +938,10 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(_qrError ?? '创建失败', style: const TextStyle(color: Colors.redAccent, fontSize: 14)),
+            Text(
+              _qrError ?? '创建失败',
+              style: const TextStyle(color: Colors.redAccent, fontSize: 14),
+            ),
             const SizedBox(height: 12),
             TextButton.icon(
               onPressed: _createQRSession,
@@ -798,7 +954,8 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
     }
     if (_qrStatus == 'expired') {
       return Container(
-        width: 192, height: 192,
+        width: 192,
+        height: 192,
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(12),
@@ -806,7 +963,10 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text('二维码已过期', style: TextStyle(color: Colors.amber, fontSize: 14)),
+            const Text(
+              '二维码已过期',
+              style: TextStyle(color: Colors.amber, fontSize: 14),
+            ),
             const SizedBox(height: 12),
             TextButton.icon(
               onPressed: _createQRSession,
@@ -819,19 +979,40 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
     }
     if (_qrStatus == 'scanned') {
       return Container(
-        width: 192, height: 192,
+        width: 192,
+        height: 192,
         decoration: BoxDecoration(
           color: Colors.green.withValues(alpha: 0.2),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.green.withValues(alpha: 0.5), width: 2),
+          border: Border.all(
+            color: Colors.green.withValues(alpha: 0.5),
+            width: 2,
+          ),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(LucideIcons.scanLine, size: 24, color: Colors.green.withValues(alpha: 0.8)),
+            Icon(
+              LucideIcons.scanLine,
+              size: 24,
+              color: Colors.green.withValues(alpha: 0.8),
+            ),
             const SizedBox(height: 12),
-            const Text('扫描成功', style: TextStyle(color: Colors.green, fontSize: 14, fontWeight: FontWeight.w500)),
-            Text('请在手机上确认登录', style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 12)),
+            const Text(
+              '扫描成功',
+              style: TextStyle(
+                color: Colors.green,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            Text(
+              '请在手机上确认登录',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.6),
+                fontSize: 12,
+              ),
+            ),
           ],
         ),
       );
@@ -842,8 +1023,12 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
     }
 
     return Container(
-      width: 192, height: 192,
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+      width: 192,
+      height: 192,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
       padding: const EdgeInsets.all(8),
       child: Image.network(
         'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${Uri.encodeComponent(_qrData)}',
@@ -851,14 +1036,16 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
         loadingBuilder: (context, child, loadingProgress) {
           if (loadingProgress == null) return child;
           final progress = loadingProgress.expectedTotalBytes != null
-              ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
+              ? loadingProgress.cumulativeBytesLoaded /
+                    loadingProgress.expectedTotalBytes!
               : null;
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 SizedBox(
-                  width: 48, height: 48,
+                  width: 48,
+                  height: 48,
                   child: CircularProgressIndicator(
                     strokeWidth: 3,
                     value: progress,
@@ -879,13 +1066,23 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(LucideIcons.alertCircle, size: 36, color: Colors.grey[400]),
+                Icon(
+                  LucideIcons.alertCircle,
+                  size: 36,
+                  color: Colors.grey[400],
+                ),
                 const SizedBox(height: 8),
-                Text('加载失败', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                Text(
+                  '加载失败',
+                  style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                ),
                 const SizedBox(height: 8),
                 GestureDetector(
                   onTap: _createQRSession,
-                  child: Text('点击重试', style: TextStyle(fontSize: 12, color: AppColors.iosBlue)),
+                  child: Text(
+                    '点击重试',
+                    style: TextStyle(fontSize: 12, color: AppColors.iosBlue),
+                  ),
                 ),
               ],
             ),
@@ -897,14 +1094,19 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
 
   Widget _buildQRLoading(String text) {
     return Container(
-      width: 192, height: 192,
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+      width: 192,
+      height: 192,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             SizedBox(
-              width: 48, height: 48,
+              width: 48,
+              height: 48,
               child: CircularProgressIndicator(
                 strokeWidth: 3,
                 color: AppColors.iosBlue,
@@ -920,7 +1122,8 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
 
   Widget _buildFooterControls() {
     return Positioned(
-      bottom: 32, right: 32,
+      bottom: 32,
+      right: 32,
       child: Row(
         children: [
           if (_viewState != 'qrcode')
@@ -935,8 +1138,20 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
             crossAxisAlignment: CrossAxisAlignment.end,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('Netbar Ops Pro v2.5.0', style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 12)),
-              Text('Designed by Gemini', style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 12)),
+              Text(
+                'Netbar Ops Pro v2.5.0',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.3),
+                  fontSize: 12,
+                ),
+              ),
+              Text(
+                'Designed by Gemini',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.3),
+                  fontSize: 12,
+                ),
+              ),
             ],
           ),
         ],
@@ -950,7 +1165,8 @@ class _LoginPageState extends ConsumerState<LoginPage> with TickerProviderStateM
       child: GestureDetector(
         onTap: onTap,
         child: Container(
-          width: 48, height: 48,
+          width: 48,
+          height: 48,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: Colors.white.withValues(alpha: 0.1),
@@ -1037,17 +1253,24 @@ class _HoverableUserAvatarState extends State<_HoverableUserAvatar>
                   child: Stack(
                     children: [
                       Container(
-                        width: 112, height: 112,
+                        width: 112,
+                        height: 112,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           gradient: LinearGradient(
-                            colors: [widget.user.avatarColor, widget.user.avatarColor.withValues(alpha: 0.7)],
-                            begin: Alignment.topLeft, end: Alignment.bottomRight,
+                            colors: [
+                              widget.user.avatarColor,
+                              widget.user.avatarColor.withValues(alpha: 0.7),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
                           ),
                           boxShadow: [
                             BoxShadow(
                               color: _isHovered
-                                  ? widget.user.avatarColor.withValues(alpha: 0.5)
+                                  ? widget.user.avatarColor.withValues(
+                                      alpha: 0.5,
+                                    )
                                   : Colors.black.withValues(alpha: 0.3),
                               blurRadius: _isHovered ? 30 : 20,
                               spreadRadius: _isHovered ? 2 : 0,
@@ -1057,24 +1280,37 @@ class _HoverableUserAvatarState extends State<_HoverableUserAvatar>
                         child: Center(
                           child: Text(
                             widget.user.displayName[0].toUpperCase(),
-                            style: const TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Colors.white),
+                            style: const TextStyle(
+                              fontSize: 40,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                       ),
                       // 删除按钮 - 悬停或长按时显示（移动端无 hover）
                       if (_showActions)
                         Positioned(
-                          top: 0, right: 0,
+                          top: 0,
+                          right: 0,
                           child: GestureDetector(
                             onTap: widget.onDelete,
                             child: Container(
-                              width: 40, height: 40,
+                              width: 40,
+                              height: 40,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 color: Colors.black.withValues(alpha: 0.7),
-                                border: Border.all(color: Colors.white.withValues(alpha: 0.4), width: 1),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.4),
+                                  width: 1,
+                                ),
                               ),
-                              child: const Icon(LucideIcons.x, size: 18, color: Colors.white),
+                              child: const Icon(
+                                LucideIcons.x,
+                                size: 18,
+                                color: Colors.white,
+                              ),
                             ),
                           ),
                         ),
@@ -1084,8 +1320,21 @@ class _HoverableUserAvatarState extends State<_HoverableUserAvatar>
               },
             ),
             const SizedBox(height: 12),
-            Text(widget.user.displayName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
-            Text(widget.user.role, style: TextStyle(fontSize: 14, color: Colors.white.withValues(alpha: 0.6))),
+            Text(
+              widget.user.displayName,
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            Text(
+              widget.user.role,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.white.withValues(alpha: 0.6),
+              ),
+            ),
           ],
         ),
       ),

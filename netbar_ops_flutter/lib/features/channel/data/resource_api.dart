@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:async';
 import 'package:dio/dio.dart';
 
@@ -122,7 +121,10 @@ class ResourceApi {
   }
 
   /// 下载二进制内容（用于部分上传文件 content 接口不可用时兜底）
-  Future<List<int>> downloadBytes(int id, {ProgressCallback? onReceiveProgress}) async {
+  Future<List<int>> downloadBytes(
+    int id, {
+    ProgressCallback? onReceiveProgress,
+  }) async {
     final response = await _client.dio.get<List<int>>(
       '/resources/$id/download',
       options: Options(responseType: ResponseType.bytes),
@@ -132,7 +134,10 @@ class ResourceApi {
   }
 
   /// 下载目录为zip文件
-  Future<List<int>> downloadDirectoryZip(int id, {ProgressCallback? onReceiveProgress}) async {
+  Future<List<int>> downloadDirectoryZip(
+    int id, {
+    ProgressCallback? onReceiveProgress,
+  }) async {
     final response = await _client.dio.get<List<int>>(
       '/resources/$id/download-dir',
       options: Options(responseType: ResponseType.bytes),
@@ -156,10 +161,7 @@ class ResourceApi {
 
     final response = await _client.dio.get<List<int>>(
       '/resources/$id/download',
-      options: Options(
-        responseType: ResponseType.bytes,
-        headers: headers,
-      ),
+      options: Options(responseType: ResponseType.bytes, headers: headers),
     );
     return response.data ?? const [];
   }
@@ -187,7 +189,11 @@ class ResourceApi {
   }
 
   /// 下载文件到本地路径 (流式下载)
-  Future<void> downloadToFile(int id, String savePath, {ProgressCallback? onReceiveProgress}) async {
+  Future<void> downloadToFile(
+    int id,
+    String savePath, {
+    ProgressCallback? onReceiveProgress,
+  }) async {
     await _client.dio.download(
       '/resources/$id/download',
       savePath,
@@ -210,20 +216,24 @@ class ResourceApi {
     int? netbarId,
     String? content,
   }) async {
-    final response = await _client.post('/resources', data: {
-      'name': name,
-      'type': type,
-      'is_directory': isDirectory,
-      'parent_id': parentId,
-      'zone': zone,
-      'netbar_id': netbarId,
-      'content': content,
-    });
+    final response = await _client.post(
+      '/resources',
+      data: {
+        'name': name,
+        'type': type,
+        'is_directory': isDirectory,
+        'parent_id': parentId,
+        'zone': zone,
+        'netbar_id': netbarId,
+        'content': content,
+      },
+    );
     return Resource.fromJson(response.data);
   }
 
   /// 更新资源
-  Future<Resource> update(int id, {
+  Future<Resource> update(
+    int id, {
     String? name,
     int? parentId,
     String? content,
@@ -249,11 +259,14 @@ class ResourceApi {
     int? netbarId,
     String? zone,
   }) async {
-    final response = await _client.post('/resources/$id/copy', data: {
-      'target_parent_id': targetParentId,
-      if (netbarId != null) 'netbar_id': netbarId,
-      if (zone != null) 'zone': zone,
-    });
+    final response = await _client.post(
+      '/resources/$id/copy',
+      data: {
+        'target_parent_id': targetParentId,
+        if (netbarId != null) 'netbar_id': netbarId,
+        if (zone != null) 'zone': zone,
+      },
+    );
     return Resource.fromJson(response.data);
   }
 
@@ -264,11 +277,14 @@ class ResourceApi {
     int? netbarId,
     String? zone,
   }) async {
-    final response = await _client.put('/resources/$id/move', data: {
-      'target_parent_id': targetParentId,
-      if (netbarId != null) 'netbar_id': netbarId,
-      if (zone != null) 'zone': zone,
-    });
+    final response = await _client.put(
+      '/resources/$id/move',
+      data: {
+        'target_parent_id': targetParentId,
+        if (netbarId != null) 'netbar_id': netbarId,
+        if (zone != null) 'zone': zone,
+      },
+    );
     return Resource.fromJson(response.data);
   }
 
@@ -298,7 +314,9 @@ class ResourceApi {
       options: Options(contentType: 'multipart/form-data'),
     );
     // 如果是解压ZIP，返回的是多个资源
-    if (extractZip && response.data is Map && response.data['resources'] != null) {
+    if (extractZip &&
+        response.data is Map &&
+        response.data['resources'] != null) {
       return response.data;
     }
     return Resource.fromJson(response.data);
@@ -311,14 +329,15 @@ class ResourceApi {
     int? netbarId,
     int? parentId,
   }) async {
-    final params = <String, dynamic>{
-      'keyword': keyword,
-    };
+    final params = <String, dynamic>{'keyword': keyword};
     if (zone != null) params['zone'] = zone;
     if (netbarId != null) params['netbar_id'] = netbarId.toString();
     if (parentId != null) params['parent_id'] = parentId.toString();
 
-    final response = await _client.get('/resources/search', queryParameters: params);
+    final response = await _client.get(
+      '/resources/search',
+      queryParameters: params,
+    );
     final list = response.data as List? ?? [];
     return list.map((e) => Resource.fromJson(e)).toList();
   }

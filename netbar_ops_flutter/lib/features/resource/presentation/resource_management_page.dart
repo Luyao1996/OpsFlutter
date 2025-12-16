@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cross_file/cross_file.dart';
@@ -11,9 +12,9 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../shared/utils/web_download_helper_stub.dart'
-    if (dart.library.html)
-        '../../../shared/utils/web_download_helper_web.dart';
+    if (dart.library.html) '../../../shared/utils/web_download_helper_web.dart';
 
+import '../../../core/responsive/responsive.dart';
 import '../../channel/presentation/platform_helper.dart';
 import '../../channel/presentation/drop_target_stub.dart'
     if (dart.library.io) 'package:desktop_drop/desktop_drop.dart';
@@ -33,6 +34,7 @@ import '../../channel/presentation/widgets/disable_startup_modal.dart';
 import '../../channel/presentation/widgets/startup_config_modal.dart';
 import '../../channel/presentation/widgets/upload_modal.dart';
 import '../../../shared/providers/upload_queue_provider.dart';
+import '../../../shared/utils/top_notice.dart';
 
 /// 资源区域 - 资源管理用三个区域
 enum ResourceZone { headquarters, branch, shared }
@@ -65,6 +67,9 @@ class _ResourceManagementPageState
   final StartupItemApi _startupItemApi = StartupItemApi();
   final AreaApi _areaApi = AreaApi();
 
+  final TextEditingController _fileSearchController = TextEditingController();
+  Timer? _searchDebounce;
+
   bool _isMobileFlag = false;
   bool get _isMobile => _isMobileFlag;
 
@@ -74,17 +79,15 @@ class _ResourceManagementPageState
 
   String _searchQuery = '';
   int? _currentFolderId;
-  List<BreadcrumbItem> _folderHistory = [
-    BreadcrumbItem(id: null, name: '根目录')
-  ];
+  List<BreadcrumbItem> _folderHistory = [BreadcrumbItem(id: null, name: '根目录')];
 
   List<Resource> _files = [];
   List<Resource> _searchResults = []; // 搜索结果
   bool _isSearching = false; // 是否正在搜索模式
   List<StartupItem> _startupItems = [];
-  List<NetbarArea> _areas = [];
-  Set<String> _selectedIds = {};
-  Set<int> _draggingFileIds = {};
+  final List<NetbarArea> _areas = [];
+  final Set<String> _selectedIds = {};
+  final Set<int> _draggingFileIds = {};
   int? _dropTargetFolderId;
 
   bool _loading = false;
@@ -98,7 +101,9 @@ class _ResourceManagementPageState
 
   // 拖选矩形
   Rect? get _selectionRect {
-    if (!_isDragSelecting || _dragStartPosition == null || _dragCurrentPosition == null) {
+    if (!_isDragSelecting ||
+        _dragStartPosition == null ||
+        _dragCurrentPosition == null) {
       return null;
     }
     return Rect.fromPoints(_dragStartPosition!, _dragCurrentPosition!);
@@ -121,7 +126,9 @@ class _ResourceManagementPageState
   }
 
   List<StartupItem> get _selectedStartupItems {
-    return _startupItems.where((s) => _selectedIds.contains('startup-${s.id}')).toList();
+    return _startupItems
+        .where((s) => _selectedIds.contains('startup-${s.id}'))
+        .toList();
   }
 
   bool get _canDisableStartupItem => _canEdit;
@@ -158,9 +165,7 @@ class _ResourceManagementPageState
       _loadData();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('更新启动项状态失败: $e')),
-        );
+        showTopNotice(context, '更新启动项状态失败: $e', level: NoticeLevel.error);
       }
     }
   }
@@ -170,7 +175,16 @@ class _ResourceManagementPageState
       width: width,
       height: 32,
       child: TextField(
-        onChanged: (v) => setState(() => _searchQuery = v),
+        controller: _fileSearchController,
+        textInputAction: TextInputAction.search,
+        onChanged: (v) {
+          setState(() {});
+          _scheduleSearch(v);
+        },
+        onSubmitted: (v) {
+          _searchDebounce?.cancel();
+          _performSearch(v.trim());
+        },
         decoration: InputDecoration(
           filled: true,
           fillColor: Colors.white,
@@ -178,9 +192,29 @@ class _ResourceManagementPageState
           hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
           prefixIcon: Padding(
             padding: const EdgeInsets.only(left: 8, right: 4),
-            child: Icon(LucideIcons.search, size: 14, color: Colors.grey.shade400),
+            child: Icon(
+              LucideIcons.search,
+              size: 14,
+              color: Colors.grey.shade400,
+            ),
           ),
-          prefixIconConstraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+          prefixIconConstraints: const BoxConstraints(
+            minWidth: 28,
+            minHeight: 28,
+          ),
+          suffixIcon: _fileSearchController.text.trim().isEmpty
+              ? null
+              : IconButton(
+                  tooltip: '清除',
+                  onPressed: _clearSearchAndText,
+                  icon: Icon(
+                    LucideIcons.x,
+                    size: 14,
+                    color: Colors.grey.shade500,
+                  ),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                ),
           contentPadding: EdgeInsets.zero,
           isDense: true,
           enabledBorder: OutlineInputBorder(
@@ -199,40 +233,51 @@ class _ResourceManagementPageState
   }
 
   Widget _buildLayoutToggle() {
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _buildLayoutButton(LayoutMode.grid, LucideIcons.layoutGrid),
-          _buildLayoutButton(LayoutMode.list, LucideIcons.list),
-        ],
+    return SizedBox(
+      height: 32,
+      child: Container(
+        padding: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildLayoutButton(LayoutMode.grid, LucideIcons.layoutGrid),
+            _buildLayoutButton(LayoutMode.list, LucideIcons.list),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildUploadButton() {
     if (!_canEdit) return const SizedBox.shrink();
-    return ElevatedButton.icon(
-      onPressed: _showUploadModal,
-      icon: const Icon(LucideIcons.upload, size: 14),
-      label: const Text('上传'),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: AppColors.iosBlue,
-        foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+    return SizedBox(
+      height: 32,
+      child: ElevatedButton.icon(
+        onPressed: _showUploadModal,
+        icon: const Icon(LucideIcons.upload, size: 14),
+        label: const Text('上传'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.iosBlue,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          visualDensity: VisualDensity.compact,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+        ),
       ),
     );
   }
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
+    _fileSearchController.dispose();
     HardwareKeyboard.instance.removeHandler(_handleKeyboard);
     if (kIsWeb) {
       webDropHandler.unregisterDropZone();
@@ -261,13 +306,16 @@ class _ResourceManagementPageState
   /// 如果只有一个文件或全是ZIP文件，弹窗询问用户是否解压
   Future<bool> _askExtractZip(List<String> fileNames) async {
     // 检查是否只有一个文件或全是ZIP文件
-    final zipFiles = fileNames.where((name) => name.toLowerCase().endsWith('.zip')).toList();
+    final zipFiles = fileNames
+        .where((name) => name.toLowerCase().endsWith('.zip'))
+        .toList();
 
     // 如果没有ZIP文件，不需要解压
     if (zipFiles.isEmpty) return false;
 
     // 如果只有一个文件且是ZIP，或者全是ZIP文件，弹窗询问
-    final shouldAsk = fileNames.length == 1 || zipFiles.length == fileNames.length;
+    final shouldAsk =
+        fileNames.length == 1 || zipFiles.length == fileNames.length;
     if (!shouldAsk) return false;
 
     final result = await showDialog<bool>(
@@ -276,8 +324,8 @@ class _ResourceManagementPageState
         title: const Text('ZIP文件处理'),
         content: Text(
           zipFiles.length == 1
-            ? '检测到ZIP文件 "${zipFiles.first}"，是否在服务器端自动解压？'
-            : '检测到 ${zipFiles.length} 个ZIP文件，是否在服务器端自动解压？',
+              ? '检测到ZIP文件 "${zipFiles.first}"，是否在服务器端自动解压？'
+              : '检测到 ${zipFiles.length} 个ZIP文件，是否在服务器端自动解压？',
         ),
         actions: [
           TextButton(
@@ -305,7 +353,10 @@ class _ResourceManagementPageState
     if (mounted) setState(() => _isExternalDragOver = false);
 
     // 检查是否需要解压ZIP
-    final fileNames = files.where((f) => !f.isDirectory).map((f) => f.name).toList();
+    final fileNames = files
+        .where((f) => !f.isDirectory)
+        .map((f) => f.name)
+        .toList();
     final extractZip = await _askExtractZip(fileNames);
 
     final notifier = ref.read(uploadQueueProvider.notifier);
@@ -318,20 +369,24 @@ class _ResourceManagementPageState
       final id =
           'web-drop-${DateTime.now().millisecondsSinceEpoch}-${counter++}';
       final isZip = file.name.toLowerCase().endsWith('.zip');
-      tasks.add(UploadTask(
-        id: id,
-        name: file.name,
-        size: file.bytes.length,
-        isDirectory: file.isDirectory,
-        relativePath: file.relativePath,
-        parentId: _currentFolderId,
-        zone: zone,
-        netbarId: netbarId,
-        bytes: file.isDirectory ? null : file.bytes,
-        progress: file.isDirectory ? 100 : 0,
-        status: file.isDirectory ? UploadStatus.success : UploadStatus.pending,
-        extractZip: extractZip && isZip,
-      ));
+      tasks.add(
+        UploadTask(
+          id: id,
+          name: file.name,
+          size: file.bytes.length,
+          isDirectory: file.isDirectory,
+          relativePath: file.relativePath,
+          parentId: _currentFolderId,
+          zone: zone,
+          netbarId: netbarId,
+          bytes: file.isDirectory ? null : file.bytes,
+          progress: file.isDirectory ? 100 : 0,
+          status: file.isDirectory
+              ? UploadStatus.success
+              : UploadStatus.pending,
+          extractZip: extractZip && isZip,
+        ),
+      );
     }
 
     notifier.enqueue(tasks);
@@ -345,7 +400,10 @@ class _ResourceManagementPageState
     if (files.isEmpty) return;
 
     // 检查是否需要解压ZIP
-    final fileNames = files.where((f) => !f.isDirectory).map((f) => f.name).toList();
+    final fileNames = files
+        .where((f) => !f.isDirectory)
+        .map((f) => f.name)
+        .toList();
     final extractZip = await _askExtractZip(fileNames);
 
     final notifier = ref.read(uploadQueueProvider.notifier);
@@ -358,20 +416,24 @@ class _ResourceManagementPageState
       final id =
           'web-paste-${DateTime.now().millisecondsSinceEpoch}-${counter++}';
       final isZip = file.name.toLowerCase().endsWith('.zip');
-      tasks.add(UploadTask(
-        id: id,
-        name: file.name,
-        size: file.bytes.length,
-        isDirectory: file.isDirectory,
-        relativePath: file.relativePath,
-        parentId: _currentFolderId,
-        zone: zone,
-        netbarId: netbarId,
-        bytes: file.isDirectory ? null : file.bytes,
-        progress: file.isDirectory ? 100 : 0,
-        status: file.isDirectory ? UploadStatus.success : UploadStatus.pending,
-        extractZip: extractZip && isZip,
-      ));
+      tasks.add(
+        UploadTask(
+          id: id,
+          name: file.name,
+          size: file.bytes.length,
+          isDirectory: file.isDirectory,
+          relativePath: file.relativePath,
+          parentId: _currentFolderId,
+          zone: zone,
+          netbarId: netbarId,
+          bytes: file.isDirectory ? null : file.bytes,
+          progress: file.isDirectory ? 100 : 0,
+          status: file.isDirectory
+              ? UploadStatus.success
+              : UploadStatus.pending,
+          extractZip: extractZip && isZip,
+        ),
+      );
     }
 
     notifier.enqueue(tasks);
@@ -388,9 +450,7 @@ class _ResourceManagementPageState
       final paths = await platformFileHelper.getClipboardFilePaths();
       if (paths.isEmpty) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('剪贴板中没有文件')),
-          );
+          showTopNotice(context, '剪贴板中没有文件', level: NoticeLevel.warning);
         }
         return;
       }
@@ -399,9 +459,7 @@ class _ResourceManagementPageState
       final items = await platformFileHelper.readFilesFromPaths(paths);
       if (items.isEmpty) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('无法读取剪贴板中的文件')),
-          );
+          showTopNotice(context, '无法读取剪贴板中的文件', level: NoticeLevel.error);
         }
         return;
       }
@@ -414,35 +472,36 @@ class _ResourceManagementPageState
       final netbarId = _getNetbarId();
 
       for (final item in items) {
-        final id = 'clipboard-${DateTime.now().millisecondsSinceEpoch}-${counter++}';
-        tasks.add(UploadTask(
-          id: id,
-          name: item.name,
-          size: item.bytes?.length ?? 0,
-          isDirectory: item.isDirectory,
-          relativePath: item.relativePath,
-          parentId: _currentFolderId,
-          zone: zone,
-          netbarId: netbarId,
-          bytes: item.bytes,
-          progress: item.isDirectory ? 100 : 0,
-          status: item.isDirectory ? UploadStatus.success : UploadStatus.pending,
-        ));
+        final id =
+            'clipboard-${DateTime.now().millisecondsSinceEpoch}-${counter++}';
+        tasks.add(
+          UploadTask(
+            id: id,
+            name: item.name,
+            size: item.bytes?.length ?? 0,
+            isDirectory: item.isDirectory,
+            relativePath: item.relativePath,
+            parentId: _currentFolderId,
+            zone: zone,
+            netbarId: netbarId,
+            bytes: item.bytes,
+            progress: item.isDirectory ? 100 : 0,
+            status: item.isDirectory
+                ? UploadStatus.success
+                : UploadStatus.pending,
+          ),
+        );
       }
 
       notifier.enqueue(tasks);
       _loadData();
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已添加 ${tasks.length} 个项目到上传队列')),
-        );
+        showTopNotice(context, '已添加 ${tasks.length} 个项目到上传队列', level: NoticeLevel.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('粘贴失败: $e')),
-        );
+        showTopNotice(context, '粘贴失败: $e', level: NoticeLevel.error);
       }
     }
   }
@@ -594,9 +653,7 @@ class _ResourceManagementPageState
 
   bool _ensureCanEdit(String actionLabel) {
     if (_canEdit) return true;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$actionLabel失败：${_editDeniedReason()}')),
-    );
+    showTopNotice(context, '$actionLabel失败：${_editDeniedReason()}', level: NoticeLevel.warning);
     return false;
   }
 
@@ -632,13 +689,16 @@ class _ResourceManagementPageState
     // 权限限制：管理员不能切到分公司；普通用户必须有分公司才能进入分公司资源
     if (zone == ResourceZone.branch) {
       if (_isAdmin || _userGroupId <= 0) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('无权限访问分公司资源')),
-        );
+        showTopNotice(context, '无权限访问分公司资源', level: NoticeLevel.warning);
         return;
       }
     }
+    _searchDebounce?.cancel();
+    _fileSearchController.clear();
     setState(() {
+      _searchQuery = '';
+      _isSearching = false;
+      _searchResults = [];
       _currentZone = zone;
       _currentFolderId = null;
       _folderHistory = [BreadcrumbItem(id: null, name: '根目录')];
@@ -648,7 +708,12 @@ class _ResourceManagementPageState
   }
 
   void _handleModuleChange(ModuleTab module) {
+    _searchDebounce?.cancel();
+    _fileSearchController.clear();
     setState(() {
+      _searchQuery = '';
+      _isSearching = false;
+      _searchResults = [];
       _activeModule = module;
       _selectedIds.clear();
     });
@@ -656,7 +721,12 @@ class _ResourceManagementPageState
   }
 
   void _handleBreadcrumbClick(int index) {
+    _searchDebounce?.cancel();
+    _fileSearchController.clear();
     setState(() {
+      _searchQuery = '';
+      _isSearching = false;
+      _searchResults = [];
       _currentFolderId = _folderHistory[index].id;
       _folderHistory = _folderHistory.sublist(0, index + 1);
       _selectedIds.clear();
@@ -665,7 +735,12 @@ class _ResourceManagementPageState
   }
 
   void _handleFolderOpen(Resource folder) {
+    _searchDebounce?.cancel();
+    _fileSearchController.clear();
     setState(() {
+      _searchQuery = '';
+      _isSearching = false;
+      _searchResults = [];
       _currentFolderId = folder.id;
       _folderHistory.add(BreadcrumbItem(id: folder.id, name: folder.name));
       _selectedIds.clear();
@@ -693,10 +768,11 @@ class _ResourceManagementPageState
     var items = _startupItems.toList();
     if (_searchQuery.isNotEmpty) {
       items = items
-          .where((f) =>
-              f.effectiveDisplayName
-                  .toLowerCase()
-                  .contains(_searchQuery.toLowerCase()))
+          .where(
+            (f) => f.effectiveDisplayName.toLowerCase().contains(
+              _searchQuery.toLowerCase(),
+            ),
+          )
           .toList();
     }
     return items;
@@ -705,11 +781,7 @@ class _ResourceManagementPageState
   /// 执行后端搜索
   Future<void> _performSearch(String query) async {
     if (query.isEmpty) {
-      setState(() {
-        _isSearching = false;
-        _searchResults = [];
-        _searchQuery = '';
-      });
+      _clearSearch();
       return;
     }
 
@@ -717,6 +789,7 @@ class _ResourceManagementPageState
       _searchQuery = query;
       _isSearching = true;
       _loading = true;
+      _error = null;
     });
 
     try {
@@ -724,6 +797,7 @@ class _ResourceManagementPageState
         keyword: query,
         zone: _getZoneString(),
         netbarId: _getNetbarId(),
+        parentId: _currentFolderId,
       );
       if (mounted) {
         setState(() {
@@ -750,10 +824,30 @@ class _ResourceManagementPageState
     });
   }
 
+  void _clearSearchAndText() {
+    _searchDebounce?.cancel();
+    if (_fileSearchController.text.isNotEmpty) {
+      _fileSearchController.clear();
+    }
+    _clearSearch();
+  }
+
+  void _scheduleSearch(String raw) {
+    final q = raw.trim();
+    _searchDebounce?.cancel();
+    if (q.isEmpty) {
+      _clearSearch();
+      return;
+    }
+    if (_isSearching && q == _searchQuery) return;
+    _searchDebounce = Timer(const Duration(milliseconds: 280), () {
+      if (!mounted) return;
+      _performSearch(q);
+    });
+  }
+
   List<Resource> get _selectedResources {
-    return _files
-        .where((f) => _selectedIds.contains(f.id.toString()))
-        .toList();
+    return _files.where((f) => _selectedIds.contains(f.id.toString())).toList();
   }
 
   void _handleDragStart(DragStartDetails details) {
@@ -797,8 +891,11 @@ class _ResourceManagementPageState
       const childAspectRatio = 0.85;
 
       // 计算实际的列数和项目尺寸
-      final crossAxisCount = (gridWidth / (maxCrossAxisExtent + spacing)).ceil().clamp(1, 100);
-      final itemWidth = (gridWidth - (crossAxisCount - 1) * spacing) / crossAxisCount;
+      final crossAxisCount = (gridWidth / (maxCrossAxisExtent + spacing))
+          .ceil()
+          .clamp(1, 100);
+      final itemWidth =
+          (gridWidth - (crossAxisCount - 1) * spacing) / crossAxisCount;
       final itemHeight = itemWidth / childAspectRatio;
 
       for (int i = 0; i < files.length; i++) {
@@ -826,15 +923,31 @@ class _ResourceManagementPageState
 
   void _showUploadModal() {
     if (!_ensureCanEdit('上传')) return;
+    if (context.isPhone) {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        enableDrag: false,
+        builder: (context) => UploadModal(
+          zone: _getZoneString(),
+          parentId: _currentFolderId,
+          netbarId: _getNetbarId(),
+          onSuccess: () => _loadData(),
+          presentation: UploadModalPresentation.sheet,
+        ),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => UploadModal(
         zone: _getZoneString(),
         parentId: _currentFolderId,
         netbarId: _getNetbarId(),
-        onSuccess: () {
-          _loadData();
-        },
+        onSuccess: () => _loadData(),
+        presentation: UploadModalPresentation.dialog,
       ),
     );
   }
@@ -875,15 +988,11 @@ class _ResourceManagementPageState
         );
         _loadData();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('已创建文件夹: $result')),
-          );
+          showTopNotice(context, '已创建文件夹: $result', level: NoticeLevel.success);
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('创建失败: $e')),
-          );
+          showTopNotice(context, '创建失败: $e', level: NoticeLevel.error);
         }
       }
     }
@@ -914,9 +1023,7 @@ class _ResourceManagementPageState
 
     if (!FileIcon.isTextFile(file.name)) {
       // 二进制文件不在内置预览范围，提示下载
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('该文件类型仅支持下载查看')),
-      );
+    showTopNotice(context, '该文件类型仅支持下载查看', level: NoticeLevel.warning);
       return;
     }
 
@@ -986,8 +1093,10 @@ class _ResourceManagementPageState
                       top: 10,
                       child: Text(
                         file.name,
-                        style:
-                            const TextStyle(color: Colors.white70, fontSize: 12),
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
                   ],
@@ -1007,12 +1116,58 @@ class _ResourceManagementPageState
         await downloadBytesAsFile(bytes, file.name);
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('下载失败: $e')),
-          );
+          showTopNotice(context, '下载失败: $e', level: NoticeLevel.error);
         }
       }
     } else {
+      final isMobile = defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS;
+      if (isMobile) {
+        try {
+          if (mounted) {
+            showTopBanner(
+              context,
+              content: Row(
+                children: const [
+                  Text('正在下载...'),
+                  SizedBox(width: 12),
+                  SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+              level: NoticeLevel.info,
+              duration: null,
+            );
+          }
+
+          final bytes = await _resourceApi.downloadBytes(file.id);
+          if (mounted) hideTopNotice(context);
+
+          final saved = await FilePicker.platform.saveFile(
+            dialogTitle: '保存文件',
+            fileName: file.name,
+            bytes: Uint8List.fromList(bytes),
+          );
+          if (saved == null) return;
+
+          if (mounted) {
+            showTopNotice(context, '下载成功: $saved', level: NoticeLevel.success);
+          }
+        } catch (e) {
+          if (mounted) {
+            hideTopNotice(context);
+            showTopNotice(context, '下载失败: $e', level: NoticeLevel.error);
+          }
+        }
+        return;
+      }
+
       try {
         final savePath = await FilePicker.platform.saveFile(
           dialogTitle: '保存文件',
@@ -1022,38 +1177,37 @@ class _ResourceManagementPageState
         if (savePath == null) return;
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: const [
-                  Text('正在下载...'),
-                  SizedBox(width: 16),
-                  SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+          showTopBanner(
+            context,
+            content: Row(
+              children: const [
+                Text('正在下载...'),
+                SizedBox(width: 12),
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
                   ),
-                ],
-              ),
-              duration: const Duration(days: 1),
+                ),
+              ],
             ),
+            level: NoticeLevel.info,
+            duration: null,
           );
         }
 
         await _resourceApi.downloadToFile(file.id, savePath);
 
         if (mounted) {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('下载成功: $savePath')),
-          );
+          hideTopNotice(context);
+          showTopNotice(context, '下载成功: $savePath', level: NoticeLevel.success);
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('下载失败: $e')),
-          );
+          hideTopNotice(context);
+          showTopNotice(context, '下载失败: $e', level: NoticeLevel.error);
         }
       }
     }
@@ -1075,7 +1229,9 @@ class _ResourceManagementPageState
       return;
     }
 
-    final pasteLabel = _clipboard.isNotEmpty ? '粘贴 (已复制${_clipboard.length}个项)' : '粘贴';
+    final pasteLabel = _clipboard.isNotEmpty
+        ? '粘贴 (已复制${_clipboard.length}个项)'
+        : '粘贴';
     showContextMenu(
       context: context,
       position: position,
@@ -1110,7 +1266,8 @@ class _ResourceManagementPageState
   }
 
   void _showFileContextMenu(Offset position, Resource file) {
-    final isExe = !file.isDirectory &&
+    final isExe =
+        !file.isDirectory &&
         file.name.toLowerCase().endsWith('.exe') &&
         _canEdit;
     showContextMenu(
@@ -1118,9 +1275,7 @@ class _ResourceManagementPageState
       position: position,
       items: [
         ContextMenuItem(
-          label: file.isDirectory
-              ? '打开'
-              : (_canEdit ? '查看/编辑' : '查看'),
+          label: file.isDirectory ? '打开' : (_canEdit ? '查看/编辑' : '查看'),
           icon: file.isDirectory
               ? LucideIcons.folderOpen
               : (_canEdit ? LucideIcons.fileEdit : LucideIcons.fileText),
@@ -1151,9 +1306,7 @@ class _ResourceManagementPageState
                 _clipboard = [file];
                 _isCut = false;
               });
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('已复制到剪贴板')),
-              );
+              showTopNotice(context, '已复制到剪贴板', level: NoticeLevel.success);
             },
           ),
           ContextMenuItem(
@@ -1164,9 +1317,7 @@ class _ResourceManagementPageState
                 _clipboard = [file];
                 _isCut = true;
               });
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('已剪切到剪贴板')),
-              );
+              showTopNotice(context, '已剪切到剪贴板', level: NoticeLevel.success);
             },
           ),
           ContextMenuItem(
@@ -1183,6 +1334,27 @@ class _ResourceManagementPageState
 
   void _showAddStartupFromFile(Resource file) {
     if (!_ensureCanEdit('添加到启动项')) return;
+    if (context.isPhone) {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        enableDrag: false,
+        builder: (context) => AddStartupItemModal(
+          zone: _getZoneString(),
+          netbarId: _getNetbarId(),
+          resourceId: file.id,
+          defaultPath: file.path.isNotEmpty ? file.path : file.name,
+          defaultWorkingDir: deriveDirectoryFromPath(file.path),
+          isAdmin: _isAdmin,
+          areas: _areas,
+          onSuccess: _loadData,
+          fullscreenSheet: true,
+        ),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => AddStartupItemModal(
@@ -1222,15 +1394,11 @@ class _ResourceManagementPageState
         await _resourceApi.delete(file.id);
         _loadData();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('已删除: ${file.name}')),
-          );
+          showTopNotice(context, '已删除: ${file.name}', level: NoticeLevel.success);
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('删除失败: $e')),
-          );
+          showTopNotice(context, '删除失败: $e', level: NoticeLevel.error);
         }
       }
     }
@@ -1264,15 +1432,11 @@ class _ResourceManagementPageState
         _selectedIds.clear();
         _loadData();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('删除成功')),
-          );
+          showTopNotice(context, '删除成功', level: NoticeLevel.success);
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('删除失败: $e')),
-          );
+          showTopNotice(context, '删除失败: $e', level: NoticeLevel.error);
         }
       }
     }
@@ -1283,9 +1447,7 @@ class _ResourceManagementPageState
       _clipboard = _selectedResources;
       _isCut = false;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已复制 ${_clipboard.length} 项到剪贴板')),
-    );
+    showTopNotice(context, '已复制 ${_clipboard.length} 项到剪贴板', level: NoticeLevel.success);
   }
 
   void _handleBatchCut() {
@@ -1294,9 +1456,7 @@ class _ResourceManagementPageState
       _clipboard = _selectedResources;
       _isCut = true;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已剪切 ${_clipboard.length} 项到剪贴板')),
-    );
+    showTopNotice(context, '已剪切 ${_clipboard.length} 项到剪贴板', level: NoticeLevel.success);
   }
 
   Future<void> _handlePaste() async {
@@ -1319,15 +1479,11 @@ class _ResourceManagementPageState
       }
       _loadData();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_isCut ? '移动成功' : '复制成功')),
-        );
+        showTopNotice(context, _isCut ? '移动成功' : '复制成功', level: NoticeLevel.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('操作失败: $e')),
-        );
+        showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
       }
     }
   }
@@ -1347,16 +1503,12 @@ class _ResourceManagementPageState
         );
       }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('已拷贝到本网吧')),
-        );
+        showTopNotice(context, '已拷贝到本网吧', level: NoticeLevel.success);
       }
       _loadData();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('拷贝失败: $e')),
-        );
+        showTopNotice(context, '拷贝失败: $e', level: NoticeLevel.error);
       }
     }
   }
@@ -1370,10 +1522,20 @@ class _ResourceManagementPageState
       if (prev == null) return;
 
       // 检查是否有任务从非完成状态变为完成状态
-      final prevPending = prev.tasks.where((t) =>
-        t.status == UploadStatus.pending || t.status == UploadStatus.uploading).length;
-      final nextPending = next.tasks.where((t) =>
-        t.status == UploadStatus.pending || t.status == UploadStatus.uploading).length;
+      final prevPending = prev.tasks
+          .where(
+            (t) =>
+                t.status == UploadStatus.pending ||
+                t.status == UploadStatus.uploading,
+          )
+          .length;
+      final nextPending = next.tasks
+          .where(
+            (t) =>
+                t.status == UploadStatus.pending ||
+                t.status == UploadStatus.uploading,
+          )
+          .length;
 
       // 当有任务完成（从有待处理任务变为无待处理任务）时刷新
       if (prevPending > 0 && nextPending == 0 && next.tasks.isNotEmpty) {
@@ -1424,8 +1586,10 @@ class _ResourceManagementPageState
             color: Colors.grey.shade200,
             margin: const EdgeInsets.symmetric(horizontal: 16),
           ),
-          const Text('资源管理',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          const Text(
+            '资源管理',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
         ],
       ),
     );
@@ -1443,12 +1607,15 @@ class _ResourceManagementPageState
         children: [
           Padding(
             padding: const EdgeInsets.all(16),
-            child: Text('资源区域',
-                style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey.shade500,
-                    letterSpacing: 1)),
+            child: Text(
+              '资源区域',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade500,
+                letterSpacing: 1,
+              ),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1484,8 +1651,12 @@ class _ResourceManagementPageState
 
   Widget _buildMobileZoneSelector() {
     final pills = <Widget>[
-      _buildZonePill(ResourceZone.headquarters, '总部', LucideIcons.shieldAlert,
-          subtitle: _isAdmin ? null : '只读'),
+      _buildZonePill(
+        ResourceZone.headquarters,
+        '总部',
+        LucideIcons.shieldAlert,
+        subtitle: _isAdmin ? null : '只读',
+      ),
       if (!_isAdmin && _userGroupId > 0)
         _buildZonePill(ResourceZone.branch, '我的分公司', LucideIcons.building2),
       _buildZonePill(ResourceZone.shared, '共享', LucideIcons.share2),
@@ -1498,7 +1669,12 @@ class _ResourceManagementPageState
           color: Colors.white,
           border: Border(top: BorderSide(color: Colors.grey.shade200)),
           boxShadow: const [
-            BoxShadow(color: Color(0x1F000000), blurRadius: 16, offset: Offset(0, -6), spreadRadius: 2),
+            BoxShadow(
+              color: Color(0x1F000000),
+              blurRadius: 16,
+              offset: Offset(0, -6),
+              spreadRadius: 2,
+            ),
           ],
         ),
         child: Row(
@@ -1509,75 +1685,96 @@ class _ResourceManagementPageState
     );
   }
 
-	  Widget _buildZonePill(ResourceZone zone, String label, IconData icon, {String? subtitle}) {
-	    final isActive = _currentZone == zone;
-	    return Expanded(
-	      child: GestureDetector(
-	        onTap: () => _handleZoneChange(zone),
-	        child: AnimatedContainer(
-	          duration: const Duration(milliseconds: 160),
-	          height: 52,
-	          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-	          margin: const EdgeInsets.symmetric(horizontal: 4),
-	          decoration: BoxDecoration(
-	            color: isActive ? AppColors.iosBlue : Colors.grey.shade100,
-	            borderRadius: BorderRadius.circular(14),
-	            boxShadow: isActive
-	                ? [BoxShadow(color: AppColors.iosBlue.withValues(alpha: 0.25), blurRadius: 12, offset: const Offset(0, 4))]
-	                : null,
-	          ),
-	          child: Center(
-	            child: Row(
-	              mainAxisSize: MainAxisSize.min,
-	              children: [
-	                Icon(icon, size: 18, color: isActive ? Colors.white : Colors.grey.shade600),
-	                const SizedBox(width: 8),
-	                if (subtitle == null)
-	                  Text(
-	                    label,
-	                    style: TextStyle(
-	                      fontSize: 12,
-	                      fontWeight: FontWeight.w600,
-	                      color: isActive ? Colors.white : Colors.grey.shade700,
-	                    ),
-	                  )
-	                else
-	                  Column(
-	                    mainAxisSize: MainAxisSize.min,
-	                    crossAxisAlignment: CrossAxisAlignment.center,
-	                    children: [
-	                      Text(
-	                        label,
-	                        style: TextStyle(
-	                          fontSize: 12,
-	                          fontWeight: FontWeight.w600,
-	                          color: isActive ? Colors.white : Colors.grey.shade700,
-	                        ),
-	                        textAlign: TextAlign.center,
-	                        overflow: TextOverflow.ellipsis,
-	                      ),
-	                      Text(
-	                        subtitle,
-	                        maxLines: 1,
-	                        style: TextStyle(
-	                          fontSize: 11,
-	                          color: isActive ? Colors.white70 : Colors.grey.shade500,
-	                        ),
-	                        textAlign: TextAlign.center,
-	                        overflow: TextOverflow.ellipsis,
-	                      ),
-	                    ],
-	                  ),
-	              ],
-	            ),
-	          ),
-	        ),
-	      ),
-	    );
-	  }
+  Widget _buildZonePill(
+    ResourceZone zone,
+    String label,
+    IconData icon, {
+    String? subtitle,
+  }) {
+    final isActive = _currentZone == zone;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => _handleZoneChange(zone),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          height: 52,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            color: isActive ? AppColors.iosBlue : Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: isActive
+                ? [
+                    BoxShadow(
+                      color: AppColors.iosBlue.withValues(alpha: 0.25),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Center(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 18,
+                  color: isActive ? Colors.white : Colors.grey.shade600,
+                ),
+                const SizedBox(width: 8),
+                if (subtitle == null)
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: isActive ? Colors.white : Colors.grey.shade700,
+                    ),
+                  )
+                else
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: isActive ? Colors.white : Colors.grey.shade700,
+                        ),
+                        textAlign: TextAlign.center,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: isActive
+                              ? Colors.white70
+                              : Colors.grey.shade500,
+                        ),
+                        textAlign: TextAlign.center,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
-  Widget _buildZoneButton(ResourceZone zone, IconData icon, String label,
-      {String? subtitle}) {
+  Widget _buildZoneButton(
+    ResourceZone zone,
+    IconData icon,
+    String label, {
+    String? subtitle,
+  }) {
     final isActive = _currentZone == zone;
     return GestureDetector(
       onTap: () => _handleZoneChange(zone),
@@ -1591,35 +1788,41 @@ class _ResourceManagementPageState
           boxShadow: isActive
               ? [
                   BoxShadow(
-                      color: AppColors.iosBlue.withValues(alpha: 0.3),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2))
+                    color: AppColors.iosBlue.withValues(alpha: 0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
                 ]
               : null,
         ),
         child: Row(
           children: [
-            Icon(icon,
-                size: 18,
-                color: isActive ? Colors.white : Colors.grey.shade600),
+            Icon(
+              icon,
+              size: 18,
+              color: isActive ? Colors.white : Colors.grey.shade600,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(label,
-                      style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color:
-                              isActive ? Colors.white : Colors.grey.shade600)),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: isActive ? Colors.white : Colors.grey.shade600,
+                    ),
+                  ),
                   if (subtitle != null)
-                    Text(subtitle,
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: isActive
-                                ? Colors.white70
-                                : Colors.grey.shade400)),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: isActive ? Colors.white70 : Colors.grey.shade400,
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -1641,6 +1844,7 @@ class _ResourceManagementPageState
 
   Widget _buildModuleTabs() {
     if (_isMobile) {
+      final isPhone = context.isPhone;
       final quickActions = <Widget>[];
       final utilityActions = <Widget>[];
 
@@ -1648,51 +1852,102 @@ class _ResourceManagementPageState
         if (_canEdit) {
           if (_selectedResources.isNotEmpty) {
             quickActions.addAll([
-              _buildBatchButton('复制', LucideIcons.copy, AppColors.iosBlue, _handleBatchCopy),
-              _buildBatchButton('剪切', LucideIcons.scissors, Colors.orange, _handleBatchCut, enabled: _canEdit),
-              _buildBatchButton('删除', LucideIcons.trash2, Colors.red, _handleBatchDelete, enabled: _canEdit),
+              _buildBatchButton(
+                '复制',
+                LucideIcons.copy,
+                AppColors.iosBlue,
+                _handleBatchCopy,
+              ),
+              _buildBatchButton(
+                '剪切',
+                LucideIcons.scissors,
+                Colors.orange,
+                _handleBatchCut,
+                enabled: _canEdit,
+              ),
+              _buildBatchButton(
+                '删除',
+                LucideIcons.trash2,
+                Colors.red,
+                _handleBatchDelete,
+                enabled: _canEdit,
+              ),
               if (_currentZone == ResourceZone.shared)
-                _buildBatchButton('拷贝到本网吧', LucideIcons.download, const Color(0xFF22C55E), _handleCopyToLocal),
+                _buildBatchButton(
+                  '拷贝到本网吧',
+                  LucideIcons.download,
+                  const Color(0xFF22C55E),
+                  _handleCopyToLocal,
+                ),
             ]);
           }
-          quickActions.add(_buildBatchButton(
-            '粘贴${_clipboard.isNotEmpty ? ' (${_clipboard.length})' : ''}',
-            LucideIcons.clipboard,
-            Colors.green,
-            _handlePaste,
-            enabled: _canEdit && _clipboard.isNotEmpty,
-          ));
+          quickActions.add(
+            _buildBatchButton(
+              '粘贴${_clipboard.isNotEmpty ? ' (${_clipboard.length})' : ''}',
+              LucideIcons.clipboard,
+              Colors.green,
+              _handlePaste,
+              enabled: _canEdit && _clipboard.isNotEmpty,
+            ),
+          );
 
-          utilityActions.addAll([
-            _buildLayoutToggle(),
-            _buildUploadButton(),
-          ]);
+          utilityActions.addAll([_buildLayoutToggle(), _buildUploadButton()]);
         } else {
           utilityActions.add(_buildLayoutToggle());
         }
-      } else {
-        if (_canEdit) {
-          if (_selectedStartupItems.isNotEmpty) {
-            quickActions.addAll([
-              _buildBatchButton('批量启用', LucideIcons.toggleRight, const Color(0xFF22C55E), () => _handleBatchStartupEnable(true), enabled: _canDisableStartupItem),
-              _buildBatchButton('批量禁用', LucideIcons.toggleLeft, Colors.grey.shade600, () => _handleBatchStartupEnable(false), enabled: _canDisableStartupItem),
-              _buildBatchButton('批量删除', LucideIcons.trash2, Colors.red, _handleBatchStartupDelete, enabled: _canDeleteStartupItem),
-            ]);
+        } else {
+          if (_canEdit) {
+            if (_selectedStartupItems.isNotEmpty && !isPhone) {
+              quickActions.addAll([
+                _buildBatchButton(
+                  isPhone ? '启用' : '批量启用',
+                  LucideIcons.toggleRight,
+                  const Color(0xFF22C55E),
+                  () => _handleBatchStartupEnable(true),
+                  enabled: _canDisableStartupItem,
+                ),
+                _buildBatchButton(
+                  isPhone ? '禁用' : '批量禁用',
+                  LucideIcons.toggleLeft,
+                  Colors.grey.shade600,
+                  () => _handleBatchStartupEnable(false),
+                  enabled: _canDisableStartupItem,
+                ),
+                _buildBatchButton(
+                  isPhone ? '删除' : '批量删除',
+                  LucideIcons.trash2,
+                  Colors.red,
+                  _handleBatchStartupDelete,
+                  enabled: _canDeleteStartupItem,
+                ),
+              ]);
+            }
+            if (!isPhone) {
+              utilityActions.add(
+                ElevatedButton.icon(
+                  onPressed: _showAddStartupItemModal,
+                  icon: const Icon(LucideIcons.plus, size: 14),
+                  label: const Text('新增启动项'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF22C55E),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              );
+            }
           }
-          utilityActions.add(ElevatedButton.icon(
-            onPressed: _showAddStartupItemModal,
-            icon: const Icon(LucideIcons.plus, size: 14),
-            label: const Text('新增启动项'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF22C55E),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-            ),
-          ));
         }
-      }
 
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -1705,18 +1960,31 @@ class _ResourceManagementPageState
           children: [
             Row(
               children: [
-                _buildModuleTab(ModuleTab.files, LucideIcons.folderOpen, '文件管理'),
+                _buildModuleTab(
+                  ModuleTab.files,
+                  LucideIcons.folderOpen,
+                  '文件管理',
+                ),
                 const SizedBox(width: 12),
                 _buildModuleTab(ModuleTab.startup, LucideIcons.zap, '启动项'),
               ],
             ),
-            if (_activeModule == ModuleTab.files && _selectedResources.isNotEmpty) ...[
+            if (_activeModule == ModuleTab.files &&
+                _selectedResources.isNotEmpty) ...[
               const SizedBox(height: 8),
-              Text('已选 ${_selectedResources.length} 项', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+              Text(
+                '已选 ${_selectedResources.length} 项',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+              ),
             ],
-            if (_activeModule == ModuleTab.startup && _selectedStartupItems.isNotEmpty) ...[
+            if (_activeModule == ModuleTab.startup &&
+                _selectedStartupItems.isNotEmpty &&
+                !isPhone) ...[
               const SizedBox(height: 8),
-              Text('已选 ${_selectedStartupItems.length} 项', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+              Text(
+                '已选 ${_selectedStartupItems.length} 项',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+              ),
             ],
             if (quickActions.isNotEmpty) ...[
               const SizedBox(height: 8),
@@ -1732,6 +2000,56 @@ class _ResourceManagementPageState
                     if (i > 0) const SizedBox(width: 8),
                     utilityActions[i],
                   ],
+                ],
+              )
+            else if (_activeModule == ModuleTab.startup && _canEdit && isPhone)
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildMobileActionButton(
+                      label: '启用',
+                      icon: LucideIcons.toggleRight,
+                      color: const Color(0xFF22C55E),
+                      enabled:
+                          _selectedStartupItems.isNotEmpty &&
+                          _canDisableStartupItem,
+                      onTap: () => _handleBatchStartupEnable(true),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildMobileActionButton(
+                      label: '禁用',
+                      icon: LucideIcons.toggleLeft,
+                      color: Colors.grey.shade600,
+                      enabled:
+                          _selectedStartupItems.isNotEmpty &&
+                          _canDisableStartupItem,
+                      onTap: () => _handleBatchStartupEnable(false),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildMobileActionButton(
+                      label: '删除',
+                      icon: LucideIcons.trash2,
+                      color: Colors.red,
+                      enabled:
+                          _selectedStartupItems.isNotEmpty &&
+                          _canDeleteStartupItem,
+                      onTap: _handleBatchStartupDelete,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildMobileActionButton(
+                      label: '新增',
+                      icon: LucideIcons.plus,
+                      color: const Color(0xFF22C55E),
+                      enabled: true,
+                      onTap: _showAddStartupItemModal,
+                    ),
+                  ),
                 ],
               )
             else if (utilityActions.isNotEmpty)
@@ -1755,19 +2073,33 @@ class _ResourceManagementPageState
           const Spacer(),
           if (_activeModule == ModuleTab.files) ...[
             if (_canEdit && _selectedResources.isNotEmpty) ...[
-              Text('已选 ${_selectedResources.length} 项',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+              Text(
+                '已选 ${_selectedResources.length} 项',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+              ),
               const SizedBox(width: 12),
               _buildBatchButton(
-                  '复制', LucideIcons.copy, AppColors.iosBlue, _handleBatchCopy),
+                '复制',
+                LucideIcons.copy,
+                AppColors.iosBlue,
+                _handleBatchCopy,
+              ),
               const SizedBox(width: 8),
               _buildBatchButton(
-                  '剪切', LucideIcons.scissors, Colors.orange, _handleBatchCut,
-                  enabled: _canEdit),
+                '剪切',
+                LucideIcons.scissors,
+                Colors.orange,
+                _handleBatchCut,
+                enabled: _canEdit,
+              ),
               const SizedBox(width: 8),
               _buildBatchButton(
-                  '删除', LucideIcons.trash2, Colors.red, _handleBatchDelete,
-                  enabled: _canEdit),
+                '删除',
+                LucideIcons.trash2,
+                Colors.red,
+                _handleBatchDelete,
+                enabled: _canEdit,
+              ),
             ],
             if (_canEdit) ...[
               const SizedBox(width: 12),
@@ -1787,7 +2119,11 @@ class _ResourceManagementPageState
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: _isSearching ? AppColors.iosBlue : Colors.grey.shade200),
+                border: Border.all(
+                  color: _isSearching
+                      ? AppColors.iosBlue
+                      : Colors.grey.shade200,
+                ),
               ),
               child: Center(
                 child: TextField(
@@ -1804,21 +2140,37 @@ class _ResourceManagementPageState
                   },
                   decoration: InputDecoration(
                     hintText: '搜索文件（回车搜索）...',
-                    hintStyle:
-                        TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                    hintStyle: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade400,
+                    ),
                     prefixIcon: Padding(
                       padding: const EdgeInsets.only(left: 8, right: 4),
-                      child: Icon(LucideIcons.search,
-                          size: 14, color: _isSearching ? AppColors.iosBlue : Colors.grey.shade400),
+                      child: Icon(
+                        LucideIcons.search,
+                        size: 14,
+                        color: _isSearching
+                            ? AppColors.iosBlue
+                            : Colors.grey.shade400,
+                      ),
                     ),
-                    prefixIconConstraints:
-                        const BoxConstraints(minWidth: 28, minHeight: 28),
+                    prefixIconConstraints: const BoxConstraints(
+                      minWidth: 28,
+                      minHeight: 28,
+                    ),
                     suffixIcon: _isSearching
                         ? IconButton(
                             onPressed: _clearSearch,
-                            icon: Icon(LucideIcons.x, size: 14, color: Colors.grey.shade400),
+                            icon: Icon(
+                              LucideIcons.x,
+                              size: 14,
+                              color: Colors.grey.shade400,
+                            ),
                             padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                            constraints: const BoxConstraints(
+                              minWidth: 28,
+                              minHeight: 28,
+                            ),
                           )
                         : null,
                     border: InputBorder.none,
@@ -1855,35 +2207,51 @@ class _ResourceManagementPageState
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.iosBlue,
                   foregroundColor: Colors.white,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8)),
-                  textStyle:
-                      const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
             ],
           ],
           if (_activeModule == ModuleTab.startup) ...[
             if (_canEdit && _selectedStartupItems.isNotEmpty) ...[
-              Text('已选 ${_selectedStartupItems.length} 项',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+              Text(
+                '已选 ${_selectedStartupItems.length} 项',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+              ),
               const SizedBox(width: 12),
               _buildBatchButton(
-                  '批量启用', LucideIcons.toggleRight, const Color(0xFF22C55E),
-                  () => _handleBatchStartupEnable(true),
-                  enabled: _canDisableStartupItem),
+                '批量启用',
+                LucideIcons.toggleRight,
+                const Color(0xFF22C55E),
+                () => _handleBatchStartupEnable(true),
+                enabled: _canDisableStartupItem,
+              ),
               const SizedBox(width: 8),
               _buildBatchButton(
-                  '批量禁用', LucideIcons.toggleLeft, Colors.grey.shade600,
-                  () => _handleBatchStartupEnable(false),
-                  enabled: _canDisableStartupItem),
+                '批量禁用',
+                LucideIcons.toggleLeft,
+                Colors.grey.shade600,
+                () => _handleBatchStartupEnable(false),
+                enabled: _canDisableStartupItem,
+              ),
               const SizedBox(width: 8),
               _buildBatchButton(
-                  '批量删除', LucideIcons.trash2, Colors.red,
-                  _handleBatchStartupDelete,
-                  enabled: _canDeleteStartupItem),
+                '批量删除',
+                LucideIcons.trash2,
+                Colors.red,
+                _handleBatchStartupDelete,
+                enabled: _canDeleteStartupItem,
+              ),
               const SizedBox(width: 12),
             ],
             if (_canEdit)
@@ -1894,9 +2262,17 @@ class _ResourceManagementPageState
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF22C55E),
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
           ],
@@ -1917,17 +2293,20 @@ class _ResourceManagementPageState
         ),
         child: Row(
           children: [
-            Icon(icon,
-                size: 16,
-                color: isActive ? Colors.grey.shade900 : Colors.grey.shade500),
+            Icon(
+              icon,
+              size: 16,
+              color: isActive ? Colors.grey.shade900 : Colors.grey.shade500,
+            ),
             const SizedBox(width: 8),
-            Text(label,
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: isActive
-                        ? Colors.grey.shade900
-                        : Colors.grey.shade500)),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: isActive ? Colors.grey.shade900 : Colors.grey.shade500,
+              ),
+            ),
           ],
         ),
       ),
@@ -1935,8 +2314,12 @@ class _ResourceManagementPageState
   }
 
   Widget _buildBatchButton(
-      String label, IconData icon, Color color, VoidCallback onTap,
-      {bool enabled = true}) {
+    String label,
+    IconData icon,
+    Color color,
+    VoidCallback onTap, {
+    bool enabled = true,
+  }) {
     return GestureDetector(
       onTap: enabled ? onTap : null,
       child: Container(
@@ -1965,6 +2348,51 @@ class _ResourceManagementPageState
     );
   }
 
+  Widget _buildMobileActionButton({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required bool enabled,
+    required VoidCallback onTap,
+  }) {
+    final bg = enabled ? color.withValues(alpha: 0.12) : Colors.grey.shade100;
+    final fg = enabled ? color : Colors.grey.shade400;
+    return InkWell(
+      onTap: enabled ? onTap : null,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        height: 36,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: enabled
+                ? color.withValues(alpha: 0.25)
+                : Colors.grey.shade200,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 14, color: fg),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: fg,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildLayoutButton(LayoutMode mode, IconData icon) {
     final isActive = _layoutMode == mode;
     return GestureDetector(
@@ -1973,19 +2401,24 @@ class _ResourceManagementPageState
         padding: const EdgeInsets.all(6),
         decoration: BoxDecoration(
           color: isActive ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(4),
           boxShadow: isActive ? AppShadows.sm : null,
         ),
-        child: Icon(icon,
-            size: 16,
-            color: isActive ? Colors.grey.shade900 : Colors.grey.shade500),
+        child: Icon(
+          icon,
+          size: 16,
+          color: isActive ? Colors.grey.shade900 : Colors.grey.shade500,
+        ),
       ),
     );
   }
 
   Widget _buildBreadcrumb() {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: _isMobile ? 12 : 24, vertical: 8),
+      padding: EdgeInsets.symmetric(
+        horizontal: _isMobile ? 12 : 24,
+        vertical: 8,
+      ),
       decoration: BoxDecoration(
         color: Colors.grey.shade50,
         border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
@@ -1999,8 +2432,9 @@ class _ResourceManagementPageState
                 _folderHistory[i].name,
                 style: TextStyle(
                   fontSize: 14,
-                  fontWeight:
-                      i == _folderHistory.length - 1 ? FontWeight.w500 : FontWeight.normal,
+                  fontWeight: i == _folderHistory.length - 1
+                      ? FontWeight.w500
+                      : FontWeight.normal,
                   color: i == _folderHistory.length - 1
                       ? Colors.grey.shade900
                       : Colors.grey.shade500,
@@ -2010,8 +2444,11 @@ class _ResourceManagementPageState
             if (i < _folderHistory.length - 1)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: Icon(LucideIcons.chevronRight,
-                    size: 14, color: Colors.grey.shade400),
+                child: Icon(
+                  LucideIcons.chevronRight,
+                  size: 14,
+                  color: Colors.grey.shade400,
+                ),
               ),
           ],
         ],
@@ -2065,8 +2502,12 @@ class _ResourceManagementPageState
       child: Stack(
         children: [
           Padding(
-            padding: const EdgeInsets.all(24),
-            child: _layoutMode == LayoutMode.grid ? _buildFileGrid(files) : _buildFileList(files),
+            padding: _isMobile
+                ? const EdgeInsets.fromLTRB(12, 8, 12, 12)
+                : const EdgeInsets.all(24),
+            child: _layoutMode == LayoutMode.grid
+                ? _buildFileGrid(files)
+                : _buildFileList(files),
           ),
           // 拖选矩形
           if (_selectionRect != null)
@@ -2123,57 +2564,69 @@ class _ResourceManagementPageState
       for (final xf in files) {
         if (xf is! XFile) continue;
         final filePath = xf.path;
-        if (filePath == null || filePath.isEmpty) continue;
+        if (filePath.isEmpty) continue;
 
         try {
           // 使用 platformFileHelper 检查是否为目录
           if (platformFileHelper.isDirectory(filePath)) {
             // 是目录，递归读取
-            final dirItems = await platformFileHelper.readDirectoryFromPath(filePath);
+            final dirItems = await platformFileHelper.readDirectoryFromPath(
+              filePath,
+            );
             for (final item in dirItems) {
-              final id = 'upload-${DateTime.now().millisecondsSinceEpoch}-${counter++}';
+              final id =
+                  'upload-${DateTime.now().millisecondsSinceEpoch}-${counter++}';
               if (item.isDirectory) {
-                tasks.add(UploadTask(
-                  id: id,
-                  name: item.name,
-                  size: 0,
-                  isDirectory: true,
-                  relativePath: item.relativePath,
-                  parentId: _currentFolderId,
-                  zone: zone,
-                  netbarId: netbarId,
-                  bytes: null,
-                ));
+                tasks.add(
+                  UploadTask(
+                    id: id,
+                    name: item.name,
+                    size: 0,
+                    isDirectory: true,
+                    relativePath: item.relativePath,
+                    parentId: _currentFolderId,
+                    zone: zone,
+                    netbarId: netbarId,
+                    bytes: null,
+                  ),
+                );
               } else if (item.bytes != null) {
-                tasks.add(UploadTask(
-                  id: id,
-                  name: item.name,
-                  size: item.bytes!.length,
-                  isDirectory: false,
-                  relativePath: item.relativePath,
-                  parentId: _currentFolderId,
-                  zone: zone,
-                  netbarId: netbarId,
-                  bytes: item.bytes,
-                ));
+                tasks.add(
+                  UploadTask(
+                    id: id,
+                    name: item.name,
+                    size: item.bytes!.length,
+                    isDirectory: false,
+                    relativePath: item.relativePath,
+                    parentId: _currentFolderId,
+                    zone: zone,
+                    netbarId: netbarId,
+                    bytes: item.bytes,
+                  ),
+                );
               }
             }
           } else {
             // 是文件
             final bytes = await xf.readAsBytes();
-            final fileName = xf.name.isNotEmpty ? xf.name : p.basename(filePath);
-            final id = 'upload-${DateTime.now().millisecondsSinceEpoch}-${counter++}';
-            tasks.add(UploadTask(
-              id: id,
-              name: fileName,
-              size: bytes.length,
-              isDirectory: false,
-              relativePath: fileName,
-              parentId: _currentFolderId,
-              zone: zone,
-              netbarId: netbarId,
-              bytes: bytes,
-            ));
+            final fileName = xf.name.isNotEmpty
+                ? xf.name
+                : p.basename(filePath);
+            final id =
+                'upload-${DateTime.now().millisecondsSinceEpoch}-${counter++}';
+            tasks.add(
+              UploadTask(
+                id: id,
+                name: fileName,
+                size: bytes.length,
+                isDirectory: false,
+                relativePath: fileName,
+                parentId: _currentFolderId,
+                zone: zone,
+                netbarId: netbarId,
+                bytes: bytes,
+              ),
+            );
           }
         } catch (e) {
           debugPrint('处理拖拽项失败: $e');
@@ -2183,9 +2636,7 @@ class _ResourceManagementPageState
       if (tasks.isNotEmpty) {
         ref.read(uploadQueueProvider.notifier).enqueue(tasks);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('已添加 ${tasks.length} 个项目到上传队列')),
-          );
+          showTopNotice(context, '已添加 ${tasks.length} 个项目到上传队列', level: NoticeLevel.success);
         }
       }
       return;
@@ -2197,9 +2648,7 @@ class _ResourceManagementPageState
       if (xf is! XFile) continue;
       try {
         final bytes = await xf.readAsBytes();
-        final fileName = xf.name.isNotEmpty
-            ? xf.name
-            : (xf.path != null ? p.basename(xf.path) : 'upload.bin');
+        final fileName = xf.name.isNotEmpty ? xf.name : (p.basename(xf.path));
         await _resourceApi.uploadFile(
           name: fileName,
           bytes: bytes,
@@ -2213,9 +2662,7 @@ class _ResourceManagementPageState
     if (success > 0) {
       _loadData();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('成功上传 $success 个文件')),
-        );
+        showTopNotice(context, '成功上传 $success 个文件', level: NoticeLevel.success);
       }
     }
   }
@@ -2236,8 +2683,10 @@ class _ResourceManagementPageState
             children: [
               Icon(LucideIcons.upload, size: 48, color: AppColors.iosBlue),
               const SizedBox(height: 16),
-              const Text('释放以上传文件',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+              const Text(
+                '释放以上传文件',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+              ),
             ],
           ),
         ),
@@ -2344,7 +2793,9 @@ class _ResourceManagementPageState
                   ? AppColors.iosBlue.withValues(alpha: 0.1)
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(8),
-              border: isSelected ? Border.all(color: AppColors.iosBlue, width: 2) : null,
+              border: isSelected
+                  ? Border.all(color: AppColors.iosBlue, width: 2)
+                  : null,
             ),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -2532,7 +2983,9 @@ class _ResourceManagementPageState
       isSelected: isSelected,
       canEdit: _canEdit,
       updatedAtText: _formatDate(item.updatedAt),
-      onToggleEnabled: _canEdit ? (val) => _toggleStartupItemEnabled(item, val) : null,
+      onToggleEnabled: _canEdit
+          ? (val) => _toggleStartupItemEnabled(item, val)
+          : null,
       onTap: () {
         final isCtrlPressed = HardwareKeyboard.instance.isControlPressed;
         setState(() {
@@ -2588,17 +3041,54 @@ class _ResourceManagementPageState
 
   void _showAddStartupItemModal() {
     if (!_ensureCanEdit('添加启动项')) return;
+    if (context.isPhone) {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        enableDrag: false,
+        builder: (context) => AddStartupItemModal(
+          zone: _getZoneString(),
+          netbarId: _getNetbarId(),
+          isAdmin: _isAdmin,
+          areas: _areas,
+          onSuccess: _loadData,
+          fullscreenSheet: true,
+        ),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => AddStartupItemModal(
         zone: _getZoneString(),
         netbarId: _getNetbarId(),
+        isAdmin: _isAdmin,
+        areas: _areas,
         onSuccess: _loadData,
       ),
     );
   }
 
   void _showStartupConfigModal(StartupItem item) {
+    if (context.isPhone) {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        enableDrag: false,
+        builder: (context) => StartupConfigModal(
+          item: item,
+          isAdmin: _isAdmin,
+          areas: _areas,
+          onSuccess: _loadData,
+          fullscreenSheet: true,
+        ),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => StartupConfigModal(
@@ -2635,15 +3125,11 @@ class _ResourceManagementPageState
         await _startupItemApi.delete(item.id);
         _loadData();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('已删除: ${item.effectiveDisplayName}')),
-          );
+          showTopNotice(context, '已删除: ${item.effectiveDisplayName}', level: NoticeLevel.success);
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('删除失败: $e')),
-          );
+          showTopNotice(context, '删除失败: $e', level: NoticeLevel.error);
         }
       }
     }
@@ -2688,7 +3174,8 @@ class _ResourceStartupCardState extends State<_ResourceStartupCard> {
   void _handleTap() {
     if (!mounted) return;
     final now = DateTime.now();
-    if (_lastTapTime != null && now.difference(_lastTapTime!).inMilliseconds < 300) {
+    if (_lastTapTime != null &&
+        now.difference(_lastTapTime!).inMilliseconds < 300) {
       _lastTapTime = null;
       widget.onDoubleTap?.call();
     } else {
@@ -2710,10 +3197,12 @@ class _ResourceStartupCardState extends State<_ResourceStartupCard> {
         onTapDown: (_) => _handleTap(),
         onSecondaryTapDown: widget.onSecondaryTapDown,
         onLongPressStart: (details) {
-          widget.onSecondaryTapDown(TapDownDetails(
-            globalPosition: details.globalPosition,
-            localPosition: details.localPosition,
-          ));
+          widget.onSecondaryTapDown(
+            TapDownDetails(
+              globalPosition: details.globalPosition,
+              localPosition: details.localPosition,
+            ),
+          );
         },
         behavior: HitTestBehavior.opaque,
         child: Container(
@@ -2722,7 +3211,9 @@ class _ResourceStartupCardState extends State<_ResourceStartupCard> {
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: widget.isSelected ? AppColors.iosBlue : Colors.grey.shade200,
+              color: widget.isSelected
+                  ? AppColors.iosBlue
+                  : Colors.grey.shade200,
               width: widget.isSelected ? 2 : 1,
             ),
             boxShadow: widget.isSelected
@@ -2762,7 +3253,9 @@ class _ResourceStartupCardState extends State<_ResourceStartupCard> {
                               child: Text(
                                 widget.item.effectiveDisplayName,
                                 style: const TextStyle(
-                                    fontWeight: FontWeight.bold, fontSize: 16),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -2783,7 +3276,9 @@ class _ResourceStartupCardState extends State<_ResourceStartupCard> {
                             maxLength: 36,
                           ),
                           style: TextStyle(
-                              color: Colors.grey.shade500, fontSize: 12),
+                            color: Colors.grey.shade500,
+                            fontSize: 12,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -2799,14 +3294,20 @@ class _ResourceStartupCardState extends State<_ResourceStartupCard> {
                 children: [
                   if (widget.item.delay > 0)
                     _buildTag(
-                        LucideIcons.clock, '${widget.item.delay}s', Colors.orange),
+                      LucideIcons.clock,
+                      '${widget.item.delay}s',
+                      Colors.orange,
+                    ),
                   if (widget.item.args?.isNotEmpty == true)
                     _buildTag(LucideIcons.terminal, '参数', Colors.blue),
                   if (widget.item.forceRun)
                     _buildTag(LucideIcons.alertCircle, '强制', Colors.red),
                   if (widget.item.targetOs?.isNotEmpty == true)
                     _buildTag(
-                        LucideIcons.monitor, widget.item.targetOs!, Colors.purple),
+                      LucideIcons.monitor,
+                      widget.item.targetOs!,
+                      Colors.purple,
+                    ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -2815,16 +3316,18 @@ class _ResourceStartupCardState extends State<_ResourceStartupCard> {
                 children: [
                   Text(
                     widget.updatedAtText,
-                    style: TextStyle(
-                        color: Colors.grey.shade400, fontSize: 12),
+                    style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                   ),
                   if (widget.canEdit)
                     Row(
                       children: [
                         _buildIconButton(LucideIcons.settings, widget.onEdit),
                         const SizedBox(width: 4),
-                        _buildIconButton(LucideIcons.trash2, widget.onDelete,
-                            color: Colors.red),
+                        _buildIconButton(
+                          LucideIcons.trash2,
+                          widget.onDelete,
+                          color: Colors.red,
+                        ),
                       ],
                     ),
                 ],
@@ -2849,18 +3352,24 @@ class _ResourceStartupCardState extends State<_ResourceStartupCard> {
         children: [
           Icon(icon, size: 10, color: color.shade700),
           const SizedBox(width: 4),
-          Text(label,
-              style: TextStyle(
-                  fontSize: 10,
-                  color: color.shade700,
-                  fontWeight: FontWeight.w500)),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: color.shade700,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildIconButton(IconData icon, VoidCallback onTap,
-      {Color color = Colors.grey}) {
+  Widget _buildIconButton(
+    IconData icon,
+    VoidCallback onTap, {
+    Color color = Colors.grey,
+  }) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
@@ -2869,8 +3378,9 @@ class _ResourceStartupCardState extends State<_ResourceStartupCard> {
         child: Icon(
           icon,
           size: 16,
-          color:
-              color == Colors.red ? Colors.red.shade400 : Colors.grey.shade400,
+          color: color == Colors.red
+              ? Colors.red.shade400
+              : Colors.grey.shade400,
         ),
       ),
     );

@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -20,6 +21,62 @@ class LogListResponse {
 
 class LogApi {
   final ApiClient _client = ApiClient.instance;
+
+  Map<String, dynamic> _exportParams({
+    String? search,
+    String? module,
+    String? level,
+    DateTimeRange? timeRange,
+  }) {
+    final params = <String, dynamic>{};
+    if (search != null && search.isNotEmpty) params['search'] = search;
+    if (module != null && module.isNotEmpty) params['module'] = module;
+    if (level != null && level.isNotEmpty) params['level'] = level;
+    if (timeRange != null) {
+      final fmt = DateFormat('yyyy-MM-dd');
+      params['start_date'] = fmt.format(timeRange.start);
+      params['end_date'] = fmt.format(timeRange.end);
+    }
+    return params;
+  }
+
+  Future<void> exportLogsToFile({
+    required String savePath,
+    String? search,
+    String? module,
+    String? level,
+    DateTimeRange? timeRange,
+  }) async {
+    final params = _exportParams(
+      search: search,
+      module: module,
+      level: level,
+      timeRange: timeRange,
+    );
+    params['format'] = 'xlsx';
+    await _client.dio.download('/export/logs', savePath, queryParameters: params);
+  }
+
+  Future<List<int>> exportLogsBytes({
+    String? search,
+    String? module,
+    String? level,
+    DateTimeRange? timeRange,
+  }) async {
+    final params = _exportParams(
+      search: search,
+      module: module,
+      level: level,
+      timeRange: timeRange,
+    );
+    params['format'] = 'xlsx';
+    final resp = await _client.dio.get<List<int>>(
+      '/export/logs',
+      queryParameters: params,
+      options: Options(responseType: ResponseType.bytes),
+    );
+    return resp.data ?? const [];
+  }
 
   Future<LogListResponse> getLogs({
     String? search,

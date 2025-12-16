@@ -6,6 +6,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/utils/top_notice.dart';
 import '../data/user_mock_data.dart';
 import '../data/user_api.dart';
 import 'widgets/group_sidebar.dart';
@@ -156,9 +157,7 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
       await userApi.update(user.id, {'is_2fa_bound': true});
       _loadData();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('2FA 绑定成功: ${user.nickname}')),
-        );
+        showTopNotice(context, '2FA 绑定成功: ${user.nickname}', level: NoticeLevel.success);
       }
     } else if (confirmed == false) {
       // no-op
@@ -169,9 +168,7 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
 
   void _showError(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: Colors.red),
-    );
+    showTopNotice(context, message, level: NoticeLevel.error);
   }
 
   void _showApiError(String action, Object error) {

@@ -9,7 +9,9 @@ import 'widgets/create_netbar_modal.dart';
 import 'widgets/netbar_list_view.dart';
 import 'widgets/netbar_grid_view.dart';
 
-final netbarListProvider = FutureProvider.autoDispose<List<Netbar>>((ref) async {
+final netbarListProvider = FutureProvider.autoDispose<List<Netbar>>((
+  ref,
+) async {
   final api = NetbarApi();
   return api.getList();
 });
@@ -23,7 +25,7 @@ class NetbarListPage extends ConsumerStatefulWidget {
 
 class _NetbarListPageState extends ConsumerState<NetbarListPage> {
   String _searchQuery = '';
-  String _selectedGroup = '全部分组';
+  final String _selectedGroup = '全部分组';
   bool _isListView = true;
 
   @override
@@ -73,7 +75,8 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
                       Expanded(
                         child: SearchField(
                           hintText: '搜索名称、ID、拼音或Token...',
-                          onChanged: (value) => setState(() => _searchQuery = value),
+                          onChanged: (value) =>
+                              setState(() => _searchQuery = value),
                         ),
                       ),
                       const SizedBox(width: 16),
@@ -86,16 +89,20 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
                     children: [
                       SearchField(
                         hintText: '搜索名称、ID、拼音或Token...',
-                        onChanged: (value) => setState(() => _searchQuery = value),
+                        onChanged: (value) =>
+                            setState(() => _searchQuery = value),
                       ),
                       const SizedBox(height: 12),
-                      Align(alignment: Alignment.centerRight, child: _buildViewToggle()),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: _buildViewToggle(),
+                      ),
                     ],
                   ),
               ],
             ),
           ),
-          
+
           // List Content
           Expanded(
             child: netbarsAsync.when(
@@ -104,7 +111,11 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(LucideIcons.alertTriangle, size: 48, color: Colors.red),
+                    const Icon(
+                      LucideIcons.alertTriangle,
+                      size: 48,
+                      color: Colors.red,
+                    ),
                     const SizedBox(height: 16),
                     Text('加载失败: $err'),
                     const SizedBox(height: 16),
@@ -119,7 +130,8 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
                 // Filter logic
                 final filtered = netbars.where((n) {
                   final q = _searchQuery.toLowerCase();
-                  final matchesSearch = n.name.toLowerCase().contains(q) ||
+                  final matchesSearch =
+                      n.name.toLowerCase().contains(q) ||
                       n.id.toString().contains(q) ||
                       n.code.toLowerCase().contains(q);
                   // TODO: Add group filter logic if group data is available
@@ -131,8 +143,14 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
                 }
 
                 return _isListView
-                    ? NetbarListView(netbars: filtered, onRefresh: () => ref.refresh(netbarListProvider))
-                    : NetbarGridView(netbars: filtered, onRefresh: () => ref.refresh(netbarListProvider));
+                    ? NetbarListView(
+                        netbars: filtered,
+                        onRefresh: () => ref.refresh(netbarListProvider),
+                      )
+                    : NetbarGridView(
+                        netbars: filtered,
+                        onRefresh: () => ref.refresh(netbarListProvider),
+                      );
               },
             ),
           ),
@@ -188,7 +206,9 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
             foregroundColor: Colors.black87,
             elevation: 0,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         ),
         const SizedBox(width: 12),
@@ -210,7 +230,9 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
             foregroundColor: Colors.white,
             elevation: 0,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         ),
       ],
@@ -274,13 +296,15 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
         decoration: BoxDecoration(
           color: isSelected ? Colors.white : Colors.transparent,
           borderRadius: BorderRadius.circular(6),
-          boxShadow: isSelected ? [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 2,
-              offset: const Offset(0, 1),
-            )
-          ] : null,
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 2,
+                    offset: const Offset(0, 1),
+                  ),
+                ]
+              : null,
         ),
         child: Icon(
           icon,

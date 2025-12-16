@@ -57,7 +57,7 @@ class _FileEditorModalState extends State<FileEditorModal> {
   bool _isPreview = false;
   bool _isTooLarge = false;
   String _originalContent = '';
-  String _previewText = '';
+  final String _previewText = '';
 
   @override
   void initState() {
@@ -163,7 +163,9 @@ class _FileEditorModalState extends State<FileEditorModal> {
     try {
       return await _api.getContent(fileId).timeout(const Duration(seconds: 6));
     } catch (_) {
-      final bytes = await _api.downloadBytes(fileId).timeout(const Duration(seconds: 8));
+      final bytes = await _api
+          .downloadBytes(fileId)
+          .timeout(const Duration(seconds: 8));
       if (bytes.isEmpty) throw Exception('文件内容为空或无法获取');
       return utf8.decode(bytes, allowMalformed: true);
     }
@@ -173,7 +175,9 @@ class _FileEditorModalState extends State<FileEditorModal> {
     final bytes = await _api
         .downloadBytesLimited(fileId, _previewLimit + 2048)
         .timeout(const Duration(seconds: 8));
-    final limited = bytes.length > _previewLimit ? bytes.sublist(0, _previewLimit) : bytes;
+    final limited = bytes.length > _previewLimit
+        ? bytes.sublist(0, _previewLimit)
+        : bytes;
     return utf8.decode(limited, allowMalformed: true);
   }
 
@@ -203,7 +207,10 @@ class _FileEditorModalState extends State<FileEditorModal> {
         title: const Text('未保存的更改'),
         content: const Text('您有未保存的更改，确定要关闭吗？'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: const Text('放弃更改', style: TextStyle(color: Colors.red)),
@@ -263,7 +270,11 @@ class _FileEditorModalState extends State<FileEditorModal> {
               color: const Color(0xFFFEF3C7),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(LucideIcons.fileEdit, size: 20, color: Color(0xFFF59E0B)),
+            child: const Icon(
+              LucideIcons.fileEdit,
+              size: 20,
+              color: Color(0xFFF59E0B),
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -272,16 +283,31 @@ class _FileEditorModalState extends State<FileEditorModal> {
               children: [
                 Row(
                   children: [
-                    Text(widget.file.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    Text(
+                      widget.file.name,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     if (_hasChanges) ...[
                       const SizedBox(width: 8),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.orange.shade100,
                           borderRadius: BorderRadius.circular(4),
                         ),
-                        child: Text('未保存', style: TextStyle(fontSize: 10, color: Colors.orange.shade700)),
+                        child: Text(
+                          '未保存',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.orange.shade700,
+                          ),
+                        ),
                       ),
                     ],
                   ],
@@ -326,8 +352,11 @@ class _FileEditorModalState extends State<FileEditorModal> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(LucideIcons.alertTriangle,
-                size: 48, color: Colors.orange.shade400),
+            Icon(
+              LucideIcons.alertTriangle,
+              size: 48,
+              color: Colors.orange.shade400,
+            ),
             const SizedBox(height: 12),
             const Text(
               '文件过大，请下载后查看',
@@ -353,14 +382,19 @@ class _FileEditorModalState extends State<FileEditorModal> {
               color: Colors.orange.shade50,
               child: Row(
                 children: [
-                  Icon(LucideIcons.alertTriangle,
-                      size: 16, color: Colors.orange.shade700),
+                  Icon(
+                    LucideIcons.alertTriangle,
+                    size: 16,
+                    color: Colors.orange.shade700,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       _error!,
                       style: TextStyle(
-                          fontSize: 12, color: Colors.orange.shade800),
+                        fontSize: 12,
+                        color: Colors.orange.shade800,
+                      ),
                     ),
                   ),
                   TextButton.icon(
@@ -389,8 +423,7 @@ class _FileEditorModalState extends State<FileEditorModal> {
                 padding: const EdgeInsets.all(12),
                 child: SelectableText(
                   _previewText,
-                  style:
-                      const TextStyle(fontSize: 13, fontFamily: 'Consolas'),
+                  style: const TextStyle(fontSize: 13, fontFamily: 'Consolas'),
                 ),
               ),
             ),
@@ -411,7 +444,10 @@ class _FileEditorModalState extends State<FileEditorModal> {
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                ElevatedButton(onPressed: _loadContent, child: const Text('重新加载')),
+                ElevatedButton(
+                  onPressed: _loadContent,
+                  child: const Text('重新加载'),
+                ),
                 const SizedBox(width: 12),
                 ElevatedButton.icon(
                   onPressed: () {
@@ -423,7 +459,9 @@ class _FileEditorModalState extends State<FileEditorModal> {
                   },
                   icon: const Icon(LucideIcons.alertTriangle, size: 16),
                   label: Text(_isPreview ? '强制编辑完整文件' : '强制加载'),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                  ),
                 ),
               ],
             ),
@@ -473,21 +511,26 @@ class _FileEditorModalState extends State<FileEditorModal> {
           fontFamily: 'Consolas',
           codeTheme: langMode != null
               ? CodeHighlightTheme(
-                  languages: {_getExtension(widget.file.name): CodeHighlightThemeMode(mode: langMode)},
+                  languages: {
+                    _getExtension(widget.file.name): CodeHighlightThemeMode(
+                      mode: langMode,
+                    ),
+                  },
                   theme: atomOneLightTheme,
                 )
               : null,
         ),
-        indicatorBuilder: (context, editingController, chunkController, notifier) {
-          return Row(
-            children: [
-              DefaultCodeLineNumber(
-                controller: editingController,
-                notifier: notifier,
-              ),
-            ],
-          );
-        },
+        indicatorBuilder:
+            (context, editingController, chunkController, notifier) {
+              return Row(
+                children: [
+                  DefaultCodeLineNumber(
+                    controller: editingController,
+                    notifier: notifier,
+                  ),
+                ],
+              );
+            },
       ),
     );
   }
@@ -502,12 +545,20 @@ class _FileEditorModalState extends State<FileEditorModal> {
       decoration: BoxDecoration(
         color: Colors.grey.shade50,
         border: Border(top: BorderSide(color: Colors.grey.shade200)),
-        borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(16), bottomRight: Radius.circular(16)),
+        borderRadius: const BorderRadius.only(
+          bottomLeft: Radius.circular(16),
+          bottomRight: Radius.circular(16),
+        ),
       ),
       child: Row(
         children: [
           if (_error != null)
-            Expanded(child: Text(_error!, style: TextStyle(fontSize: 12, color: Colors.red.shade600))),
+            Expanded(
+              child: Text(
+                _error!,
+                style: TextStyle(fontSize: 12, color: Colors.red.shade600),
+              ),
+            ),
           const Spacer(),
           TextButton(
             onPressed: () async {
@@ -524,16 +575,30 @@ class _FileEditorModalState extends State<FileEditorModal> {
           const SizedBox(width: 12),
           if (!widget.readOnly && !_isPreview && !_isTooLarge)
             ElevatedButton.icon(
-              onPressed: _saving || !_hasChanges || _isPreview ? null : _handleSave,
+              onPressed: _saving || !_hasChanges || _isPreview
+                  ? null
+                  : _handleSave,
               icon: _saving
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
                   : const Icon(LucideIcons.save, size: 16),
               label: const Text('保存'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.iosBlue,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
             ),
         ],

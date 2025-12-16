@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/providers/app_providers.dart';
-import '../../data/dashboard_api.dart';
+import '../../../../shared/utils/top_notice.dart';
 
 class QuickActions extends ConsumerStatefulWidget {
   const QuickActions({super.key});
@@ -33,7 +33,7 @@ class _QuickActionsState extends ConsumerState<QuickActions> {
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 24),
-          
+
           _buildActionButton(
             context,
             title: '全部重启',
@@ -114,8 +114,7 @@ class _QuickActionsState extends ConsumerState<QuickActions> {
   }
 
   Widget _buildActionButton(
-    BuildContext context,
-    {
+    BuildContext context, {
     required String title,
     required String subtitle,
     required IconData icon,
@@ -164,10 +163,7 @@ class _QuickActionsState extends ConsumerState<QuickActions> {
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey.shade500,
-                    ),
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
                   ),
                 ],
               ),
@@ -201,9 +197,7 @@ class _QuickActionsState extends ConsumerState<QuickActions> {
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('操作失败: $e'), backgroundColor: Colors.red),
-          );
+          showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
         }
       } finally {
         if (mounted) setState(() => _isOperating = false);
@@ -234,9 +228,7 @@ class _QuickActionsState extends ConsumerState<QuickActions> {
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('诊断失败: $e'), backgroundColor: Colors.red),
-          );
+          showTopNotice(context, '诊断失败: $e', level: NoticeLevel.error);
         }
       } finally {
         if (mounted) setState(() => _isOperating = false);
@@ -245,8 +237,7 @@ class _QuickActionsState extends ConsumerState<QuickActions> {
   }
 
   Future<bool?> _showConfirmDialog(
-    BuildContext context,
-    {
+    BuildContext context, {
     required String title,
     required String content,
     required String confirmText,
@@ -268,7 +259,9 @@ class _QuickActionsState extends ConsumerState<QuickActions> {
             style: ElevatedButton.styleFrom(
               backgroundColor: confirmColor,
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
             child: Text(confirmText),
           ),

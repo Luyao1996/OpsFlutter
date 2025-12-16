@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -25,37 +24,45 @@ class _PlatformFileHelperIO implements PlatformFileHelper {
     final List<UploadFileItem> items = [];
 
     // 添加根目录
-    items.add(UploadFileItem(
-      name: rootName,
-      type: 'folder',
-      isDirectory: true,
-      relativePath: normalizedRoot,
-    ));
+    items.add(
+      UploadFileItem(
+        name: rootName,
+        type: 'folder',
+        isDirectory: true,
+        relativePath: normalizedRoot,
+      ),
+    );
 
     // 递归遍历目录
     await for (final entity in root.list(recursive: true, followLinks: false)) {
-      final rel = entity.path.substring(root.path.length + 1).replaceAll('\\', '/');
+      final rel = entity.path
+          .substring(root.path.length + 1)
+          .replaceAll('\\', '/');
       if (rel.isEmpty) continue;
       final relPath = '$normalizedRoot/$rel'.replaceAll('\\', '/');
 
       if (entity is Directory) {
         final name = p.basename(entity.path);
-        items.add(UploadFileItem(
-          name: name,
-          type: 'folder',
-          isDirectory: true,
-          relativePath: relPath,
-        ));
+        items.add(
+          UploadFileItem(
+            name: name,
+            type: 'folder',
+            isDirectory: true,
+            relativePath: relPath,
+          ),
+        );
       } else if (entity is File) {
         final bytes = await entity.readAsBytes();
         final name = p.basename(entity.path);
-        items.add(UploadFileItem(
-          name: name,
-          type: _getFileType(name),
-          isDirectory: false,
-          relativePath: relPath,
-          bytes: bytes,
-        ));
+        items.add(
+          UploadFileItem(
+            name: name,
+            type: _getFileType(name),
+            isDirectory: false,
+            relativePath: relPath,
+            bytes: bytes,
+          ),
+        );
       }
     }
 
@@ -118,13 +125,15 @@ class _PlatformFileHelperIO implements PlatformFileHelper {
           if (await file.exists()) {
             final bytes = await file.readAsBytes();
             final name = p.basename(path);
-            items.add(UploadFileItem(
-              name: name,
-              type: _getFileType(name),
-              isDirectory: false,
-              relativePath: name,
-              bytes: bytes,
-            ));
+            items.add(
+              UploadFileItem(
+                name: name,
+                type: _getFileType(name),
+                isDirectory: false,
+                relativePath: name,
+                bytes: bytes,
+              ),
+            );
           }
         }
       } catch (e) {
@@ -155,4 +164,3 @@ class _PlatformFileHelperIO implements PlatformFileHelper {
 }
 
 PlatformFileHelper getPlatformFileHelper() => _PlatformFileHelperIO();
-

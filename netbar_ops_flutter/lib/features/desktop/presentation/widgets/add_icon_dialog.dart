@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/utils/top_notice.dart';
 import '../../data/desktop_model.dart';
 import '../../data/desktop_asset_api.dart';
 import '../../../../core/storage/token_store.dart';
@@ -23,7 +24,10 @@ Map<String, String>? _authHeaders() {
 }
 
 String _normalizeUrl(String url) {
-  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) return url;
+  if (url.startsWith('http://') ||
+      url.startsWith('https://') ||
+      url.startsWith('data:'))
+    return url;
   final base = AppConfig.baseUrl.endsWith('/')
       ? AppConfig.baseUrl.substring(0, AppConfig.baseUrl.length - 1)
       : AppConfig.baseUrl;
@@ -43,7 +47,9 @@ class _AddIconDialogState extends State<AddIconDialog> {
   void initState() {
     super.initState();
     final config = widget.initialIcon?.config;
-    _nameController = TextEditingController(text: widget.initialIcon?.name ?? '');
+    _nameController = TextEditingController(
+      text: widget.initialIcon?.name ?? '',
+    );
     _pathController = TextEditingController(text: config?.exePath ?? '');
     _argsController = TextEditingController(text: config?.args ?? '');
     _workDirController = TextEditingController(text: config?.workDir ?? '');
@@ -74,9 +80,7 @@ class _AddIconDialogState extends State<AddIconDialog> {
       setState(() => _iconPath = url);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('上传图标失败: $e'), backgroundColor: Colors.red),
-      );
+      showTopNotice(context, '上传图标失败: $e', level: NoticeLevel.error);
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
@@ -89,7 +93,7 @@ class _AddIconDialogState extends State<AddIconDialog> {
     return Dialog(
       backgroundColor: Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      child: Container(
+      child: SizedBox(
         width: 500,
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -103,11 +107,19 @@ class _AddIconDialogState extends State<AddIconDialog> {
                 children: [
                   Text(
                     isEditing ? '编辑桌面图标' : '添加桌面图标',
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
                   ),
                   InkWell(
                     onTap: () => Navigator.pop(context),
-                    child: const Icon(LucideIcons.x, size: 20, color: Colors.grey),
+                    child: const Icon(
+                      LucideIcons.x,
+                      size: 20,
+                      color: Colors.grey,
+                    ),
                   ),
                 ],
               ),
@@ -121,9 +133,17 @@ class _AddIconDialogState extends State<AddIconDialog> {
                 children: [
                   _buildTextField('图标名称', _nameController, hint: '例如：英雄联盟'),
                   const SizedBox(height: 16),
-                  _buildTextField('执行文件', _pathController, hint: '例如：D:\\Games\\LOL\\LeagueClient.exe'),
+                  _buildTextField(
+                    '执行文件',
+                    _pathController,
+                    hint: '例如：D:\\Games\\LOL\\LeagueClient.exe',
+                  ),
                   const SizedBox(height: 16),
-                  _buildTextField('执行参数', _argsController, hint: '可选，例如：-windowed'),
+                  _buildTextField(
+                    '执行参数',
+                    _argsController,
+                    hint: '可选，例如：-windowed',
+                  ),
                   const SizedBox(height: 16),
                   // Icon Selection Area
                   Container(
@@ -131,7 +151,14 @@ class _AddIconDialogState extends State<AddIconDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('图标', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.grey)),
+                        const Text(
+                          '图标',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.grey,
+                          ),
+                        ),
                         const SizedBox(height: 8),
                         Row(
                           children: [
@@ -151,9 +178,17 @@ class _AddIconDialogState extends State<AddIconDialog> {
                                       _normalizeUrl(_iconPath!),
                                       fit: BoxFit.contain,
                                       headers: _authHeaders(),
-                                      errorBuilder: (_, __, ___) => const Icon(LucideIcons.image, size: 20, color: Colors.grey),
+                                      errorBuilder: (_, __, ___) => const Icon(
+                                        LucideIcons.image,
+                                        size: 20,
+                                        color: Colors.grey,
+                                      ),
                                     )
-                                  : const Icon(LucideIcons.file, size: 20, color: Colors.grey),
+                                  : const Icon(
+                                      LucideIcons.file,
+                                      size: 20,
+                                      color: Colors.grey,
+                                    ),
                             ),
                             const SizedBox(width: 8),
                             // Select Button
@@ -166,15 +201,23 @@ class _AddIconDialogState extends State<AddIconDialog> {
                                 decoration: BoxDecoration(
                                   color: Colors.white,
                                   borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(color: Colors.grey.shade300),
+                                  border: Border.all(
+                                    color: Colors.grey.shade300,
+                                  ),
                                 ),
                                 child: _uploading
                                     ? const SizedBox(
                                         width: 20,
                                         height: 20,
-                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
                                       )
-                                    : const Icon(LucideIcons.upload, size: 20, color: Colors.grey),
+                                    : const Icon(
+                                        LucideIcons.upload,
+                                        size: 20,
+                                        color: Colors.grey,
+                                      ),
                               ),
                             ),
                             const SizedBox(width: 12),
@@ -182,7 +225,10 @@ class _AddIconDialogState extends State<AddIconDialog> {
                             const Expanded(
                               child: Text(
                                 '默认为执行文件图标',
-                                style: TextStyle(fontSize: 13, color: Colors.grey),
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.grey,
+                                ),
                               ),
                             ),
                           ],
@@ -191,7 +237,11 @@ class _AddIconDialogState extends State<AddIconDialog> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  _buildTextField('执行目录', _workDirController, hint: '可选，默认为执行文件目录'),
+                  _buildTextField(
+                    '执行目录',
+                    _workDirController,
+                    hint: '可选，默认为执行文件目录',
+                  ),
                 ],
               ),
             ),
@@ -204,29 +254,40 @@ class _AddIconDialogState extends State<AddIconDialog> {
                 children: [
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    style: TextButton.styleFrom(foregroundColor: Colors.grey.shade700),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.grey.shade700,
+                    ),
                     child: const Text('取消'),
                   ),
                   const SizedBox(width: 12),
                   ElevatedButton(
                     onPressed: () {
-                      if (_nameController.text.isEmpty || _pathController.text.isEmpty) {
+                      if (_nameController.text.isEmpty ||
+                          _pathController.text.isEmpty) {
                         return; // Validate
                       }
-                      Navigator.pop(context, DesktopIconConfig(
-                        name: _nameController.text,
-                        exePath: _pathController.text,
-                        args: _argsController.text,
-                        workDir: _workDirController.text,
-                        iconPath: _iconPath,
-                      ));
+                      Navigator.pop(
+                        context,
+                        DesktopIconConfig(
+                          name: _nameController.text,
+                          exePath: _pathController.text,
+                          args: _argsController.text,
+                          workDir: _workDirController.text,
+                          iconPath: _iconPath,
+                        ),
+                      );
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.iosBlue,
                       foregroundColor: Colors.white,
                       elevation: 0,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                     child: const Text('保存'),
                   ),
@@ -239,11 +300,22 @@ class _AddIconDialogState extends State<AddIconDialog> {
     );
   }
 
-  Widget _buildTextField(String label, TextEditingController controller, {String? hint}) {
+  Widget _buildTextField(
+    String label,
+    TextEditingController controller, {
+    String? hint,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.grey)),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: Colors.grey,
+          ),
+        ),
         const SizedBox(height: 8),
         TextField(
           controller: controller,
@@ -253,10 +325,22 @@ class _AddIconDialogState extends State<AddIconDialog> {
             hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
             filled: true,
             fillColor: Colors.white,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide(color: Colors.grey.shade300)),
-            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide(color: Colors.grey.shade300)),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: AppColors.iosBlue)),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 12,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: BorderSide(color: Colors.grey.shade300),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: BorderSide(color: Colors.grey.shade300),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: const BorderSide(color: AppColors.iosBlue),
+            ),
           ),
         ),
       ],

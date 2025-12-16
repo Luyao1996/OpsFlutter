@@ -57,42 +57,27 @@ class _NetworkMonitorTabState extends State<NetworkMonitorTab> {
           child: Column(
             children: [
               // Info Cards
-              if (isNarrow)
-                Column(
-                  children: [
-                    _buildInfoCard(
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildInfoCard(
                       '实时下载速度',
                       '${(_downloadData.last.value / 1024).toStringAsFixed(2)} MB/s',
                       Colors.green,
+                      compact: isNarrow,
                     ),
-                    const SizedBox(height: 12),
-                    _buildInfoCard(
+                  ),
+                  SizedBox(width: isNarrow ? 12 : 16),
+                  Expanded(
+                    child: _buildInfoCard(
                       '实时上传速度',
                       '${(_uploadData.last.value / 1024).toStringAsFixed(2)} MB/s',
                       Colors.blue,
+                      compact: isNarrow,
                     ),
-                  ],
-                )
-              else
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildInfoCard(
-                        '实时下载速度',
-                        '${(_downloadData.last.value / 1024).toStringAsFixed(2)} MB/s',
-                        Colors.green,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: _buildInfoCard(
-                        '实时上传速度',
-                        '${(_uploadData.last.value / 1024).toStringAsFixed(2)} MB/s',
-                        Colors.blue,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 16),
               // Chart
               Expanded(
@@ -142,9 +127,9 @@ class _NetworkMonitorTabState extends State<NetworkMonitorTab> {
     );
   }
 
-  Widget _buildInfoCard(String title, String value, Color color) {
+  Widget _buildInfoCard(String title, String value, Color color, {required bool compact}) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(compact ? 12 : 16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
@@ -160,9 +145,23 @@ class _NetworkMonitorTabState extends State<NetworkMonitorTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: TextStyle(fontSize: 13, color: Colors.grey.shade500)),
-          const SizedBox(height: 4),
-          Text(value, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: color)),
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: compact ? 12 : 13, color: Colors.grey.shade500),
+          ),
+          SizedBox(height: compact ? 2 : 4),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: compact ? 16 : 20,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
         ],
       ),
     );

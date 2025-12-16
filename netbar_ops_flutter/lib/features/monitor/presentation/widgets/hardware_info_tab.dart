@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../shared/providers/app_providers.dart';
-import '../../data/terminal_api.dart';
 
 class HardwareInfoTab extends ConsumerStatefulWidget {
   final int terminalId;
@@ -49,18 +48,30 @@ class _HardwareInfoTabState extends ConsumerState<HardwareInfoTab> {
 
   IconData _getIcon(String name) {
     if (name.contains('处理器') || name.contains('CPU')) return LucideIcons.cpu;
-    if (name.contains('主板') || name.contains('Board')) return LucideIcons.layers;
-    if (name.contains('内存') || name.contains('Memory') || name.contains('RAM')) return LucideIcons.memoryStick;
-    if (name.contains('显卡') || name.contains('GPU') || name.contains('Graphics')) return LucideIcons.gamepad2;
-    if (name.contains('存储') || name.contains('Disk') || name.contains('Storage')) return LucideIcons.hardDrive;
-    if (name.contains('网络') || name.contains('Network')) return LucideIcons.network;
+    if (name.contains('主板') || name.contains('Board'))
+      return LucideIcons.layers;
+    if (name.contains('内存') || name.contains('Memory') || name.contains('RAM'))
+      return LucideIcons.memoryStick;
+    if (name.contains('显卡') ||
+        name.contains('GPU') ||
+        name.contains('Graphics'))
+      return LucideIcons.gamepad2;
+    if (name.contains('存储') ||
+        name.contains('Disk') ||
+        name.contains('Storage'))
+      return LucideIcons.hardDrive;
+    if (name.contains('网络') || name.contains('Network'))
+      return LucideIcons.network;
     return LucideIcons.box;
   }
 
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return Center(child: Text('加载失败: $_error', style: const TextStyle(color: Colors.red)));
+    if (_error != null)
+      return Center(
+        child: Text('加载失败: $_error', style: const TextStyle(color: Colors.red)),
+      );
     if (_hardware.isEmpty) return const Center(child: Text('暂无硬件信息'));
 
     return LayoutBuilder(
@@ -86,8 +97,9 @@ class _HardwareInfoTabState extends ConsumerState<HardwareInfoTab> {
           itemCount: _hardware.length,
           itemBuilder: (context, index) {
             final item = _hardware[index];
-            final details = (item['details'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-            
+            final details =
+                (item['details'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+
             return Container(
               decoration: BoxDecoration(
                 color: Colors.white,
@@ -109,12 +121,20 @@ class _HardwareInfoTabState extends ConsumerState<HardwareInfoTab> {
                             color: const Color(0xFFEFF6FF),
                             borderRadius: BorderRadius.circular(6),
                           ),
-                          child: Icon(_getIcon(item['name'] ?? ''), size: 16, color: const Color(0xFF3B82F6)),
+                          child: Icon(
+                            _getIcon(item['name'] ?? ''),
+                            size: 16,
+                            color: const Color(0xFF3B82F6),
+                          ),
                         ),
                         const SizedBox(width: 10),
                         Text(
                           item['name'] ?? '未知硬件',
-                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1F2937)),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF1F2937),
+                          ),
                         ),
                       ],
                     ),
@@ -134,12 +154,19 @@ class _HardwareInfoTabState extends ConsumerState<HardwareInfoTab> {
                               children: [
                                 Text(
                                   detail['label'] ?? '',
-                                  style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF6B7280),
+                                  ),
                                 ),
                                 Expanded(
                                   child: Text(
                                     detail['value'] ?? '',
-                                    style: const TextStyle(fontSize: 12, color: Color(0xFF111827), fontWeight: FontWeight.w500),
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Color(0xFF111827),
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                     textAlign: TextAlign.right,
                                     overflow: TextOverflow.ellipsis,
                                   ),

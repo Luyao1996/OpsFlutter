@@ -46,18 +46,32 @@ class TerminalDockBar extends ConsumerWidget {
                   const SizedBox(width: 8),
                   Tooltip(
                     message: '关闭所有最小化终端',
-                      child: InkWell(
-                        onTap: () async {
+                    child: InkWell(
+                      onTap: () async {
                         await TerminalDockActions.closeAllMinimizedWithRef(ref);
-                        },
-                        borderRadius: BorderRadius.circular(10),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                          child: Row(
+                      },
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        child: Row(
                           children: const [
-                            Icon(LucideIcons.xCircle, size: 16, color: Colors.redAccent),
+                            Icon(
+                              LucideIcons.xCircle,
+                              size: 16,
+                              color: Colors.redAccent,
+                            ),
                             SizedBox(width: 6),
-                            Text('关闭', style: TextStyle(fontSize: 12, color: Colors.redAccent, fontWeight: FontWeight.w600)),
+                            Text(
+                              '关闭',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.redAccent,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -113,7 +127,7 @@ class _TerminalDockIconState extends ConsumerState<TerminalDockIcon> {
     if (_hoverEntry != null) return;
     final overlay = Overlay.of(context);
     final box = context.findRenderObject() as RenderBox?;
-    if (overlay == null || box == null) return;
+    if (box == null) return;
 
     final offset = box.localToGlobal(Offset.zero);
     final size = box.size;
@@ -185,7 +199,10 @@ class _TerminalDockIconState extends ConsumerState<TerminalDockIcon> {
             decoration: BoxDecoration(
               color: Colors.grey.shade50,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: statusColor.withValues(alpha: 0.6), width: 2),
+              border: Border.all(
+                color: statusColor.withValues(alpha: 0.6),
+                width: 2,
+              ),
               boxShadow: AppShadows.sm,
             ),
             child: ClipRRect(

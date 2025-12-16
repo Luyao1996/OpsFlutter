@@ -3,9 +3,13 @@ package handler
 import (
 	"encoding/csv"
 	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/xuri/excelize/v2"
 
 	"netbar-ops-api/internal/database"
 	"netbar-ops-api/internal/model"
@@ -108,18 +112,96 @@ func ExportDesktops(c *gin.Context) {
 
 func ExportLogs(c *gin.Context) {
 	var logs []model.SystemLog
-	database.LogsDB.Order("created_at DESC").Limit(1000).Find(&logs)
+	query := database.LogsDB.Model(&model.SystemLog{}).Order("created_at DESC")
 
-	c.Header("Content-Type", "text/csv; charset=utf-8")
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=logs_%s.csv", time.Now().Format("20060102")))
-	c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
+	if level := c.Query("level"); level != "" {
+		query = query.Where("level = ?", level)
+	}
 
-	writer := csv.NewWriter(c.Writer)
-	writer.Write([]string{"ID", "级别", "模块", "操作", "消息", "用户", "IP", "时间"})
+	if module := c.Query("module"); module != "" {
+		query = query.Where("module = ?", module)
+	}
 
-	for _, l := range logs {
-		writer.Write([]string{
-			fmt.Sprintf("%d", l.ID),
+	if search := c.Query("search"); search != "" {
+		like := "%" + search + "%"
+		query = query.Where("message LIKE ? OR action LIKE ? OR username LIKE ?", like, like, like)
+		if id, err := strconv.Atoi(search); err == nil && id > 0 {
+			query = query.Or("id = ?", id)
+		}
+	}
+
+	// 时间范围（按日期，包含 end_date 当天）
+	if startDate := c.Query("start_date"); startDate != "" {
+		if endDate := c.Query("end_date"); endDate != "" {
+			start, err1 := time.ParseInLocation("2006-01-02", startDate, time.Local)
+			end, err2 := time.ParseInLocation("2006-01-02", endDate, time.Local)
+			if err1 == nil && err2 == nil {
+				if end.Before(start) {
+					start, end = end, start
+				}
+				endExclusive := end.AddDate(0, 0, 1)
+				query = query.Where("created_at >= ? AND created_at < ?", start, endExclusive)
+			}
+		}
+	}
+
+	if err := query.Find(&logs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "导出失败"})
+		return
+	}
+
+	format := strings.ToLower(c.Query("format"))
+	if format == "" {
+		format = "csv"
+	}
+
+	if format == "csv" {
+		c.Header("Content-Type", "text/csv; charset=utf-8")
+		filename := fmt.Sprintf("logs_%s.csv", time.Now().Format("20060102_150405"))
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+		c.Header("Access-Control-Expose-Headers", "Content-Disposition")
+		c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
+
+		writer := csv.NewWriter(c.Writer)
+		writer.Write([]string{"ID", "级别", "模块", "操作", "消息", "用户", "IP", "时间"})
+		for _, l := range logs {
+			writer.Write([]string{
+				fmt.Sprintf("%d", l.ID),
+				l.Level,
+				l.Module,
+				l.Action,
+				l.Message,
+				l.Username,
+				l.IP,
+				l.CreatedAt.Format("2006-01-02 15:04:05"),
+			})
+		}
+		writer.Flush()
+		return
+	}
+
+	f := excelize.NewFile()
+	const sheet = "Logs"
+	f.SetSheetName("Sheet1", sheet)
+
+	headerStyle, _ := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true, Color: "#111827"},
+		Fill: excelize.Fill{Type: "pattern", Color: []string{"#F3F4F6"}, Pattern: 1},
+	})
+
+	sw, _ := f.NewStreamWriter(sheet)
+	headers := []string{"ID", "级别", "模块", "操作", "消息", "用户", "IP", "时间"}
+	headerRow := make([]interface{}, 0, len(headers))
+	for _, h := range headers {
+		headerRow = append(headerRow, excelize.Cell{StyleID: headerStyle, Value: h})
+	}
+	_ = sw.SetRow("A1", headerRow)
+
+	for i, l := range logs {
+		rowIdx := i + 2
+		cell, _ := excelize.CoordinatesToCellName(1, rowIdx)
+		_ = sw.SetRow(cell, []interface{}{
+			l.ID,
 			l.Level,
 			l.Module,
 			l.Action,
@@ -129,5 +211,22 @@ func ExportLogs(c *gin.Context) {
 			l.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
-	writer.Flush()
+	_ = sw.Flush()
+
+	_ = f.SetColWidth(sheet, "A", "A", 10)
+	_ = f.SetColWidth(sheet, "B", "C", 14)
+	_ = f.SetColWidth(sheet, "D", "D", 18)
+	_ = f.SetColWidth(sheet, "E", "E", 60)
+	_ = f.SetColWidth(sheet, "F", "G", 18)
+	_ = f.SetColWidth(sheet, "H", "H", 22)
+
+	filename := fmt.Sprintf("logs_%s.xlsx", time.Now().Format("20060102_150405"))
+	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+	c.Header("Access-Control-Expose-Headers", "Content-Disposition")
+	c.Status(http.StatusOK)
+	if err := f.Write(c.Writer); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "导出失败"})
+		return
+	}
 }

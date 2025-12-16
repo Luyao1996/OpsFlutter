@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:cross_file/cross_file.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -8,16 +11,19 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../core/responsive/responsive.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/providers/permission_provider.dart';
 import '../../../shared/providers/upload_queue_provider.dart';
 import '../../../shared/utils/web_download_helper_stub.dart'
     if (dart.library.html) '../../../shared/utils/web_download_helper_web.dart';
 import '../../../shared/utils/resource_path_display.dart';
+import '../../../shared/utils/top_notice.dart';
 
 import '../data/resource_api.dart';
 import '../data/startup_item_api.dart';
-import 'drop_target_stub.dart' if (dart.library.io) 'package:desktop_drop/desktop_drop.dart';
+import 'drop_target_stub.dart'
+    if (dart.library.io) 'package:desktop_drop/desktop_drop.dart';
 import 'platform_helper.dart';
 import 'web_drop_zone.dart';
 import 'widgets/add_startup_item_modal.dart';
@@ -58,10 +64,10 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   LayoutMode _layoutMode = LayoutMode.grid;
 
   String _searchQuery = '';
+  final TextEditingController _fileSearchController = TextEditingController();
+  Timer? _searchDebounce;
   int? _currentFolderId;
-  List<BreadcrumbItem> _folderHistory = [
-    BreadcrumbItem(id: null, name: '根目录')
-  ];
+  List<BreadcrumbItem> _folderHistory = [BreadcrumbItem(id: null, name: '根目录')];
 
   List<Resource> _files = [];
   List<Resource> _searchResults = [];
@@ -123,9 +129,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
 
   bool _ensureCanEdit(String actionLabel) {
     if (_canEdit) return true;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$actionLabel失败：${_editDeniedReason()}')),
-    );
+    showTopNotice(context, '$actionLabel失败：${_editDeniedReason()}', level: NoticeLevel.warning);
     return false;
   }
 
@@ -139,25 +143,29 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       _registerWebPasteHandler();
     }
 
-    _netbarSubscription =
-        ref.listenManual<CurrentNetbar>(currentNetbarProvider, (prev, next) {
-      if (prev?.id != next.id || prev?.version != next.version) {
-        setState(() {
-          _currentFolderId = null;
-          _folderHistory = [BreadcrumbItem(id: null, name: '根目录')];
-          _selectedIds.clear();
-          _clipboard.clear();
-          _isCut = false;
-        });
-        _loadData();
-      }
-    });
+    _netbarSubscription = ref.listenManual<CurrentNetbar>(
+      currentNetbarProvider,
+      (prev, next) {
+        if (prev?.id != next.id || prev?.version != next.version) {
+          setState(() {
+            _currentFolderId = null;
+            _folderHistory = [BreadcrumbItem(id: null, name: '根目录')];
+            _selectedIds.clear();
+            _clipboard.clear();
+            _isCut = false;
+          });
+          _loadData();
+        }
+      },
+    );
   }
 
   @override
   void dispose() {
     _netbarSubscription?.close();
     HardwareKeyboard.instance.removeHandler(_handleKeyboard);
+    _searchDebounce?.cancel();
+    _fileSearchController.dispose();
     if (kIsWeb) {
       webDropHandler.unregisterDropZone();
       webDropHandler.unregisterPasteHandler();
@@ -267,6 +275,10 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       _selectedIds.clear();
       _clipboard.clear();
       _isCut = false;
+      _searchQuery = '';
+      _isSearching = false;
+      _searchResults = [];
+      _fileSearchController.clear();
     });
     _loadData();
   }
@@ -275,6 +287,12 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     setState(() {
       _activeModule = module;
       _selectedIds.clear();
+      if (module == ModuleTab.files) {
+        _searchQuery = '';
+        _isSearching = false;
+        _searchResults = [];
+        _fileSearchController.clear();
+      }
     });
     _loadData();
   }
@@ -284,6 +302,10 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       _currentFolderId = _folderHistory[index].id;
       _folderHistory = _folderHistory.sublist(0, index + 1);
       _selectedIds.clear();
+      _searchQuery = '';
+      _isSearching = false;
+      _searchResults = [];
+      _fileSearchController.clear();
     });
     _loadData();
   }
@@ -293,6 +315,10 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       _currentFolderId = folder.id;
       _folderHistory.add(BreadcrumbItem(id: folder.id, name: folder.name));
       _selectedIds.clear();
+      _searchQuery = '';
+      _isSearching = false;
+      _searchResults = [];
+      _fileSearchController.clear();
     });
     _loadData();
   }
@@ -315,11 +341,18 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   }
 
   List<StartupItem> get _selectedStartupItems {
-    return _startupItems.where((s) => _selectedIds.contains('startup-${s.id}')).toList();
+    return _startupItems
+        .where((s) => _selectedIds.contains('startup-${s.id}'))
+        .toList();
   }
 
   Future<void> _performSearch(String query) async {
     if (!mounted) return;
+    if (kDebugMode) {
+      debugPrint(
+        '[ChannelManagement] performSearch="$query" zone=$_currentZone netbarId=${_getNetbarId()}',
+      );
+    }
     setState(() {
       _searchQuery = query;
       _isSearching = true;
@@ -354,6 +387,33 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       _searchQuery = '';
       _isSearching = false;
       _searchResults = [];
+    });
+  }
+
+  void _clearSearchAndText() {
+    if (_fileSearchController.text.isNotEmpty) {
+      _fileSearchController.clear();
+    }
+    _clearSearch();
+  }
+
+  void _scheduleSearch(String raw) {
+    final q = raw.trim();
+    _searchDebounce?.cancel();
+    if (q.isEmpty) {
+      _clearSearch();
+      return;
+    }
+    if (_isSearching && q == _searchQuery) return;
+    if (kDebugMode) {
+      debugPrint('[ChannelManagement] scheduleSearch="$q"');
+    }
+    _searchDebounce = Timer(const Duration(milliseconds: 280), () {
+      if (!mounted) return;
+      if (kDebugMode) {
+        debugPrint('[ChannelManagement] debounceFire="$q"');
+      }
+      _performSearch(q);
     });
   }
 
@@ -411,8 +471,9 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       const spacing = 16.0;
       const childAspectRatio = 0.85;
 
-      final crossAxisCount =
-          (gridWidth / (maxCrossAxisExtent + spacing)).ceil().clamp(1, 100);
+      final crossAxisCount = (gridWidth / (maxCrossAxisExtent + spacing))
+          .ceil()
+          .clamp(1, 100);
       final itemWidth =
           (gridWidth - (crossAxisCount - 1) * spacing) / crossAxisCount;
       final itemHeight = itemWidth / childAspectRatio;
@@ -441,6 +502,23 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
 
   void _showUploadModal() {
     if (!_ensureCanEdit('上传')) return;
+    if (context.isPhone) {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        enableDrag: false,
+        builder: (context) => UploadModal(
+          zone: _currentZone,
+          parentId: _currentFolderId,
+          netbarId: _getNetbarId(),
+          onSuccess: _loadData,
+          presentation: UploadModalPresentation.sheet,
+        ),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => UploadModal(
@@ -448,6 +526,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
         parentId: _currentFolderId,
         netbarId: _getNetbarId(),
         onSuccess: _loadData,
+        presentation: UploadModalPresentation.dialog,
       ),
     );
   }
@@ -489,9 +568,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       _loadData();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('创建失败: $e')),
-        );
+        showTopNotice(context, '创建失败: $e', level: NoticeLevel.error);
       }
     }
   }
@@ -522,15 +599,11 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       await _resourceApi.delete(file.id);
       _loadData();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('删除成功')),
-        );
+        showTopNotice(context, '删除成功', level: NoticeLevel.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('删除失败: $e')),
-        );
+        showTopNotice(context, '删除失败: $e', level: NoticeLevel.error);
       }
     }
   }
@@ -565,15 +638,11 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       setState(() => _selectedIds.clear());
       _loadData();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('删除成功')),
-        );
+        showTopNotice(context, '删除成功', level: NoticeLevel.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('删除失败: $e')),
-        );
+        showTopNotice(context, '删除失败: $e', level: NoticeLevel.error);
       }
     }
   }
@@ -583,9 +652,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       _clipboard = _selectedResources;
       _isCut = false;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已复制 ${_clipboard.length} 项到剪贴板')),
-    );
+    showTopNotice(context, '已复制 ${_clipboard.length} 项到剪贴板', level: NoticeLevel.success);
   }
 
   void _handleBatchCut() {
@@ -594,9 +661,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       _clipboard = _selectedResources;
       _isCut = true;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已剪切 ${_clipboard.length} 项到剪贴板')),
-    );
+    showTopNotice(context, '已剪切 ${_clipboard.length} 项到剪贴板', level: NoticeLevel.success);
   }
 
   Future<void> _handlePaste() async {
@@ -619,15 +684,11 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       }
       _loadData();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_isCut ? '移动成功' : '复制成功')),
-        );
+        showTopNotice(context, _isCut ? '移动成功' : '复制成功', level: NoticeLevel.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('操作失败: $e')),
-        );
+        showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
       }
     }
   }
@@ -639,6 +700,26 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
 
   void _showAddStartupFromFile(Resource file) {
     if (!_ensureCanEdit('添加启动项')) return;
+    if (context.isPhone) {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        enableDrag: false,
+        builder: (context) => AddStartupItemModal(
+          zone: _currentZone,
+          netbarId: _getNetbarId(),
+          resourceId: file.id,
+          defaultPath: file.path.isNotEmpty ? file.path : file.name,
+          defaultWorkingDir: deriveDirectoryFromPath(file.path),
+          isAdmin: _isAdmin,
+          onSuccess: _loadData,
+          fullscreenSheet: true,
+        ),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => AddStartupItemModal(
@@ -656,9 +737,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   Future<void> _handleDownload(Resource file) async {
     if (file.isDirectory) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('文件夹暂不支持下载')),
-        );
+        showTopNotice(context, '文件夹暂不支持下载', level: NoticeLevel.warning);
       }
       return;
     }
@@ -669,9 +748,55 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
         await downloadBytesAsFile(bytes, file.name);
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('下载失败: $e')),
+          showTopNotice(context, '下载失败: $e', level: NoticeLevel.error);
+        }
+      }
+      return;
+    }
+
+    final isMobile = defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+    if (isMobile) {
+      try {
+        if (mounted) {
+          showTopBanner(
+            context,
+            content: Row(
+              children: const [
+                Text('正在下载...'),
+                SizedBox(width: 12),
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+            level: NoticeLevel.info,
+            duration: null,
           );
+        }
+
+        final bytes = await _resourceApi.downloadBytes(file.id);
+        if (mounted) hideTopNotice(context);
+
+        final saved = await FilePicker.platform.saveFile(
+          dialogTitle: '保存文件',
+          fileName: file.name,
+          bytes: Uint8List.fromList(bytes),
+        );
+        if (saved == null) return;
+
+        if (mounted) {
+          showTopNotice(context, '下载成功: $saved', level: NoticeLevel.success);
+        }
+      } catch (e) {
+        if (mounted) {
+          hideTopNotice(context);
+          showTopNotice(context, '下载失败: $e', level: NoticeLevel.error);
         }
       }
       return;
@@ -685,51 +810,127 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       if (savePath == null) return;
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: const [
-                Text('正在下载...'),
-                SizedBox(width: 16),
-                SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white),
+        showTopBanner(
+          context,
+          content: Row(
+            children: const [
+              Text('正在下载...'),
+              SizedBox(width: 12),
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
                 ),
-              ],
-            ),
-            duration: const Duration(days: 1),
+              ),
+            ],
           ),
+          level: NoticeLevel.info,
+          duration: null,
         );
       }
 
       await _resourceApi.downloadToFile(file.id, savePath);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('下载成功: $savePath')),
-        );
+        hideTopNotice(context);
+        showTopNotice(context, '下载成功: $savePath', level: NoticeLevel.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('下载失败: $e')),
-        );
+        hideTopNotice(context);
+        showTopNotice(context, '下载失败: $e', level: NoticeLevel.error);
       }
     }
   }
 
   void _handleOpenFile(Resource file, {required bool readOnly}) {
+    final category = FileIcon.getTypeFromName(file.name);
+    if (category == 'image') {
+      _showImagePreview(file);
+      return;
+    }
+
+    if (!FileIcon.isTextFile(file.name)) {
+    showTopNotice(context, '该文件类型仅支持下载查看', level: NoticeLevel.warning);
+      return;
+    }
+
     showDialog(
       context: context,
-      builder: (context) => FileEditorModal(
-        file: file,
-        readOnly: readOnly,
-        onSuccess: _loadData,
-      ),
+      builder: (context) =>
+          FileEditorModal(file: file, readOnly: readOnly, onSuccess: _loadData),
+    );
+  }
+
+  void _showImagePreview(Resource file) {
+    final future = _resourceApi.downloadBytes(file.id);
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.6),
+      builder: (context) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.all(24),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: FutureBuilder<List<int>>(
+              future: future,
+              builder: (context, snapshot) {
+                Widget content;
+                if (snapshot.connectionState != ConnectionState.done) {
+                  content = const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  );
+                } else if (snapshot.hasError) {
+                  content = Center(
+                    child: Text(
+                      '图片加载失败: ${snapshot.error}',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  );
+                } else {
+                  final bytes = Uint8List.fromList(snapshot.data ?? const []);
+                  content = InteractiveViewer(
+                    minScale: 0.5,
+                    maxScale: 5,
+                    child: Image.memory(bytes, fit: BoxFit.contain),
+                  );
+                }
+
+                return Stack(
+                  children: [
+                    Positioned.fill(child: content),
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(LucideIcons.x, color: Colors.white),
+                      ),
+                    ),
+                    Positioned(
+                      left: 12,
+                      top: 10,
+                      child: Text(
+                        file.name,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -749,8 +950,9 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       return;
     }
 
-    final pasteLabel =
-        _clipboard.isNotEmpty ? '粘贴 (已复制${_clipboard.length}个项)' : '粘贴';
+    final pasteLabel = _clipboard.isNotEmpty
+        ? '粘贴 (已复制${_clipboard.length}个项)'
+        : '粘贴';
     showContextMenu(
       context: context,
       position: position,
@@ -822,9 +1024,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
                 _clipboard = [file];
                 _isCut = false;
               });
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('已复制到剪贴板')),
-              );
+              showTopNotice(context, '已复制到剪贴板', level: NoticeLevel.success);
             },
           ),
           ContextMenuItem(
@@ -835,9 +1035,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
                 _clipboard = [file];
                 _isCut = true;
               });
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('已剪切到剪贴板')),
-              );
+              showTopNotice(context, '已剪切到剪贴板', level: NoticeLevel.success);
             },
           ),
           ContextMenuItem(
@@ -855,11 +1053,13 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   // ---- Upload queue / external drag&drop / clipboard paste (align with ResourceManagement) ----
 
   Future<bool> _askExtractZip(List<String> fileNames) async {
-    final zipFiles =
-        fileNames.where((name) => name.toLowerCase().endsWith('.zip')).toList();
+    final zipFiles = fileNames
+        .where((name) => name.toLowerCase().endsWith('.zip'))
+        .toList();
     if (zipFiles.isEmpty) return false;
 
-    final shouldAsk = fileNames.length == 1 || zipFiles.length == fileNames.length;
+    final shouldAsk =
+        fileNames.length == 1 || zipFiles.length == fileNames.length;
     if (!shouldAsk) return false;
 
     final result = await showDialog<bool>(
@@ -912,7 +1112,10 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     if (files.isEmpty) return;
     if (mounted) setState(() => _isExternalDragOver = false);
 
-    final fileNames = files.where((f) => !f.isDirectory).map((f) => f.name).toList();
+    final fileNames = files
+        .where((f) => !f.isDirectory)
+        .map((f) => f.name)
+        .toList();
     final extractZip = await _askExtractZip(fileNames);
 
     final notifier = ref.read(uploadQueueProvider.notifier);
@@ -922,22 +1125,27 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     final netbarId = _getNetbarId();
 
     for (final file in files) {
-      final id = 'web-drop-${DateTime.now().millisecondsSinceEpoch}-${counter++}';
+      final id =
+          'web-drop-${DateTime.now().millisecondsSinceEpoch}-${counter++}';
       final isZip = file.name.toLowerCase().endsWith('.zip');
-      tasks.add(UploadTask(
-        id: id,
-        name: file.name,
-        size: file.bytes.length,
-        isDirectory: file.isDirectory,
-        relativePath: file.relativePath,
-        parentId: _currentFolderId,
-        zone: zone,
-        netbarId: netbarId,
-        bytes: file.isDirectory ? null : file.bytes,
-        progress: file.isDirectory ? 100 : 0,
-        status: file.isDirectory ? UploadStatus.success : UploadStatus.pending,
-        extractZip: extractZip && isZip,
-      ));
+      tasks.add(
+        UploadTask(
+          id: id,
+          name: file.name,
+          size: file.bytes.length,
+          isDirectory: file.isDirectory,
+          relativePath: file.relativePath,
+          parentId: _currentFolderId,
+          zone: zone,
+          netbarId: netbarId,
+          bytes: file.isDirectory ? null : file.bytes,
+          progress: file.isDirectory ? 100 : 0,
+          status: file.isDirectory
+              ? UploadStatus.success
+              : UploadStatus.pending,
+          extractZip: extractZip && isZip,
+        ),
+      );
     }
 
     notifier.enqueue(tasks);
@@ -950,7 +1158,10 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     if (_activeModule != ModuleTab.files) return;
     if (files.isEmpty) return;
 
-    final fileNames = files.where((f) => !f.isDirectory).map((f) => f.name).toList();
+    final fileNames = files
+        .where((f) => !f.isDirectory)
+        .map((f) => f.name)
+        .toList();
     final extractZip = await _askExtractZip(fileNames);
 
     final notifier = ref.read(uploadQueueProvider.notifier);
@@ -960,22 +1171,27 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     final netbarId = _getNetbarId();
 
     for (final file in files) {
-      final id = 'web-paste-${DateTime.now().millisecondsSinceEpoch}-${counter++}';
+      final id =
+          'web-paste-${DateTime.now().millisecondsSinceEpoch}-${counter++}';
       final isZip = file.name.toLowerCase().endsWith('.zip');
-      tasks.add(UploadTask(
-        id: id,
-        name: file.name,
-        size: file.bytes.length,
-        isDirectory: file.isDirectory,
-        relativePath: file.relativePath,
-        parentId: _currentFolderId,
-        zone: zone,
-        netbarId: netbarId,
-        bytes: file.isDirectory ? null : file.bytes,
-        progress: file.isDirectory ? 100 : 0,
-        status: file.isDirectory ? UploadStatus.success : UploadStatus.pending,
-        extractZip: extractZip && isZip,
-      ));
+      tasks.add(
+        UploadTask(
+          id: id,
+          name: file.name,
+          size: file.bytes.length,
+          isDirectory: file.isDirectory,
+          relativePath: file.relativePath,
+          parentId: _currentFolderId,
+          zone: zone,
+          netbarId: netbarId,
+          bytes: file.isDirectory ? null : file.bytes,
+          progress: file.isDirectory ? 100 : 0,
+          status: file.isDirectory
+              ? UploadStatus.success
+              : UploadStatus.pending,
+          extractZip: extractZip && isZip,
+        ),
+      );
     }
 
     notifier.enqueue(tasks);
@@ -990,9 +1206,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       final paths = await platformFileHelper.getClipboardFilePaths();
       if (paths.isEmpty) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('剪贴板中没有文件')),
-          );
+          showTopNotice(context, '剪贴板中没有文件', level: NoticeLevel.warning);
         }
         return;
       }
@@ -1000,9 +1214,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       final items = await platformFileHelper.readFilesFromPaths(paths);
       if (items.isEmpty) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('无法读取剪贴板中的文件')),
-          );
+          showTopNotice(context, '无法读取剪贴板中的文件', level: NoticeLevel.error);
         }
         return;
       }
@@ -1014,34 +1226,35 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       final netbarId = _getNetbarId();
 
       for (final item in items) {
-        final id = 'clipboard-${DateTime.now().millisecondsSinceEpoch}-${counter++}';
-        tasks.add(UploadTask(
-          id: id,
-          name: item.name,
-          size: item.bytes?.length ?? 0,
-          isDirectory: item.isDirectory,
-          relativePath: item.relativePath,
-          parentId: _currentFolderId,
-          zone: zone,
-          netbarId: netbarId,
-          bytes: item.bytes,
-          progress: item.isDirectory ? 100 : 0,
-          status: item.isDirectory ? UploadStatus.success : UploadStatus.pending,
-        ));
+        final id =
+            'clipboard-${DateTime.now().millisecondsSinceEpoch}-${counter++}';
+        tasks.add(
+          UploadTask(
+            id: id,
+            name: item.name,
+            size: item.bytes?.length ?? 0,
+            isDirectory: item.isDirectory,
+            relativePath: item.relativePath,
+            parentId: _currentFolderId,
+            zone: zone,
+            netbarId: netbarId,
+            bytes: item.bytes,
+            progress: item.isDirectory ? 100 : 0,
+            status: item.isDirectory
+                ? UploadStatus.success
+                : UploadStatus.pending,
+          ),
+        );
       }
 
       notifier.enqueue(tasks);
       _loadData();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已从剪贴板添加 ${tasks.length} 个文件到上传队列')),
-        );
+        showTopNotice(context, '已从剪贴板添加 ${tasks.length} 个文件到上传队列', level: NoticeLevel.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('粘贴失败: $e')),
-        );
+        showTopNotice(context, '粘贴失败: $e', level: NoticeLevel.error);
       }
     }
   }
@@ -1070,20 +1283,22 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       final bytes = await file.readAsBytes();
       final id = 'drop-${DateTime.now().millisecondsSinceEpoch}-${counter++}';
       final isZip = file.name.toLowerCase().endsWith('.zip');
-      tasks.add(UploadTask(
-        id: id,
-        name: file.name,
-        size: bytes.length,
-        isDirectory: false,
-        relativePath: null,
-        parentId: _currentFolderId,
-        zone: zone,
-        netbarId: netbarId,
-        bytes: bytes,
-        progress: 0,
-        status: UploadStatus.pending,
-        extractZip: extractZip && isZip,
-      ));
+      tasks.add(
+        UploadTask(
+          id: id,
+          name: file.name,
+          size: bytes.length,
+          isDirectory: false,
+          relativePath: null,
+          parentId: _currentFolderId,
+          zone: zone,
+          netbarId: netbarId,
+          bytes: bytes,
+          progress: 0,
+          status: UploadStatus.pending,
+          extractZip: extractZip && isZip,
+        ),
+      );
     }
 
     notifier.enqueue(tasks);
@@ -1150,13 +1365,11 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       await _startupItemApi.delete(item.id);
       _loadData();
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('删除成功')));
+        showTopNotice(context, '删除成功', level: NoticeLevel.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('删除失败: $e')));
+        showTopNotice(context, '删除失败: $e', level: NoticeLevel.error);
       }
     }
   }
@@ -1172,8 +1385,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       _loadData();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('更新启动项状态失败: $e')));
+        showTopNotice(context, '更新启动项状态失败: $e', level: NoticeLevel.error);
       }
     }
   }
@@ -1222,17 +1434,52 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
 
   void _showAddStartupItemModal() {
     if (!_ensureCanEdit('添加启动项')) return;
+    if (context.isPhone) {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        enableDrag: false,
+        builder: (context) => AddStartupItemModal(
+          zone: _currentZone,
+          netbarId: _getNetbarId(),
+          isAdmin: _isAdmin,
+          onSuccess: _loadData,
+          fullscreenSheet: true,
+        ),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => AddStartupItemModal(
         zone: _currentZone,
         netbarId: _getNetbarId(),
+        isAdmin: _isAdmin,
         onSuccess: _loadData,
       ),
     );
   }
 
   void _showStartupConfigModal(StartupItem item) {
+    if (context.isPhone) {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        enableDrag: false,
+        builder: (context) => StartupConfigModal(
+          item: item,
+          isAdmin: _isAdmin,
+          areas: const [],
+          onSuccess: _loadData,
+          fullscreenSheet: true,
+        ),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => StartupConfigModal(
@@ -1290,8 +1537,10 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
             color: Colors.grey.shade200,
             margin: const EdgeInsets.symmetric(horizontal: 16),
           ),
-          const Text('通道管理',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          const Text(
+            '通道管理',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
         ],
       ),
     );
@@ -1309,12 +1558,15 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
         children: [
           Padding(
             padding: const EdgeInsets.all(16),
-            child: Text('资源来源',
-                style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey.shade500,
-                    letterSpacing: 1)),
+            child: Text(
+              '资源来源',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade500,
+                letterSpacing: 1,
+              ),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1326,7 +1578,9 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
                   '本网吧资源',
                   subtitle: _canEdit
                       ? null
-                      : (ref.watch(currentNetbarProvider).id == null ? '（需选择网吧）' : '（只读）'),
+                      : (ref.watch(currentNetbarProvider).id == null
+                            ? '（需选择网吧）'
+                            : '（只读）'),
                 ),
                 const SizedBox(height: 4),
                 _buildZoneButton(
@@ -1352,12 +1606,21 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
 
   Widget _buildMobileZoneSelector() {
     final pills = <Widget>[
-      _buildZonePill('PUBLIC', '本网吧', LucideIcons.globe,
-          subtitle: _canEdit
-              ? null
-              : (ref.watch(currentNetbarProvider).id == null ? '需选择网吧' : '只读')),
+      _buildZonePill(
+        'PUBLIC',
+        '本网吧',
+        LucideIcons.globe,
+        subtitle: _canEdit
+            ? null
+            : (ref.watch(currentNetbarProvider).id == null ? '需选择网吧' : '只读'),
+      ),
       _buildZonePill('BRANCH', '分公司', LucideIcons.building2, subtitle: '只读'),
-      _buildZonePill('HEADQUARTERS', '总部', LucideIcons.shieldAlert, subtitle: '只读'),
+      _buildZonePill(
+        'HEADQUARTERS',
+        '总部',
+        LucideIcons.shieldAlert,
+        subtitle: '只读',
+      ),
     ];
     return SafeArea(
       top: false,
@@ -1368,10 +1631,11 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
           border: Border(top: BorderSide(color: Colors.grey.shade200)),
           boxShadow: const [
             BoxShadow(
-                color: Color(0x1F000000),
-                blurRadius: 16,
-                offset: Offset(0, -6),
-                spreadRadius: 2),
+              color: Color(0x1F000000),
+              blurRadius: 16,
+              offset: Offset(0, -6),
+              spreadRadius: 2,
+            ),
           ],
         ),
         child: Row(
@@ -1382,8 +1646,12 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     );
   }
 
-  Widget _buildZonePill(String zone, String label, IconData icon,
-      {String? subtitle}) {
+  Widget _buildZonePill(
+    String zone,
+    String label,
+    IconData icon, {
+    String? subtitle,
+  }) {
     final isActive = _currentZone == zone;
     return Expanded(
       child: GestureDetector(
@@ -1402,26 +1670,35 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon,
-                  size: 16, color: isActive ? Colors.white : Colors.grey.shade600),
+              Icon(
+                icon,
+                size: 16,
+                color: isActive ? Colors.white : Colors.grey.shade600,
+              ),
               const SizedBox(width: 8),
               Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(label,
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: isActive
-                              ? Colors.white
-                              : Colors.grey.shade700)),
-                  Text(subtitle ?? ' ',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontSize: 11,
-                          color:
-                              isActive ? Colors.white70 : Colors.grey.shade400)),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: isActive ? Colors.white : Colors.grey.shade700,
+                    ),
+                  ),
+                  Text(
+                    subtitle ?? ' ',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: isActive
+                          ? Colors.white.withValues(alpha: 0.9)
+                          : Colors.grey.shade500,
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -1431,8 +1708,12 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     );
   }
 
-  Widget _buildZoneButton(String zone, IconData icon, String label,
-      {String? subtitle}) {
+  Widget _buildZoneButton(
+    String zone,
+    IconData icon,
+    String label, {
+    String? subtitle,
+  }) {
     final isActive = _currentZone == zone;
     return InkWell(
       onTap: () => _handleZoneChange(zone),
@@ -1441,7 +1722,9 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
         duration: const Duration(milliseconds: 160),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: isActive ? AppColors.iosBlue.withValues(alpha: 0.1) : Colors.transparent,
+          color: isActive
+              ? AppColors.iosBlue.withValues(alpha: 0.1)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: isActive ? AppColors.iosBlue : Colors.transparent,
@@ -1450,25 +1733,34 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
         ),
         child: Row(
           children: [
-            Icon(icon,
-                size: 18,
-                color: isActive ? AppColors.iosBlue : Colors.grey.shade600),
+            Icon(
+              icon,
+              size: 18,
+              color: isActive ? AppColors.iosBlue : Colors.grey.shade600,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(label,
-                      style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: isActive
-                              ? AppColors.iosBlue
-                              : Colors.grey.shade800)),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: isActive
+                          ? AppColors.iosBlue
+                          : Colors.grey.shade800,
+                    ),
+                  ),
                   if (subtitle != null)
-                    Text(subtitle,
-                        style: TextStyle(
-                            fontSize: 12, color: Colors.grey.shade500)),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -1489,6 +1781,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   }
 
   Widget _buildModuleTabs() {
+    final isPhone = context.isPhone;
     final actions = <Widget>[];
     if (_activeModule == ModuleTab.files) {
       if (_isMobile) {
@@ -1498,27 +1791,45 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       } else {
         if (_canEdit) {
           if (_selectedResources.isNotEmpty) {
-            actions.add(Text('已选 ${_selectedResources.length} 项',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade500)));
+            actions.add(
+              Text(
+                '已选 ${_selectedResources.length} 项',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+              ),
+            );
             actions.addAll([
               _buildBatchButton(
-                  '复制', LucideIcons.copy, AppColors.iosBlue, _handleBatchCopy),
-              _buildBatchButton('剪切', LucideIcons.scissors, Colors.orange,
-                  _handleBatchCut,
-                  enabled: _canEdit),
+                '复制',
+                LucideIcons.copy,
+                AppColors.iosBlue,
+                _handleBatchCopy,
+              ),
               _buildBatchButton(
-                  '删除', LucideIcons.trash2, Colors.red, _handleBatchDelete,
-                  enabled: _canEdit),
+                '剪切',
+                LucideIcons.scissors,
+                Colors.orange,
+                _handleBatchCut,
+                enabled: _canEdit,
+              ),
+              _buildBatchButton(
+                '删除',
+                LucideIcons.trash2,
+                Colors.red,
+                _handleBatchDelete,
+                enabled: _canEdit,
+              ),
             ]);
           }
           actions.add(const SizedBox(width: 12));
-          actions.add(_buildBatchButton(
-            '粘贴${_clipboard.isNotEmpty ? ' (${_clipboard.length})' : ''}',
-            LucideIcons.clipboard,
-            Colors.green,
-            _handlePaste,
-            enabled: _canEdit && _clipboard.isNotEmpty,
-          ));
+          actions.add(
+            _buildBatchButton(
+              '粘贴${_clipboard.isNotEmpty ? ' (${_clipboard.length})' : ''}',
+              LucideIcons.clipboard,
+              Colors.green,
+              _handlePaste,
+              enabled: _canEdit && _clipboard.isNotEmpty,
+            ),
+          );
           actions.add(const SizedBox(width: 16));
         }
 
@@ -1533,34 +1844,55 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     } else {
       if (_canEdit) {
         if (_selectedStartupItems.isNotEmpty) {
-          actions.add(Text('已选 ${_selectedStartupItems.length} 项',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade500)));
+          actions.add(
+            Text(
+              '已选 ${_selectedStartupItems.length} 项',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+            ),
+          );
           actions.addAll([
-            _buildBatchButton('批量启用', LucideIcons.toggleRight,
-                const Color(0xFF22C55E), () => _handleBatchStartupEnable(true),
-                enabled: _canEdit),
-            _buildBatchButton('批量禁用', LucideIcons.toggleLeft,
-                Colors.grey.shade600, () => _handleBatchStartupEnable(false),
-                enabled: _canEdit),
-            _buildBatchButton('批量删除', LucideIcons.trash2, Colors.red,
-                _handleBatchStartupDelete,
-                enabled: _canEdit),
+            _buildBatchButton(
+              isPhone ? '启用' : '批量启用',
+              LucideIcons.toggleRight,
+              const Color(0xFF22C55E),
+              () => _handleBatchStartupEnable(true),
+              enabled: _canEdit,
+            ),
+            _buildBatchButton(
+              isPhone ? '禁用' : '批量禁用',
+              LucideIcons.toggleLeft,
+              Colors.grey.shade600,
+              () => _handleBatchStartupEnable(false),
+              enabled: _canEdit,
+            ),
+            _buildBatchButton(
+              isPhone ? '删除' : '批量删除',
+              LucideIcons.trash2,
+              Colors.red,
+              _handleBatchStartupDelete,
+              enabled: _canEdit,
+            ),
           ]);
         }
-        actions.add(ElevatedButton.icon(
-          onPressed: _showAddStartupItemModal,
-          icon: const Icon(LucideIcons.plus, size: 14),
-          label: const Text('新增启动项'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF22C55E),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            textStyle:
-                const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+        actions.add(
+          ElevatedButton.icon(
+            onPressed: _showAddStartupItemModal,
+            icon: const Icon(LucideIcons.plus, size: 14),
+            label: const Text('新增启动项'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF22C55E),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              textStyle: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ),
-        ));
+        );
       }
     }
 
@@ -1576,17 +1908,62 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
           children: [
             Row(
               children: [
-                _buildModuleTab(ModuleTab.files, LucideIcons.folderOpen, '文件管理'),
+                _buildModuleTab(
+                  ModuleTab.files,
+                  LucideIcons.folderOpen,
+                  '文件管理',
+                ),
                 const SizedBox(width: 12),
                 _buildModuleTab(ModuleTab.startup, LucideIcons.zap, '启动项'),
               ],
             ),
             const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: actions,
-            ),
+            if (_activeModule == ModuleTab.startup && _canEdit && isPhone) ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildMobileActionButton(
+                      label: '启用',
+                      icon: LucideIcons.toggleRight,
+                      color: const Color(0xFF22C55E),
+                      enabled: _selectedStartupItems.isNotEmpty,
+                      onTap: () => _handleBatchStartupEnable(true),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildMobileActionButton(
+                      label: '禁用',
+                      icon: LucideIcons.toggleLeft,
+                      color: Colors.grey.shade600,
+                      enabled: _selectedStartupItems.isNotEmpty,
+                      onTap: () => _handleBatchStartupEnable(false),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildMobileActionButton(
+                      label: '删除',
+                      icon: LucideIcons.trash2,
+                      color: Colors.red,
+                      enabled: _selectedStartupItems.isNotEmpty,
+                      onTap: _handleBatchStartupDelete,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildMobileActionButton(
+                      label: '新增',
+                      icon: LucideIcons.plus,
+                      color: const Color(0xFF22C55E),
+                      enabled: true,
+                      onTap: _showAddStartupItemModal,
+                    ),
+                  ),
+                ],
+              ),
+            ] else
+              Wrap(spacing: 8, runSpacing: 8, children: actions),
           ],
         ),
       );
@@ -1627,24 +2004,32 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
         ),
         child: Row(
           children: [
-            Icon(icon,
-                size: 18,
-                color: isActive ? Colors.grey.shade900 : Colors.grey.shade500),
+            Icon(
+              icon,
+              size: 18,
+              color: isActive ? Colors.grey.shade900 : Colors.grey.shade500,
+            ),
             const SizedBox(width: 8),
-            Text(label,
-                style: TextStyle(
-                    fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
-                    color:
-                        isActive ? Colors.grey.shade900 : Colors.grey.shade600)),
+            Text(
+              label,
+              style: TextStyle(
+                fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
+                color: isActive ? Colors.grey.shade900 : Colors.grey.shade600,
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildBatchButton(String label, IconData icon, Color color,
-      VoidCallback onTap,
-      {bool enabled = true}) {
+  Widget _buildBatchButton(
+    String label,
+    IconData icon,
+    Color color,
+    VoidCallback onTap, {
+    bool enabled = true,
+  }) {
     return InkWell(
       onTap: enabled ? onTap : null,
       borderRadius: BorderRadius.circular(8),
@@ -1654,7 +2039,9 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
           color: enabled ? color.withValues(alpha: 0.1) : Colors.grey.shade100,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: enabled ? color.withValues(alpha: 0.3) : Colors.grey.shade200,
+            color: enabled
+                ? color.withValues(alpha: 0.3)
+                : Colors.grey.shade200,
           ),
         ),
         child: Row(
@@ -1662,11 +2049,59 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
           children: [
             Icon(icon, size: 14, color: enabled ? color : Colors.grey.shade400),
             const SizedBox(width: 6),
-            Text(label,
-                style: TextStyle(
-                    fontSize: 12,
-                    color: enabled ? color : Colors.grey.shade400,
-                    fontWeight: FontWeight.w600)),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: enabled ? color : Colors.grey.shade400,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileActionButton({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required bool enabled,
+    required VoidCallback onTap,
+  }) {
+    final bg = enabled ? color.withValues(alpha: 0.12) : Colors.grey.shade100;
+    final fg = enabled ? color : Colors.grey.shade400;
+    return InkWell(
+      onTap: enabled ? onTap : null,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        height: 36,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: enabled
+                ? color.withValues(alpha: 0.25)
+                : Colors.grey.shade200,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 14, color: fg),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: fg,
+              ),
+            ),
           ],
         ),
       ),
@@ -1674,72 +2109,91 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   }
 
   Widget _buildSearchBox({double width = 220}) {
+    final hasText = _fileSearchController.text.trim().isNotEmpty;
+    final borderColor =
+        (_isSearching || hasText) ? AppColors.iosBlue : Colors.grey.shade200;
+
     return SizedBox(
       width: width,
       height: 32,
-      child: Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-            color: _isSearching ? AppColors.iosBlue : Colors.grey.shade200),
-      ),
-      child: Center(
-        child: TextField(
-          onChanged: (v) {
-            if (v.isEmpty) _clearSearch();
-          },
-          onSubmitted: (v) {
-            if (v.isNotEmpty) _performSearch(v);
-          },
-          decoration: InputDecoration(
-            hintText: '搜索文件（回车搜索）...',
-            hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
-            prefixIcon: Padding(
-              padding: const EdgeInsets.only(left: 8, right: 4),
-              child: Icon(LucideIcons.search,
-                  size: 14,
-                  color: _isSearching
-                      ? AppColors.iosBlue
-                      : Colors.grey.shade400),
+      child: TextField(
+        controller: _fileSearchController,
+        textInputAction: TextInputAction.search,
+        onChanged: (v) {
+          setState(() {});
+          _scheduleSearch(v);
+        },
+        onSubmitted: (v) {
+          _searchDebounce?.cancel();
+          final q = v.trim();
+          if (q.isEmpty) {
+            _clearSearch();
+          } else {
+            _performSearch(q);
+          }
+        },
+        decoration: InputDecoration(
+          filled: true,
+          fillColor: Colors.white,
+          hintText: '搜索文件...',
+          hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+          prefixIcon: Padding(
+            padding: const EdgeInsets.only(left: 8, right: 4),
+            child: Icon(
+              LucideIcons.search,
+              size: 14,
+              color: _isSearching ? AppColors.iosBlue : Colors.grey.shade400,
             ),
-            prefixIconConstraints:
-                const BoxConstraints(minWidth: 28, minHeight: 28),
-            suffixIcon: _isSearching
-                ? IconButton(
-                    onPressed: _clearSearch,
-                    icon: Icon(LucideIcons.x,
-                        size: 14, color: Colors.grey.shade400),
-                    padding: EdgeInsets.zero,
-                    constraints:
-                        const BoxConstraints(minWidth: 28, minHeight: 28),
-                  )
-                : null,
-            border: InputBorder.none,
-            contentPadding: EdgeInsets.zero,
-            isDense: true,
           ),
-          style: const TextStyle(fontSize: 12),
-          textAlignVertical: TextAlignVertical.center,
+          prefixIconConstraints:
+              const BoxConstraints(minWidth: 28, minHeight: 28),
+          suffixIcon: hasText
+              ? IconButton(
+                  tooltip: '清除',
+                  onPressed: _clearSearchAndText,
+                  icon: Icon(
+                    LucideIcons.x,
+                    size: 14,
+                    color: Colors.grey.shade500,
+                  ),
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 32, minHeight: 32),
+                )
+              : null,
+          contentPadding: EdgeInsets.zero,
+          isDense: true,
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide(color: borderColor),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: AppColors.iosBlue),
+          ),
         ),
-      ),
+        style: const TextStyle(fontSize: 12),
+        textAlignVertical: TextAlignVertical.center,
       ),
     );
   }
 
   Widget _buildLayoutToggle() {
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _buildLayoutButton(LayoutMode.grid, LucideIcons.layoutGrid),
-          _buildLayoutButton(LayoutMode.list, LucideIcons.list),
-        ],
+    return SizedBox(
+      height: 32,
+      child: Container(
+        padding: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildLayoutButton(LayoutMode.grid, LucideIcons.layoutGrid),
+            _buildLayoutButton(LayoutMode.list, LucideIcons.list),
+          ],
+        ),
       ),
     );
   }
@@ -1755,25 +2209,33 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
           borderRadius: BorderRadius.circular(4),
           boxShadow: isActive ? AppShadows.sm : null,
         ),
-        child: Icon(icon,
-            size: 16,
-            color: isActive ? AppColors.iosBlue : Colors.grey.shade600),
+        child: Icon(
+          icon,
+          size: 16,
+          color: isActive ? AppColors.iosBlue : Colors.grey.shade600,
+        ),
       ),
     );
   }
 
   Widget _buildUploadButton() {
     if (!_canEdit) return const SizedBox.shrink();
-    return ElevatedButton.icon(
-      onPressed: _showUploadModal,
-      icon: const Icon(LucideIcons.upload, size: 14),
-      label: const Text('上传'),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: AppColors.iosBlue,
-        foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+    return SizedBox(
+      height: 32,
+      child: ElevatedButton.icon(
+        onPressed: _showUploadModal,
+        icon: const Icon(LucideIcons.upload, size: 14),
+        label: const Text('上传'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.iosBlue,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          visualDensity: VisualDensity.compact,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+        ),
       ),
     );
   }
@@ -1811,8 +2273,11 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
                     if (i < _folderHistory.length - 1)
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 4),
-                        child: Icon(LucideIcons.chevronRight,
-                            size: 14, color: Colors.grey.shade400),
+                        child: Icon(
+                          LucideIcons.chevronRight,
+                          size: 14,
+                          color: Colors.grey.shade400,
+                        ),
                       ),
                   ],
                 ],
@@ -1833,8 +2298,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(LucideIcons.alertCircle,
-                size: 48, color: Colors.red.shade300),
+            Icon(LucideIcons.alertCircle, size: 48, color: Colors.red.shade300),
             const SizedBox(height: 16),
             Text(_error!, style: TextStyle(color: Colors.grey.shade600)),
             const SizedBox(height: 16),
@@ -1868,7 +2332,9 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       child: Stack(
         children: [
           Padding(
-            padding: const EdgeInsets.all(24),
+            padding: _isMobile
+                ? const EdgeInsets.fromLTRB(12, 8, 12, 12)
+                : const EdgeInsets.all(24),
             child: _layoutMode == LayoutMode.grid
                 ? _buildFileGrid(files)
                 : _buildFileList(files),
@@ -2131,7 +2597,10 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
           children: [
             Icon(LucideIcons.zap, size: 64, color: Colors.grey.shade300),
             const SizedBox(height: 16),
-            Text('暂无启动项', style: TextStyle(fontSize: 16, color: Colors.grey.shade500)),
+            Text(
+              '暂无启动项',
+              style: TextStyle(fontSize: 16, color: Colors.grey.shade500),
+            ),
             const SizedBox(height: 8),
             if (_canEdit)
               ElevatedButton.icon(
@@ -2169,7 +2638,9 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       isSelected: isSelected,
       canEdit: _canEdit,
       updatedAtText: _formatDate(item.updatedAt),
-      onToggleEnabled: _canEdit ? (val) => _toggleStartupItemEnabled(item, val) : null,
+      onToggleEnabled: _canEdit
+          ? (val) => _toggleStartupItemEnabled(item, val)
+          : null,
       onTap: () {
         final isCtrlPressed = HardwareKeyboard.instance.isControlPressed;
         setState(() {
@@ -2254,10 +2725,12 @@ class _ResourceStartupCard extends StatelessWidget {
           onDoubleTap: onDoubleTap,
           onSecondaryTapDown: onSecondaryTapDown,
           onLongPressStart: (details) {
-            onSecondaryTapDown(TapDownDetails(
-              globalPosition: details.globalPosition,
-              localPosition: details.localPosition,
-            ));
+            onSecondaryTapDown(
+              TapDownDetails(
+                globalPosition: details.globalPosition,
+                localPosition: details.localPosition,
+              ),
+            );
           },
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 150),
@@ -2284,22 +2757,27 @@ class _ResourceStartupCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                            fontSize: 14, fontWeight: FontWeight.w700),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                     if (onToggleEnabled != null)
                       Switch(
                         value: item.enabled,
                         onChanged: onToggleEnabled,
-                        activeColor: const Color(0xFF22C55E),
+                        activeThumbColor: const Color(0xFF22C55E),
                       )
                     else
-                      Text(item.enabled ? '启用' : '禁用',
-                          style: TextStyle(
-                              fontSize: 12,
-                              color: item.enabled
-                                  ? const Color(0xFF22C55E)
-                                  : Colors.grey.shade500)),
+                      Text(
+                        item.enabled ? '启用' : '禁用',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: item.enabled
+                              ? const Color(0xFF22C55E)
+                              : Colors.grey.shade500,
+                        ),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -2312,18 +2790,25 @@ class _ResourceStartupCard extends StatelessWidget {
                 const Spacer(),
                 Row(
                   children: [
-                    Text(updatedAtText,
-                        style:
-                            TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                    Text(
+                      updatedAtText,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
                     const Spacer(),
                     if (canEdit) ...[
                       _iconButton(LucideIcons.settings, onEdit),
                       const SizedBox(width: 8),
-                      _iconButton(LucideIcons.trash2, onDelete,
-                          color: Colors.red),
+                      _iconButton(
+                        LucideIcons.trash2,
+                        onDelete,
+                        color: Colors.red,
+                      ),
                     ],
                   ],
-                )
+                ),
               ],
             ),
           ),

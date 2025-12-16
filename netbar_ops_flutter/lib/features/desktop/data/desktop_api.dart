@@ -4,8 +4,11 @@ import 'desktop_model.dart';
 class DesktopApi {
   final ApiClient _client = ApiClient.instance;
 
-  Future<List<DesktopLayout>> getLayouts() async {
-    final res = await _client.get('/desktop-layouts');
+  Future<List<DesktopLayout>> getLayouts({int? netbarId}) async {
+    final res = await _client.get(
+      '/desktop-layouts',
+      queryParameters: netbarId != null ? {'netbar_id': netbarId} : null,
+    );
     final list = res.data as List? ?? [];
     return list.map((e) => DesktopLayout.fromJson(e as Map<String, dynamic>)).toList();
   }

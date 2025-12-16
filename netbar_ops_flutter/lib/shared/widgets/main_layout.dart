@@ -30,9 +30,9 @@ class MainLayout extends ConsumerStatefulWidget {
 }
 
 class _MainLayoutState extends ConsumerState<MainLayout> {
-  bool _isSystemMenuOpen = false;
-  bool _isOpsMenuOpen = false;
-  bool _isProfileOpen = false;
+  final bool _isSystemMenuOpen = false;
+  final bool _isOpsMenuOpen = false;
+  final bool _isProfileOpen = false;
   bool _tabsInitialized = false;
 
   @override
@@ -65,18 +65,23 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     // 同步活动标签到 currentNetbarProvider
     _syncActiveTab(tabsState);
 
+    final content = Column(
+      children: [
+        // 顶栏
+        _buildHeader(authState, isNarrow, stats),
+        // 主内容
+        Expanded(child: widget.child),
+      ],
+    );
+
     return Scaffold(
       backgroundColor: AppColors.iosBg,
       body: Stack(
         children: [
-          Column(
-            children: [
-              // 顶栏
-              _buildHeader(authState, isNarrow, stats),
-              // 主内容
-              Expanded(child: widget.child),
-            ],
-          ),
+          if (platformHelper.isMobile)
+            SafeArea(top: true, bottom: false, child: content)
+          else
+            content,
           if (platformHelper.isDesktop) const TerminalDockBar(),
         ],
       ),
@@ -90,11 +95,9 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
       if (currentNetbar.id != activeTab.id) {
         // 延迟同步避免在 build 中更新状态
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          ref.read(currentNetbarProvider.notifier).setNetbar(
-            activeTab.id,
-            activeTab.name,
-            activeTab.status,
-          );
+          ref
+              .read(currentNetbarProvider.notifier)
+              .setNetbar(activeTab.id, activeTab.name, activeTab.status);
         });
       }
     }
@@ -108,7 +111,9 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     if (tabsState.tabs.isNotEmpty) {
       // 如果有历史标签但没有激活项，默认选中最后一个
       if (tabsState.activeTabId == null && tabsState.tabs.isNotEmpty) {
-        await ref.read(netbarTabsProvider.notifier).switchToTab(tabsState.tabs.last.id);
+        await ref
+            .read(netbarTabsProvider.notifier)
+            .switchToTab(tabsState.tabs.last.id);
       }
       return;
     }
@@ -120,16 +125,12 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
 
       final target = netbars.first;
 
-      await ref.read(netbarTabsProvider.notifier).openTab(
-            target.id,
-            target.name,
-            target.status,
-          );
-      await ref.read(currentNetbarProvider.notifier).setNetbar(
-            target.id,
-            target.name,
-            target.status,
-          );
+      await ref
+          .read(netbarTabsProvider.notifier)
+          .openTab(target.id, target.name, target.status);
+      await ref
+          .read(currentNetbarProvider.notifier)
+          .setNetbar(target.id, target.name, target.status);
     } catch (_) {
       // 网络或数据错误时保持现状，避免阻塞 UI
     }
@@ -137,25 +138,36 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
 
   Widget _buildNetbarPicker(bool isNarrow) {
     final currentNetbar = ref.watch(currentNetbarProvider);
-    final name = (currentNetbar.name?.isNotEmpty == true) ? currentNetbar.name! : '选择网吧';
+    final name = (currentNetbar.name?.isNotEmpty == true)
+        ? currentNetbar.name!
+        : '选择网吧';
     final status = currentNetbar.status;
     final statusColor = status == 'online'
         ? AppColors.iosBlue
         : status == 'offline'
-            ? Colors.red
-            : Colors.orange;
+        ? Colors.red
+        : Colors.orange;
 
     return Align(
       alignment: Alignment.centerLeft,
       child: GestureDetector(
         onTap: _showNetbarSelector,
         child: Container(
-          padding: EdgeInsets.symmetric(horizontal: isNarrow ? 10 : 14, vertical: 8),
+          padding: EdgeInsets.symmetric(
+            horizontal: isNarrow ? 10 : 14,
+            vertical: 8,
+          ),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: Colors.grey.shade200),
-            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 6, offset: const Offset(0, 2))],
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.03),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -163,18 +175,28 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
               Container(
                 width: 8,
                 height: 8,
-                decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                  color: statusColor,
+                  shape: BoxShape.circle,
+                ),
               ),
               const SizedBox(width: 8),
               Flexible(
                 child: Text(
                   name,
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
               const SizedBox(width: 6),
-              Icon(LucideIcons.chevronDown, size: 16, color: Colors.grey.shade500),
+              Icon(
+                LucideIcons.chevronDown,
+                size: 16,
+                color: Colors.grey.shade500,
+              ),
             ],
           ),
         ),
@@ -185,7 +207,8 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
   void _showNetbarSelector() {
     final tabsNotifier = ref.read(netbarTabsProvider.notifier);
     final current = ref.read(currentNetbarProvider);
-    final isMobile = platformHelper.isMobile || MediaQuery.of(context).size.width < 768;
+    final isMobile =
+        platformHelper.isMobile || MediaQuery.of(context).size.width < 768;
     showDialog(
       context: context,
       builder: (context) => Dialog(
@@ -195,7 +218,9 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
           selectedId: current.id,
           onSelect: (id, name, status) {
             tabsNotifier.openTab(id, name, status);
-            ref.read(currentNetbarProvider.notifier).setNetbar(id, name, status);
+            ref
+                .read(currentNetbarProvider.notifier)
+                .setNetbar(id, name, status);
           },
           isMobile: isMobile,
         ),
@@ -209,7 +234,9 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         height: 56,
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.8),
-          border: Border(bottom: BorderSide(color: Colors.grey.withOpacity(0.2))),
+          border: Border(
+            bottom: BorderSide(color: Colors.grey.withOpacity(0.2)),
+          ),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: Row(
@@ -243,7 +270,9 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
             child: Row(
               children: [
                 Expanded(
-                  child: isNarrow ? _buildNetbarPicker(isNarrow) : const NetbarTabBar(),
+                  child: isNarrow
+                      ? _buildNetbarPicker(isNarrow)
+                      : const NetbarTabBar(),
                 ),
                 if (!isNarrow) ...[
                   const SizedBox(width: 24),
@@ -266,13 +295,17 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         // 系统菜单按钮
         PopupMenuButton<String>(
           offset: const Offset(0, 48),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
           onSelected: (path) => context.go(path),
           child: Container(
             padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(8),
-              color: _isSystemMenuOpen ? Colors.black.withValues(alpha: 0.05) : Colors.transparent,
+              color: _isSystemMenuOpen
+                  ? Colors.black.withValues(alpha: 0.05)
+                  : Colors.transparent,
             ),
             child: SizedBox(
               width: 48,
@@ -284,21 +317,60 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                   decoration: BoxDecoration(
                     color: AppColors.iosBlue,
                     borderRadius: BorderRadius.circular(8),
-                    boxShadow: [BoxShadow(color: AppColors.iosBlue.withValues(alpha: 0.3), blurRadius: 8)],
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.iosBlue.withValues(alpha: 0.3),
+                        blurRadius: 8,
+                      ),
+                    ],
                   ),
-                  child: const Icon(LucideIcons.menu, size: 18, color: Colors.white),
+                  child: const Icon(
+                    LucideIcons.menu,
+                    size: 18,
+                    color: Colors.white,
+                  ),
                 ),
               ),
             ),
           ),
           itemBuilder: (context) => [
-            _buildMenuItem('概览', '/dashboard', LucideIcons.layoutDashboard, Colors.blue),
-            _buildMenuItem('网吧管理', '/monitor', LucideIcons.network, Colors.indigo),
-            _buildMenuItem('资源管理', '/resource-management', LucideIcons.database, Colors.orange),
+            _buildMenuItem(
+              '概览',
+              '/dashboard',
+              LucideIcons.layoutDashboard,
+              Colors.blue,
+            ),
+            _buildMenuItem(
+              '网吧管理',
+              '/monitor',
+              LucideIcons.network,
+              Colors.indigo,
+            ),
+            _buildMenuItem(
+              '资源管理',
+              '/resource-management',
+              LucideIcons.database,
+              Colors.orange,
+            ),
             if ((authState.user?.role ?? 'user') == 'admin')
-              _buildMenuItem('用户账户', '/user-management', LucideIcons.users, Colors.purple),
-            _buildMenuItem('监控中心', '/channel-monitor', LucideIcons.monitor, Colors.green),
-            _buildMenuItem('系统日志', '/system-logs', LucideIcons.fileText, Colors.grey),
+              _buildMenuItem(
+                '用户账户',
+                '/user-management',
+                LucideIcons.users,
+                Colors.purple,
+              ),
+            _buildMenuItem(
+              '监控中心',
+              '/channel-monitor',
+              LucideIcons.monitor,
+              Colors.green,
+            ),
+            _buildMenuItem(
+              '系统日志',
+              '/system-logs',
+              LucideIcons.fileText,
+              Colors.grey,
+            ),
             _buildMenuItem('安全中心', '#', LucideIcons.shield, Colors.red),
           ],
         ),
@@ -306,14 +378,22 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     );
   }
 
-  PopupMenuItem<String> _buildMenuItem(String label, String path, IconData icon, Color color) {
+  PopupMenuItem<String> _buildMenuItem(
+    String label,
+    String path,
+    IconData icon,
+    Color color,
+  ) {
     return PopupMenuItem(
       value: path,
       child: Row(
         children: [
           Icon(icon, size: 16, color: color),
           const SizedBox(width: 12),
-          Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+          ),
         ],
       ),
     );
@@ -328,11 +408,18 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         decoration: BoxDecoration(
           color: Colors.grey.shade100.withValues(alpha: 0.5),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey.shade200.withValues(alpha: 0.5)),
+          border: Border.all(
+            color: Colors.grey.shade200.withValues(alpha: 0.5),
+          ),
         ),
         child: Row(
           children: [
-            _buildPill('客户机', data.onlineDesktops.toString(), AppColors.iosBlue, true),
+            _buildPill(
+              '客户机',
+              data.onlineDesktops.toString(),
+              AppColors.iosBlue,
+              true,
+            ),
             _buildPill('运行', '${data.serverUptime}天', null, false),
             _buildPill('VIP', '${data.vipDays}天', null, false),
           ],
@@ -352,16 +439,31 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
       child: Row(
         children: [
           if (dotColor != null) ...[
-            Container(width: 6, height: 6, decoration: BoxDecoration(shape: BoxShape.circle, color: dotColor)),
+            Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: dotColor,
+              ),
+            ),
             const SizedBox(width: 8),
           ],
           Text(
             '$label: ',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.grey.shade600),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey.shade600,
+            ),
           ),
           Text(
             value,
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: active ? Colors.grey.shade900 : Colors.grey.shade500),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: active ? Colors.grey.shade900 : Colors.grey.shade500,
+            ),
           ),
         ],
       ),
@@ -374,28 +476,56 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         // 运维管理下拉
         PopupMenuButton<String>(
           offset: const Offset(0, 48),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
           onSelected: (path) => context.go(path),
           child: Container(
             constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
-            padding: EdgeInsets.symmetric(horizontal: isNarrow ? 8 : 12, vertical: 6),
+            padding: EdgeInsets.symmetric(
+              horizontal: isNarrow ? 8 : 12,
+              vertical: 6,
+            ),
             decoration: BoxDecoration(borderRadius: BorderRadius.circular(8)),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                const Icon(LucideIcons.wrench, size: 16, color: AppColors.iosBlue),
+                const Icon(
+                  LucideIcons.wrench,
+                  size: 16,
+                  color: AppColors.iosBlue,
+                ),
                 if (!isNarrow) ...[
                   const SizedBox(width: 6),
-                  const Text('运维管理', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-                  const SizedBox(width: 4), // Added small spacing before chevron
-                  Icon(LucideIcons.chevronDown, size: 14, color: Colors.grey.shade400),
+                  const Text(
+                    '运维管理',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                  ),
+                  const SizedBox(
+                    width: 4,
+                  ), // Added small spacing before chevron
+                  Icon(
+                    LucideIcons.chevronDown,
+                    size: 14,
+                    color: Colors.grey.shade400,
+                  ),
                 ],
               ],
             ),
           ),
           itemBuilder: (context) => [
-            _buildMenuItem('通道管理', '/channel-management', LucideIcons.activity, AppColors.iosBlue),
-            _buildMenuItem('桌面管理', '/desktop-management', LucideIcons.layoutGrid, Colors.orange),
+            _buildMenuItem(
+              '通道管理',
+              '/channel-management',
+              LucideIcons.activity,
+              AppColors.iosBlue,
+            ),
+            _buildMenuItem(
+              '桌面管理',
+              '/desktop-management',
+              LucideIcons.layoutGrid,
+              Colors.orange,
+            ),
           ],
         ),
         const SizedBox(width: 8),
@@ -434,11 +564,18 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                   const SizedBox(width: 8),
                   Text(
                     authState.user?.name ?? '加载中...',
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(width: 4),
-                  Icon(LucideIcons.chevronRight, size: 14, color: Colors.grey.shade400), // Change chevronDown to chevronRight
+                  Icon(
+                    LucideIcons.chevronRight,
+                    size: 14,
+                    color: Colors.grey.shade400,
+                  ), // Change chevronDown to chevronRight
                 ],
               ],
             ),
@@ -448,12 +585,23 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     );
   }
 
-  Widget _buildMenuRow(IconData icon, String label, {Color color = Colors.black}) {
+  Widget _buildMenuRow(
+    IconData icon,
+    String label, {
+    Color color = Colors.black,
+  }) {
     return Row(
       children: [
         Icon(icon, size: 16, color: color),
         const SizedBox(width: 12),
-        Text(label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: color)),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: color,
+          ),
+        ),
       ],
     );
   }

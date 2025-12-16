@@ -93,6 +93,8 @@ class BackgroundConfig {
 
 class DesktopLayout {
   int? id;
+  int? netbarId;
+  int? baseLayoutId;
   String name;
   String resolution;
   BackgroundConfig background;
@@ -101,12 +103,17 @@ class DesktopLayout {
 
   DesktopLayout({
     this.id,
+    this.netbarId,
+    this.baseLayoutId,
     required this.name,
     required this.resolution,
     required this.background,
     required this.icons,
     this.lockIcons = false,
   });
+
+  bool get isGlobal => netbarId == null;
+  bool get isOverride => netbarId != null && baseLayoutId != null;
 
   factory DesktopLayout.fromJson(Map<String, dynamic> json) {
     final iconsJson = json['icons'];
@@ -123,6 +130,12 @@ class DesktopLayout {
     }
     return DesktopLayout(
       id: json['id'] is int ? json['id'] as int : int.tryParse('${json['id'] ?? ''}'),
+      netbarId: json['netbar_id'] is int
+          ? json['netbar_id'] as int
+          : int.tryParse('${json['netbar_id'] ?? ''}'),
+      baseLayoutId: json['base_layout_id'] is int
+          ? json['base_layout_id'] as int
+          : int.tryParse('${json['base_layout_id'] ?? ''}'),
       name: json['name']?.toString() ?? '',
       resolution: json['resolution']?.toString() ?? '1920*1080',
       background: BackgroundConfig.fromLayout(json),
@@ -134,6 +147,8 @@ class DesktopLayout {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      if (netbarId != null) 'netbar_id': netbarId,
+      if (baseLayoutId != null) 'base_layout_id': baseLayoutId,
       'name': name,
       'resolution': resolution,
       'background_url': background.url,

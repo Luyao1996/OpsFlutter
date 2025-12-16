@@ -16,6 +16,7 @@ class LogFilter extends StatefulWidget {
   final DateTimeRange? timeRange;
   final ValueChanged<DateTimeRange?> onTimeRangeChanged;
   final VoidCallback onRefresh;
+  final VoidCallback onExport;
 
   const LogFilter({
     super.key,
@@ -28,6 +29,7 @@ class LogFilter extends StatefulWidget {
     required this.timeRange,
     required this.onTimeRangeChanged,
     required this.onRefresh,
+    required this.onExport,
   });
 
   @override
@@ -36,7 +38,6 @@ class LogFilter extends StatefulWidget {
 
 class _LogFilterState extends State<LogFilter> {
   late final TextEditingController _searchController;
-  final FocusNode _searchFocusNode = FocusNode();
   Timer? _submitDebounce;
 
   @override
@@ -56,7 +57,6 @@ class _LogFilterState extends State<LogFilter> {
   @override
   void dispose() {
     _submitDebounce?.cancel();
-    _searchFocusNode.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -96,14 +96,18 @@ class _LogFilterState extends State<LogFilter> {
             Icon(LucideIcons.calendar, size: 14, color: Colors.grey.shade600),
             const SizedBox(width: 8),
             Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.grey.shade700,
-                  fontWeight: FontWeight.w500,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.visible,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey.shade700,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
             ),
@@ -198,41 +202,45 @@ class _LogFilterState extends State<LogFilter> {
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: Colors.grey.shade200),
             ),
-            child: TextField(
-              focusNode: _searchFocusNode,
-              controller: _searchController,
-              onTap: () => _searchFocusNode.requestFocus(),
-              onChanged: (_) {},
-              onSubmitted: _submitSearch,
-              textAlignVertical: TextAlignVertical.center,
-              textInputAction: TextInputAction.search,
-              style: const TextStyle(fontSize: 13),
-              decoration: InputDecoration(
-                hintText: '搜索日志内容/ID...',
-                hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
-                isDense: true,
-                suffixIcon: IconButton(
-                  onPressed: _submitSearch,
-                  icon: Icon(
-                    LucideIcons.search,
-                    size: 14,
-                    color: Colors.grey.shade400,
+            child: Material(
+              type: MaterialType.transparency,
+              child: TextField(
+                controller: _searchController,
+                onChanged: (_) {},
+                onSubmitted: _submitSearch,
+                textAlignVertical: TextAlignVertical.center,
+                textInputAction: TextInputAction.search,
+                style: const TextStyle(fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: '搜索日志内容/ID...',
+                  hintStyle:
+                      TextStyle(fontSize: 13, color: Colors.grey.shade400),
+                  isDense: true,
+                  suffixIcon: IconButton(
+                    onPressed: _submitSearch,
+                    icon: Icon(
+                      LucideIcons.search,
+                      size: 14,
+                      color: Colors.grey.shade400,
+                    ),
+                    tooltip: '搜索',
+                    constraints:
+                        const BoxConstraints.tightFor(width: 36, height: 36),
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
                   ),
-                  tooltip: '搜索',
-                  constraints: const BoxConstraints.tightFor(width: 36, height: 36),
-                  padding: EdgeInsets.zero,
-                  visualDensity: VisualDensity.compact,
+                  suffixIconConstraints:
+                      const BoxConstraints(minWidth: 36, minHeight: 36),
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  disabledBorder: InputBorder.none,
+                  errorBorder: InputBorder.none,
+                  focusedErrorBorder: InputBorder.none,
+                  filled: false,
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 ),
-                suffixIconConstraints:
-                    const BoxConstraints(minWidth: 36, minHeight: 36),
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                disabledBorder: InputBorder.none,
-                errorBorder: InputBorder.none,
-                focusedErrorBorder: InputBorder.none,
-                filled: false,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               ),
             ),
           ),
@@ -275,7 +283,8 @@ class _LogFilterState extends State<LogFilter> {
           padding: EdgeInsets.zero,
           visualDensity: VisualDensity.compact,
         );
-        final exportButton = _buildButton(exportLabel, LucideIcons.download, () {}, isPrimary: false);
+        final exportButton =
+            _buildButton(exportLabel, LucideIcons.download, widget.onExport, isPrimary: false);
 
         if (isPhone) {
           return Column(

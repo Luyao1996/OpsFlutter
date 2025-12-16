@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/utils/top_notice.dart';
 import '../../data/netbar_api.dart';
 import '../edit_netbar_modal.dart';
 import 'remote_wake_modal.dart';
@@ -46,7 +46,8 @@ class NetbarListView extends StatelessWidget {
           child: ListView.separated(
             padding: const EdgeInsets.symmetric(vertical: 8),
             itemCount: netbars.length,
-            separatorBuilder: (context, index) => const Divider(height: 1, indent: 24, endIndent: 24),
+            separatorBuilder: (context, index) =>
+                const Divider(height: 1, indent: 24, endIndent: 24),
             itemBuilder: (context, index) {
               final netbar = netbars[index];
               return _NetbarListRow(netbar: netbar, onRefresh: onRefresh);
@@ -57,7 +58,11 @@ class NetbarListView extends StatelessWidget {
     );
   }
 
-  Widget _buildHeaderCell(String text, {int flex = 1, Alignment alignment = Alignment.centerLeft}) {
+  Widget _buildHeaderCell(
+    String text, {
+    int flex = 1,
+    Alignment alignment = Alignment.centerLeft,
+  }) {
     return Expanded(
       flex: flex,
       child: Align(
@@ -133,7 +138,11 @@ class _NetbarListRow extends StatelessWidget {
               flex: 1,
               child: Row(
                 children: [
-                  Icon(LucideIcons.monitor, size: 14, color: Colors.grey.shade400),
+                  Icon(
+                    LucideIcons.monitor,
+                    size: 14,
+                    color: Colors.grey.shade400,
+                  ),
                   const SizedBox(width: 4),
                   Text(
                     netbar.terminalCount.toString(),
@@ -148,26 +157,36 @@ class _NetbarListRow extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: netbar.status == 'online' ? Colors.green.shade50 : Colors.grey.shade100,
+                  color: netbar.status == 'online'
+                      ? Colors.green.shade50
+                      : Colors.grey.shade100,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: netbar.status == 'online' ? Colors.green.shade200 : Colors.grey.shade300,
+                    color: netbar.status == 'online'
+                        ? Colors.green.shade200
+                        : Colors.grey.shade300,
                   ),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      netbar.status == 'online' ? LucideIcons.checkCircle2 : LucideIcons.xCircle,
+                      netbar.status == 'online'
+                          ? LucideIcons.checkCircle2
+                          : LucideIcons.xCircle,
                       size: 12,
-                      color: netbar.status == 'online' ? Colors.green.shade700 : Colors.grey.shade600,
+                      color: netbar.status == 'online'
+                          ? Colors.green.shade700
+                          : Colors.grey.shade600,
                     ),
                     const SizedBox(width: 4),
                     Text(
                       netbar.status == 'online' ? '在线' : '离线',
                       style: TextStyle(
                         fontSize: 12,
-                        color: netbar.status == 'online' ? Colors.green.shade700 : Colors.grey.shade600,
+                        color: netbar.status == 'online'
+                            ? Colors.green.shade700
+                            : Colors.grey.shade600,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -182,7 +201,10 @@ class _NetbarListRow extends StatelessWidget {
                   ? Row(
                       children: [
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.purple.shade50,
                             borderRadius: BorderRadius.circular(4),
@@ -190,7 +212,11 @@ class _NetbarListRow extends StatelessWidget {
                           ),
                           child: Row(
                             children: [
-                              Icon(LucideIcons.cast, size: 12, color: Colors.purple.shade700),
+                              Icon(
+                                LucideIcons.cast,
+                                size: 12,
+                                color: Colors.purple.shade700,
+                              ),
                               const SizedBox(width: 4),
                               Text(
                                 '正在远程',
@@ -207,11 +233,21 @@ class _NetbarListRow extends StatelessWidget {
                     )
                   : Row(
                       children: [
-                        Icon(LucideIcons.history, size: 14, color: Colors.grey.shade400),
+                        Icon(
+                          LucideIcons.history,
+                          size: 14,
+                          color: Colors.grey.shade400,
+                        ),
                         const SizedBox(width: 4),
                         Text(
-                          netbar.remoteStatus?.lastSession?.time.split(' ')[0] ?? '-',
-                          style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                          netbar.remoteStatus?.lastSession?.time.split(
+                                ' ',
+                              )[0] ??
+                              '-',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade500,
+                          ),
                         ),
                       ],
                     ),
@@ -237,12 +273,19 @@ class _NetbarListRow extends StatelessWidget {
               flex: 1,
               child: Row(
                 children: [
-                  Icon(LucideIcons.users, size: 14, color: Colors.grey.shade400),
+                  Icon(
+                    LucideIcons.users,
+                    size: 14,
+                    color: Colors.grey.shade400,
+                  ),
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
                       netbar.admin,
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade600,
+                      ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -254,7 +297,11 @@ class _NetbarListRow extends StatelessWidget {
               flex: 2,
               child: Row(
                 children: [
-                  Icon(LucideIcons.clock, size: 14, color: Colors.grey.shade400),
+                  Icon(
+                    LucideIcons.clock,
+                    size: 14,
+                    color: Colors.grey.shade400,
+                  ),
                   const SizedBox(width: 4),
                   Text(
                     netbar.createTime,
@@ -269,8 +316,11 @@ class _NetbarListRow extends StatelessWidget {
               child: InkWell(
                 onTap: () {
                   Clipboard.setData(ClipboardData(text: netbar.code));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Token已复制'), duration: Duration(seconds: 1)),
+                  showTopNotice(
+                    context,
+                    'Token已复制',
+                    level: NoticeLevel.success,
+                    duration: const Duration(seconds: 1),
                   );
                 },
                 borderRadius: BorderRadius.circular(8),
@@ -287,11 +337,19 @@ class _NetbarListRow extends StatelessWidget {
                       Expanded(
                         child: Text(
                           netbar.code,
-                          style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: Colors.grey.shade500),
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontFamily: 'monospace',
+                            color: Colors.grey.shade500,
+                          ),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      Icon(LucideIcons.copy, size: 12, color: Colors.grey.shade400),
+                      Icon(
+                        LucideIcons.copy,
+                        size: 12,
+                        color: Colors.grey.shade400,
+                      ),
                     ],
                   ),
                 ),
@@ -308,7 +366,8 @@ class _NetbarListRow extends StatelessWidget {
                     onTap: () {
                       showDialog(
                         context: context,
-                        builder: (context) => RemoteWakeModal(netbarName: netbar.name),
+                        builder: (context) =>
+                            RemoteWakeModal(netbarName: netbar.name),
                       );
                     },
                     tooltip: '控制台',
@@ -317,7 +376,7 @@ class _NetbarListRow extends StatelessWidget {
                   _ActionButton(
                     icon: LucideIcons.moreHorizontal,
                     onTap: () {
-                       showDialog(
+                      showDialog(
                         context: context,
                         builder: (context) => EditNetbarModal(netbar: netbar),
                       ).then((changed) {
@@ -341,7 +400,11 @@ class _ActionButton extends StatelessWidget {
   final VoidCallback onTap;
   final String tooltip;
 
-  const _ActionButton({required this.icon, required this.onTap, required this.tooltip});
+  const _ActionButton({
+    required this.icon,
+    required this.onTap,
+    required this.tooltip,
+  });
 
   @override
   Widget build(BuildContext context) {

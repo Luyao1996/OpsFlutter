@@ -64,14 +64,22 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return Center(child: Text('加载失败: $_error', style: const TextStyle(color: Colors.red)));
+    if (_error != null)
+      return Center(
+        child: Text('加载失败: $_error', style: const TextStyle(color: Colors.red)),
+      );
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final isNarrow = constraints.maxWidth < 900;
         if (isNarrow) {
           if (_filteredLogs.isEmpty) {
-            return Center(child: Text('暂无日志', style: TextStyle(color: Colors.grey.shade500)));
+            return Center(
+              child: Text(
+                '暂无日志',
+                style: TextStyle(color: Colors.grey.shade500),
+              ),
+            );
           }
 
           return Column(
@@ -80,18 +88,26 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+                  border: Border(
+                    bottom: BorderSide(color: Colors.grey.shade200),
+                  ),
                 ),
                 child: Row(
                   children: [
                     Expanded(
                       child: DropdownButtonFormField<String>(
-                        value: _selectedCategory,
+                        initialValue: _selectedCategory,
                         items: _categories
-                            .map((c) => DropdownMenuItem<String>(
-                                  value: c,
-                                  child: Text(c, maxLines: 1, overflow: TextOverflow.ellipsis),
-                                ))
+                            .map(
+                              (c) => DropdownMenuItem<String>(
+                                value: c,
+                                child: Text(
+                                  c,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            )
                             .toList(),
                         onChanged: (v) {
                           if (v == null) return;
@@ -103,14 +119,21 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
                         decoration: const InputDecoration(
                           isDense: true,
                           border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 10,
+                          ),
                         ),
                       ),
                     ),
                     const SizedBox(width: 8),
                     IconButton(
                       onPressed: _loadLogs,
-                      icon: Icon(LucideIcons.refreshCw, size: 18, color: Colors.grey.shade600),
+                      icon: Icon(
+                        LucideIcons.refreshCw,
+                        size: 18,
+                        color: Colors.grey.shade600,
+                      ),
                       tooltip: '刷新',
                     ),
                   ],
@@ -120,7 +143,8 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
                 child: ListView.separated(
                   itemCount: _filteredLogs.length,
                   padding: const EdgeInsets.all(8),
-                  separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey.shade200),
+                  separatorBuilder: (_, __) =>
+                      Divider(height: 1, color: Colors.grey.shade200),
                   itemBuilder: (context, index) {
                     final log = _filteredLogs[index];
                     final isSelected = _selectedLogIndex == index;
@@ -129,7 +153,11 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
                       dense: true,
                       selected: isSelected,
                       selectedTileColor: Colors.blue.withOpacity(0.06),
-                      leading: Icon(_levelIcon(log.level), size: 18, color: levelColor),
+                      leading: Icon(
+                        _levelIcon(log.level),
+                        size: 18,
+                        color: levelColor,
+                      ),
                       title: Text(
                         log.message,
                         maxLines: 1,
@@ -140,11 +168,18 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
                         '${log.time} · ${log.source} · #${log.eventId}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                        ),
                       ),
                       trailing: Text(
                         log.level,
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: levelColor),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: levelColor,
+                        ),
                       ),
                       onTap: () {
                         setState(() => _selectedLogIndex = index);
@@ -176,7 +211,13 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
                       children: const [
                         Icon(LucideIcons.list, size: 20, color: Colors.black87),
                         SizedBox(width: 8),
-                        Text('日志分类', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                        Text(
+                          '日志分类',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -187,7 +228,9 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
                       itemBuilder: (context, index) {
                         final cat = _categories[index];
                         final isSelected = cat == _selectedCategory;
-                        final count = cat == 'All' ? _logs.length : _logs.where((l) => l.category == cat).length;
+                        final count = cat == 'All'
+                            ? _logs.length
+                            : _logs.where((l) => l.category == cat).length;
 
                         return InkWell(
                           onTap: () => setState(() {
@@ -196,38 +239,59 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
                           }),
                           borderRadius: BorderRadius.circular(6),
                           child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 10,
+                              horizontal: 12,
+                            ),
                             margin: const EdgeInsets.only(bottom: 4),
                             decoration: BoxDecoration(
-                              color: isSelected ? Colors.blue.shade50 : Colors.transparent,
+                              color: isSelected
+                                  ? Colors.blue.shade50
+                                  : Colors.transparent,
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Row(
                               children: [
-                                Icon(LucideIcons.fileText, size: 16, color: isSelected ? Colors.blue : Colors.grey.shade600),
+                                Icon(
+                                  LucideIcons.fileText,
+                                  size: 16,
+                                  color: isSelected
+                                      ? Colors.blue
+                                      : Colors.grey.shade600,
+                                ),
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Text(
                                     cat,
                                     style: TextStyle(
                                       fontSize: 13,
-                                      color: isSelected ? Colors.blue : Colors.grey.shade700,
-                                      fontWeight: isSelected ? FontWeight.w500 : FontWeight.normal,
+                                      color: isSelected
+                                          ? Colors.blue
+                                          : Colors.grey.shade700,
+                                      fontWeight: isSelected
+                                          ? FontWeight.w500
+                                          : FontWeight.normal,
                                     ),
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: Colors.grey.shade200,
                                     borderRadius: BorderRadius.circular(10),
                                   ),
                                   child: Text(
                                     '$count',
-                                    style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: Colors.grey.shade600,
+                                    ),
                                   ),
-                                )
+                                ),
                               ],
                             ),
                           ),
@@ -245,16 +309,25 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
                 children: [
                   // Toolbar
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.white,
-                      border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+                      border: Border(
+                        bottom: BorderSide(color: Colors.grey.shade200),
+                      ),
                     ),
                     child: Row(
                       children: [
                         const Spacer(),
                         IconButton(
-                          icon: Icon(LucideIcons.refreshCw, size: 16, color: Colors.grey.shade500),
+                          icon: Icon(
+                            LucideIcons.refreshCw,
+                            size: 16,
+                            color: Colors.grey.shade500,
+                          ),
                           onPressed: _loadLogs,
                         ),
                       ],
@@ -263,7 +336,10 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
 
                   // Table Header
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
                     color: Colors.grey.shade50,
                     child: Row(
                       children: [
@@ -285,17 +361,50 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
                         final log = _filteredLogs[index];
                         final isSelected = _selectedLogIndex == index;
                         return InkWell(
-                          onTap: () => setState(() => _selectedLogIndex = index),
+                          onTap: () =>
+                              setState(() => _selectedLogIndex = index),
                           child: Container(
-                            color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.transparent,
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            color: isSelected
+                                ? Colors.blue.withOpacity(0.1)
+                                : Colors.transparent,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 10,
+                            ),
                             child: Row(
                               children: [
-                                SizedBox(width: 80, child: _buildLevelCell(log.level)),
-                                SizedBox(width: 150, child: Text(log.time, style: const TextStyle(fontSize: 12))),
-                                SizedBox(width: 150, child: Text(log.source, style: const TextStyle(fontSize: 12))),
-                                SizedBox(width: 60, child: Text('${log.eventId}', style: const TextStyle(fontSize: 12))),
-                                Expanded(child: Text(log.message, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis)),
+                                SizedBox(
+                                  width: 80,
+                                  child: _buildLevelCell(log.level),
+                                ),
+                                SizedBox(
+                                  width: 150,
+                                  child: Text(
+                                    log.time,
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 150,
+                                  child: Text(
+                                    log.source,
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 60,
+                                  child: Text(
+                                    '${log.eventId}',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Text(
+                                    log.message,
+                                    style: const TextStyle(fontSize: 12),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -305,7 +414,8 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
                   ),
 
                   // Bottom Detail Panel
-                  if (_selectedLogIndex != null) _buildDetailPanel(_filteredLogs[_selectedLogIndex!]),
+                  if (_selectedLogIndex != null)
+                    _buildDetailPanel(_filteredLogs[_selectedLogIndex!]),
                 ],
               ),
             ),
@@ -333,17 +443,28 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
                 children: [
                   Row(
                     children: [
-                      Icon(_levelIcon(log.level), size: 18, color: _levelColor(log.level)),
+                      Icon(
+                        _levelIcon(log.level),
+                        size: 18,
+                        color: _levelColor(log.level),
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           'Event ${log.eventId} - ${log.source}',
-                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                       IconButton(
                         onPressed: () => Navigator.of(context).pop(),
-                        icon: Icon(LucideIcons.x, size: 18, color: Colors.grey.shade600),
+                        icon: Icon(
+                          LucideIcons.x,
+                          size: 18,
+                          color: Colors.grey.shade600,
+                        ),
                       ),
                     ],
                   ),
@@ -381,7 +502,11 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
       ),
       child: Text(
         '$label: $value',
-        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
       ),
     );
   }
@@ -409,16 +534,31 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
   }
 
   Widget _buildHeaderCell(String text) {
-    return Text(text, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey.shade600));
+    return Text(
+      text,
+      style: TextStyle(
+        fontSize: 11,
+        fontWeight: FontWeight.bold,
+        color: Colors.grey.shade600,
+      ),
+    );
   }
 
   Widget _buildLevelCell(String level) {
     IconData icon;
     Color color;
     switch (level.toLowerCase()) {
-      case 'error': icon = LucideIcons.alertTriangle; color = Colors.red; break;
-      case 'warning': icon = LucideIcons.alertTriangle; color = Colors.orange; break;
-      default: icon = LucideIcons.info; color = Colors.blue;
+      case 'error':
+        icon = LucideIcons.alertTriangle;
+        color = Colors.red;
+        break;
+      case 'warning':
+        icon = LucideIcons.alertTriangle;
+        color = Colors.orange;
+        break;
+      default:
+        icon = LucideIcons.info;
+        color = Colors.blue;
     }
     return Row(
       children: [
@@ -447,8 +587,11 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'Event ${log.eventId} - ${log.source}', 
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  'Event ${log.eventId} - ${log.source}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
                 ),
                 IconButton(
                   icon: const Icon(LucideIcons.x, size: 14, color: Colors.grey),
@@ -473,7 +616,10 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
                 child: SingleChildScrollView(
                   child: Text(
                     log.message,
-                    style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                    ),
                   ),
                 ),
               ),

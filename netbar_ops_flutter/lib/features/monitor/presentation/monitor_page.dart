@@ -9,6 +9,7 @@ import '../../../shared/providers/app_providers.dart';
 import '../../../shared/providers/terminal_dock_provider.dart';
 import '../../../shared/services/terminal_window_bridge.dart';
 import '../../../shared/utils/platform_utils.dart';
+import '../../../shared/utils/top_notice.dart';
 import '../data/terminal_api.dart';
 import 'widgets/terminal_card.dart';
 
@@ -78,17 +79,31 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 48, height: 48,
+              width: 48,
+              height: 48,
               decoration: BoxDecoration(
                 color: Colors.red.shade100,
                 shape: BoxShape.circle,
               ),
-              child: Icon(LucideIcons.alertTriangle, color: Colors.red.shade500),
+              child: Icon(
+                LucideIcons.alertTriangle,
+                color: Colors.red.shade500,
+              ),
             ),
             const SizedBox(height: 16),
-            Text('加载失败', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.red.shade800)),
+            Text(
+              '加载失败',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.red.shade800,
+              ),
+            ),
             const SizedBox(height: 8),
-            Text(error, style: TextStyle(fontSize: 14, color: Colors.red.shade600)),
+            Text(
+              error,
+              style: TextStyle(fontSize: 14, color: Colors.red.shade600),
+            ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
               onPressed: () => ref.invalidate(terminalsProvider),
@@ -113,7 +128,8 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
     // 过滤
     var filteredClients = clients.where((t) {
       // 搜索过滤
-      if (_searchQuery.isNotEmpty && !t.name.toLowerCase().contains(_searchQuery.toLowerCase())) {
+      if (_searchQuery.isNotEmpty &&
+          !t.name.toLowerCase().contains(_searchQuery.toLowerCase())) {
         return false;
       }
       // 状态过滤
@@ -144,13 +160,18 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
         case 2: // IP
           cmp = a.ip.compareTo(b.ip);
           break;
-        case 3: cmp = a.mac.compareTo(b.mac); break;
-        case 4: cmp = a.uptime.compareTo(b.uptime); break;
+        case 3:
+          cmp = a.mac.compareTo(b.mac);
+          break;
+        case 4:
+          cmp = a.uptime.compareTo(b.uptime);
+          break;
         case 5:
           final aTime = _parseToCst(a.updatedAt);
           final bTime = _parseToCst(b.updatedAt);
-          cmp = (aTime ?? DateTime.fromMillisecondsSinceEpoch(0))
-              .compareTo(bTime ?? DateTime.fromMillisecondsSinceEpoch(0));
+          cmp = (aTime ?? DateTime.fromMillisecondsSinceEpoch(0)).compareTo(
+            bTime ?? DateTime.fromMillisecondsSinceEpoch(0),
+          );
           break;
         default:
           // 默认排序：在线在前
@@ -187,9 +208,14 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                   unselectedLabelColor: Colors.grey.shade600,
                   dividerColor: Colors.transparent,
                   indicatorSize: TabBarIndicatorSize.tab,
-                  labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                  unselectedLabelStyle:
-                      const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  labelStyle: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  unselectedLabelStyle: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
                   tabs: const [
                     Tab(text: '关键设备状态'),
                     Tab(text: '终端列表'),
@@ -232,23 +258,24 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                                   return SliverGrid(
                                     gridDelegate:
                                         SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: columns,
-                                      childAspectRatio: 0.9,
-                                      crossAxisSpacing: 12,
-                                      mainAxisSpacing: 12,
-                                    ),
-                                    delegate: SliverChildBuilderDelegate(
-                                      (context, index) {
-                                        final terminal = filteredClients[index];
-                                        return TerminalCard(
-                                          terminal: terminal,
-                                          onTap: () => _openTerminalDetail(terminal),
-                                          onSecondaryTapDown: (details) =>
-                                              _showContextMenu(details, terminal),
-                                        );
-                                      },
-                                      childCount: filteredClients.length,
-                                    ),
+                                          crossAxisCount: columns,
+                                          childAspectRatio: 0.9,
+                                          crossAxisSpacing: 12,
+                                          mainAxisSpacing: 12,
+                                        ),
+                                    delegate: SliverChildBuilderDelegate((
+                                      context,
+                                      index,
+                                    ) {
+                                      final terminal = filteredClients[index];
+                                      return TerminalCard(
+                                        terminal: terminal,
+                                        onTap: () =>
+                                            _openTerminalDetail(terminal),
+                                        onSecondaryTapDown: (details) =>
+                                            _showContextMenu(details, terminal),
+                                      );
+                                    }, childCount: filteredClients.length),
                                   );
                                 },
                               ),
@@ -302,17 +329,15 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                         crossAxisSpacing: 16,
                         mainAxisSpacing: 16,
                       ),
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) {
-                          final terminal = filteredClients[index];
-                          return TerminalCard(
-                            terminal: terminal,
-                            onTap: () => _openTerminalDetail(terminal),
-                            onSecondaryTapDown: (details) => _showContextMenu(details, terminal),
-                          );
-                        },
-                        childCount: filteredClients.length,
-                      ),
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        final terminal = filteredClients[index];
+                        return TerminalCard(
+                          terminal: terminal,
+                          onTap: () => _openTerminalDetail(terminal),
+                          onSecondaryTapDown: (details) =>
+                              _showContextMenu(details, terminal),
+                        );
+                      }, childCount: filteredClients.length),
                     );
                   },
                 ),
@@ -342,7 +367,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                   showCheckboxColumn: false,
                   sortColumnIndex: _sortColumnIndex,
                   sortAscending: _sortAscending,
-                  headingRowColor: MaterialStateProperty.all(Colors.grey.shade50),
+                  headingRowColor: WidgetStateProperty.all(Colors.grey.shade50),
                   dataRowMinHeight: 48,
                   dataRowMaxHeight: 48,
                   columns: [
@@ -356,10 +381,28 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                   rows: terminals.map((t) {
                     return DataRow(
                       cells: [
-                        DataCell(Text(t.name, style: const TextStyle(fontWeight: FontWeight.bold))),
+                        DataCell(
+                          Text(
+                            t.name,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
                         DataCell(_buildStatusCell(t.status)),
-                        DataCell(Text(t.ip, style: const TextStyle(fontFamily: 'monospace'))),
-                        DataCell(Text(t.mac, style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+                        DataCell(
+                          Text(
+                            t.ip,
+                            style: const TextStyle(fontFamily: 'monospace'),
+                          ),
+                        ),
+                        DataCell(
+                          Text(
+                            t.mac,
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
                         DataCell(Text(t.uptime)),
                         DataCell(Text(_formatUpdatedAt(t.updatedAt))),
                       ],
@@ -415,7 +458,11 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
       ),
       child: Text(
         text,
-        style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold),
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+        ),
       ),
     );
   }
@@ -423,8 +470,9 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
   /// 打开终端详情
   void _openTerminalDetail(Terminal terminal) {
     if (isDesktopPlatform) {
-      final lastTab =
-          ref.read(terminalDockProvider.notifier).lastTabFor(terminal.id);
+      final lastTab = ref
+          .read(terminalDockProvider.notifier)
+          .lastTabFor(terminal.id);
       TerminalWindowBridge.openTerminalWindow(
         terminalId: terminal.id,
         initialTab: lastTab,
@@ -482,7 +530,9 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                 decoration: BoxDecoration(
                   color: AppColors.iosCard, // 使用 AppColors.iosCard
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.iosSeparator), // 使用 AppColors.iosSeparator
+                  border: Border.all(
+                    color: AppColors.iosSeparator,
+                  ), // 使用 AppColors.iosSeparator
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -492,12 +542,32 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                       _openTerminalDetail(terminal);
                     }),
                     _buildMenuDivider(),
-                    _buildContextMenuItem('重启', LucideIcons.refreshCw, () => _remoteAction('restart')),
-                    _buildContextMenuItem('关机', LucideIcons.power, () => _remoteAction('shutdown')),
-                    _buildContextMenuItem('唤醒', LucideIcons.sunrise, () => _remoteAction('wakeup')),
+                    _buildContextMenuItem(
+                      '重启',
+                      LucideIcons.refreshCw,
+                      () => _remoteAction('restart'),
+                    ),
+                    _buildContextMenuItem(
+                      '关机',
+                      LucideIcons.power,
+                      () => _remoteAction('shutdown'),
+                    ),
+                    _buildContextMenuItem(
+                      '唤醒',
+                      LucideIcons.sunrise,
+                      () => _remoteAction('wakeup'),
+                    ),
                     _buildMenuDivider(),
-                    _buildContextMenuItem('截图', LucideIcons.camera, () => _remoteAction('screenshot')),
-                    _buildContextMenuItem('远程桌面', LucideIcons.monitor, () => _remoteAction('remote')),
+                    _buildContextMenuItem(
+                      '截图',
+                      LucideIcons.camera,
+                      () => _remoteAction('screenshot'),
+                    ),
+                    _buildContextMenuItem(
+                      '远程桌面',
+                      LucideIcons.monitor,
+                      () => _remoteAction('remote'),
+                    ),
                   ],
                 ),
               ),
@@ -510,7 +580,11 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
     overlay.insert(_menuOverlay!);
   }
 
-  Widget _buildContextMenuItem(String label, IconData icon, VoidCallback onTap) {
+  Widget _buildContextMenuItem(
+    String label,
+    IconData icon,
+    VoidCallback onTap,
+  ) {
     return InkWell(
       onTap: onTap,
       hoverColor: AppColors.iosHover, // 添加悬停效果
@@ -519,9 +593,16 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           children: [
-            Icon(icon, size: 16, color: AppColors.iosGray), // 使用 AppColors.iosGray
+            Icon(
+              icon,
+              size: 16,
+              color: AppColors.iosGray,
+            ), // 使用 AppColors.iosGray
             const SizedBox(width: 12),
-            Text(label, style: const TextStyle(fontSize: 14, color: Color(0xFF333333))), // 使用更深的灰色文本
+            Text(
+              label,
+              style: const TextStyle(fontSize: 14, color: Color(0xFF333333)),
+            ), // 使用更深的灰色文本
           ],
         ),
       ),
@@ -529,7 +610,10 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
   }
 
   Widget _buildMenuDivider() {
-    return Divider(height: 1, color: AppColors.iosSeparator); // 使用 AppColors.iosSeparator
+    return Divider(
+      height: 1,
+      color: AppColors.iosSeparator,
+    ); // 使用 AppColors.iosSeparator
   }
 
   /// 远程操作
@@ -541,15 +625,15 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
       final api = ref.read(terminalApiProvider);
       await api.remote(_selectedTerminal!.id, action);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('操作 $action 已发送到 ${_selectedTerminal!.name}')),
+        showTopNotice(
+          context,
+          '操作 $action 已发送到 ${_selectedTerminal!.name}',
+          level: NoticeLevel.success,
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('操作失败: $e'), backgroundColor: Colors.red),
-        );
+        showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
       }
     }
   }
@@ -578,8 +662,10 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
           else
             Row(
               children: [
-                const Text('关键设备状态',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                const Text(
+                  '关键设备状态',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
                 const SizedBox(width: 8),
                 Text(
                   '服务器 / 控制台 / 收银机 / 路由器',
@@ -613,15 +699,18 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                 runSpacing: gap,
                 children: [
                   // 关键设备卡片 (使用 TerminalCard 样式)
-                  ...devices.map((d) => SizedBox(
-                    width: itemWidth,
-                    height: itemHeight, // 固定高度
-                    child: TerminalCard(
-                      terminal: d,
-                      onTap: () => _openTerminalDetail(d),
-                      onSecondaryTapDown: (details) => _showContextMenu(details, d),
+                  ...devices.map(
+                    (d) => SizedBox(
+                      width: itemWidth,
+                      height: itemHeight, // 固定高度
+                      child: TerminalCard(
+                        terminal: d,
+                        onTap: () => _openTerminalDetail(d),
+                        onSecondaryTapDown: (details) =>
+                            _showContextMenu(details, d),
+                      ),
                     ),
-                  )),
+                  ),
                   // 路由器卡片
                   SizedBox(
                     width: itemWidth,
@@ -643,7 +732,9 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
       decoration: BoxDecoration(
         color: AppColors.iosCard, // 使用 AppColors.iosCard
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.iosSeparator), // 使用 AppColors.iosSeparator
+        border: Border.all(
+          color: AppColors.iosSeparator,
+        ), // 使用 AppColors.iosSeparator
         boxShadow: AppShadows.sm,
       ),
       child: Stack(
@@ -665,19 +756,40 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                             color: Colors.blue.shade50,
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: Icon(LucideIcons.router, size: 16, color: Colors.blue.shade600),
+                          child: Icon(
+                            LucideIcons.router,
+                            size: 16,
+                            color: Colors.blue.shade600,
+                          ),
                         ),
                         const SizedBox(width: 8),
-                        Text('路由器', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey.shade700)),
+                        Text(
+                          '路由器',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
                       ],
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.green.shade50,
                         borderRadius: BorderRadius.circular(4),
                       ),
-                      child: Text('2ms', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green.shade600)),
+                      child: Text(
+                        '2ms',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green.shade600,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -686,7 +798,12 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                 _buildBandwidthRow('上行', '50 Mbps', 0.25, Colors.blue.shade500),
                 const SizedBox(height: 8),
                 // 下行带宽
-                _buildBandwidthRow('下行', '200 Mbps', 0.75, Colors.green.shade500),
+                _buildBandwidthRow(
+                  '下行',
+                  '200 Mbps',
+                  0.75,
+                  Colors.green.shade500,
+                ),
               ],
             ),
           ),
@@ -697,7 +814,9 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
             child: Icon(
               LucideIcons.router,
               size: 80,
-              color: AppColors.iosBg.withOpacity(0.5), // 使用 AppColors.iosBg 并调整透明度
+              color: AppColors.iosBg.withOpacity(
+                0.5,
+              ), // 使用 AppColors.iosBg 并调整透明度
             ),
           ),
         ],
@@ -706,15 +825,31 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
   }
 
   /// 带宽行 (含进度条)
-  Widget _buildBandwidthRow(String label, String value, double progress, Color color) {
+  Widget _buildBandwidthRow(
+    String label,
+    String value,
+    double progress,
+    Color color,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-            Text(value, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, fontFamily: 'monospace', color: Colors.grey.shade900)),
+            Text(
+              label,
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+            ),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                fontFamily: 'monospace',
+                color: Colors.grey.shade900,
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 4),
@@ -754,7 +889,10 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
         children: [
           Row(
             children: [
-              const Text('终端列表', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text(
+                '终端列表',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
               const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -762,21 +900,26 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                   color: Colors.grey.shade200,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Text('$count', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey.shade600)),
+                child: Text(
+                  '$count',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
               ),
               const Spacer(),
               // 搜索框
-              if (!isNarrow)
-                SizedBox(
-                  width: 260,
-                  child: _buildSearchBox(),
-                ),
+              if (!isNarrow) SizedBox(width: 260, child: _buildSearchBox()),
               if (!isNarrow) const SizedBox(width: 12),
               // 筛选按钮
               PopupMenuButton<String>(
                 tooltip: '筛选',
                 offset: const Offset(0, 40),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 child: Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
@@ -785,13 +928,22 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                     border: Border.all(color: AppColors.iosSeparator),
                     boxShadow: AppShadows.sm,
                   ),
-                  child: Icon(LucideIcons.filter, size: 18, color: _filterStatus != 'all' ? AppColors.iosBlue : Colors.grey.shade600),
+                  child: Icon(
+                    LucideIcons.filter,
+                    size: 18,
+                    color: _filterStatus != 'all'
+                        ? AppColors.iosBlue
+                        : Colors.grey.shade600,
+                  ),
                 ),
                 onSelected: (val) => setState(() => _filterStatus = val),
                 itemBuilder: (context) => [
                   const PopupMenuItem(value: 'all', child: Text('全部')),
                   const PopupMenuItem(value: 'busy', child: Text('使用中')),
-                  const PopupMenuItem(value: 'online_idle', child: Text('在线空闲')),
+                  const PopupMenuItem(
+                    value: 'online_idle',
+                    child: Text('在线空闲'),
+                  ),
                   const PopupMenuItem(value: 'offline', child: Text('离线')),
                 ],
               ),
@@ -851,20 +1003,20 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
       width: size,
       height: size,
       child: Container(
-      decoration: BoxDecoration(
-        color: AppColors.iosCard,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.iosSeparator),
-        boxShadow: AppShadows.sm,
-      ),
-      child: IconButton(
-        onPressed: onPressed,
-        icon: Icon(icon, size: 18, color: Colors.grey.shade600),
-        tooltip: tooltip,
-        padding: EdgeInsets.zero,
-        constraints: BoxConstraints.tightFor(width: size, height: size),
-        splashRadius: size / 2,
-      ),
+        decoration: BoxDecoration(
+          color: AppColors.iosCard,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.iosSeparator),
+          boxShadow: AppShadows.sm,
+        ),
+        child: IconButton(
+          onPressed: onPressed,
+          icon: Icon(icon, size: 18, color: Colors.grey.shade600),
+          tooltip: tooltip,
+          padding: EdgeInsets.zero,
+          constraints: BoxConstraints.tightFor(width: size, height: size),
+          splashRadius: size / 2,
+        ),
       ),
     );
   }

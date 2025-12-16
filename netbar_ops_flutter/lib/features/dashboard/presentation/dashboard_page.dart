@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:syncfusion_flutter_charts/charts.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/responsive/responsive.dart';
 import '../../../shared/providers/app_providers.dart';
@@ -10,24 +9,30 @@ import 'widgets/stat_card.dart';
 import 'widgets/trend_chart.dart';
 import 'widgets/quick_actions.dart';
 
-final dashboardRangeProvider = StateProvider.autoDispose<String>((ref) => '最近7天');
+final dashboardRangeProvider = StateProvider.autoDispose<String>(
+  (ref) => '最近7天',
+);
 
-final dashboardStatsProvider = FutureProvider.autoDispose<DashboardStats>((ref) async {
+final dashboardStatsProvider = FutureProvider.autoDispose<DashboardStats>((
+  ref,
+) async {
   final netbar = ref.watch(currentNetbarProvider);
   final api = ref.read(dashboardApiProvider);
   return api.getStats(netbarId: netbar.id);
 });
 
-final dashboardTrendProvider = FutureProvider.autoDispose<List<TrendDataPoint>>((ref) async {
-  final netbar = ref.watch(currentNetbarProvider);
-  final api = ref.read(dashboardApiProvider);
-  final range = ref.watch(dashboardRangeProvider);
+final dashboardTrendProvider = FutureProvider.autoDispose<List<TrendDataPoint>>(
+  (ref) async {
+    final netbar = ref.watch(currentNetbarProvider);
+    final api = ref.read(dashboardApiProvider);
+    final range = ref.watch(dashboardRangeProvider);
 
-  // Map display string to API param
-  final rangeParam = range == '最近30天' ? '30d' : '7d';
-  
-  return api.getTrendData(netbarId: netbar.id, range: rangeParam);
-});
+    // Map display string to API param
+    final rangeParam = range == '最近30天' ? '30d' : '7d';
+
+    return api.getTrendData(netbarId: netbar.id, range: rangeParam);
+  },
+);
 
 class DashboardPage extends ConsumerWidget {
   const DashboardPage({super.key});
@@ -35,7 +40,9 @@ class DashboardPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final dashboardStats = ref.watch(dashboardStatsProvider);
-    final pagePadding = context.isPhone ? 16.0 : (context.isNarrow ? 24.0 : 32.0);
+    final pagePadding = context.isPhone
+        ? 16.0
+        : (context.isNarrow ? 24.0 : 32.0);
 
     return Scaffold(
       backgroundColor: AppColors.iosBg,
@@ -45,7 +52,11 @@ class DashboardPage extends ConsumerWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(LucideIcons.alertTriangle, size: 48, color: Colors.red.shade400),
+              Icon(
+                LucideIcons.alertTriangle,
+                size: 48,
+                color: Colors.red.shade400,
+              ),
               const SizedBox(height: 16),
               Text('加载失败: $err', style: TextStyle(color: Colors.red.shade700)),
               const SizedBox(height: 16),
@@ -60,9 +71,12 @@ class DashboardPage extends ConsumerWidget {
         data: (DashboardStats stats) => LayoutBuilder(
           builder: (context, constraints) {
             final isPhone = context.isPhone;
-            final width = (constraints.maxWidth - pagePadding * 2).clamp(0.0, double.infinity);
+            final width = (constraints.maxWidth - pagePadding * 2).clamp(
+              0.0,
+              double.infinity,
+            );
             final gap = isPhone ? 12.0 : 24.0;
-            
+
             // Determine columns based on breakpoints (matching Vue: lg=1024, md=768)
             int columns;
             // Use the original constraint width for breakpoint checking
@@ -100,7 +114,10 @@ class DashboardPage extends ConsumerWidget {
                       const SizedBox(height: 4),
                       Text(
                         '欢迎回来，今日系统运行平稳。',
-                        style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey.shade500,
+                        ),
                       ),
                     ],
                   ),
@@ -111,18 +128,49 @@ class DashboardPage extends ConsumerWidget {
                     spacing: gap,
                     runSpacing: gap,
                     children: [
-                      _buildStatItem(itemWidth, '总网吧数', stats.totalNetbars.toString(), 
-                          '${stats.onlineNetbars} 个在线 / ${stats.totalNetbars - stats.onlineNetbars} 个离线',
-                          LucideIcons.server, Colors.blue, null, compact: isPhone),
-                      _buildStatItem(itemWidth, '终端总数', stats.totalDesktops.toString(), null,
-                          LucideIcons.monitor, Colors.indigo, 2.4, compact: isPhone),
-                      _buildStatItem(itemWidth, '在线终端', stats.onlineDesktops.toString(), null,
-                          LucideIcons.activity, Colors.green, 12.5, compact: isPhone),
-                      _buildStatItem(itemWidth, '活跃通道', '${stats.activeChannels}/${stats.totalChannels}', null,
-                          LucideIcons.wifi, Colors.orange, null, compact: isPhone),
+                      _buildStatItem(
+                        itemWidth,
+                        '总网吧数',
+                        stats.totalNetbars.toString(),
+                        '${stats.onlineNetbars} 个在线 / ${stats.totalNetbars - stats.onlineNetbars} 个离线',
+                        LucideIcons.server,
+                        Colors.blue,
+                        null,
+                        compact: isPhone,
+                      ),
+                      _buildStatItem(
+                        itemWidth,
+                        '终端总数',
+                        stats.totalDesktops.toString(),
+                        null,
+                        LucideIcons.monitor,
+                        Colors.indigo,
+                        2.4,
+                        compact: isPhone,
+                      ),
+                      _buildStatItem(
+                        itemWidth,
+                        '在线终端',
+                        stats.onlineDesktops.toString(),
+                        null,
+                        LucideIcons.activity,
+                        Colors.green,
+                        12.5,
+                        compact: isPhone,
+                      ),
+                      _buildStatItem(
+                        itemWidth,
+                        '活跃通道',
+                        '${stats.activeChannels}/${stats.totalChannels}',
+                        null,
+                        LucideIcons.wifi,
+                        Colors.orange,
+                        null,
+                        compact: isPhone,
+                      ),
                     ],
                   ),
-                  
+
                   const SizedBox(height: 32),
 
                   // Chart & Actions
@@ -135,10 +183,7 @@ class DashboardPage extends ConsumerWidget {
                           child: const TrendChart(),
                         ),
                         SizedBox(width: gap),
-                        SizedBox(
-                          width: itemWidth,
-                          child: const QuickActions(),
-                        ),
+                        SizedBox(width: itemWidth, child: const QuickActions()),
                       ],
                     )
                   else

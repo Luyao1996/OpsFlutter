@@ -13,6 +13,7 @@ import '../../../../shared/providers/terminal_dock_provider.dart';
 import '../../../../shared/services/terminal_window_bridge.dart';
 import '../../../../shared/services/window_control.dart';
 import '../../../../shared/utils/platform_utils.dart';
+import '../../../../shared/utils/top_notice.dart';
 
 import 'widgets/file_manager_tab.dart';
 import 'widgets/process_manager_tab.dart';
@@ -93,66 +94,69 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       body: terminalAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, stack) => Center(child: Text('Error: $error')),
-        data: (terminal) => Column(
-          children: [
-            _buildHeader(_liveTerminal ?? terminal, isNarrow: isNarrow),
-            Expanded(
-              child: Padding(
-                padding: EdgeInsets.all(isNarrow ? 12.0 : 16.0),
-                child: isNarrow
-                    ? Column(
-                        children: [
-                          _buildTabBar(isNarrow: true),
-                          const SizedBox(height: 12),
-                          Expanded(
-                            child: _buildRightContent(
-                              _liveTerminal ?? terminal,
-                              isNarrow: true,
-                              showOverviewCards: _selectedTab == '远程控制',
+        data: (terminal) => SafeArea(
+          bottom: false,
+          child: Column(
+            children: [
+              _buildHeader(_liveTerminal ?? terminal, isNarrow: isNarrow),
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.all(isNarrow ? 12.0 : 16.0),
+                  child: isNarrow
+                      ? Column(
+                          children: [
+                            _buildTabBar(isNarrow: true),
+                            const SizedBox(height: 12),
+                            Expanded(
+                              child: _buildRightContent(
+                                _liveTerminal ?? terminal,
+                                isNarrow: true,
+                                showOverviewCards: _selectedTab == '远程控制',
+                              ),
                             ),
-                          ),
-                        ],
-                      )
-                    : Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // 左侧栏：实时画面 + 系统状态 + 备注
-                          SizedBox(
-                            width: 380,
-                            child: SingleChildScrollView(
+                          ],
+                        )
+                      : Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // 左侧栏：实时画面 + 系统状态 + 备注
+                            SizedBox(
+                              width: 380,
+                              child: SingleChildScrollView(
+                                child: Column(
+                                  children: [
+                                    _buildScreenPreviewCard(terminal),
+                                    const SizedBox(height: 16),
+                                    _buildSystemStatusCard(terminal),
+                                    const SizedBox(height: 16),
+                                    _buildRemarkCard(terminal),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            // 右侧栏：功能区
+                            Expanded(
                               child: Column(
                                 children: [
-                                  _buildScreenPreviewCard(terminal),
+                                  _buildTabBar(isNarrow: false),
                                   const SizedBox(height: 16),
-                                  _buildSystemStatusCard(terminal),
-                                  const SizedBox(height: 16),
-                                  _buildRemarkCard(terminal),
+                                  Expanded(
+                                    child: _buildRightContent(
+                                      _liveTerminal ?? terminal,
+                                      isNarrow: false,
+                                      showOverviewCards: false,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 16),
-                          // 右侧栏：功能区
-                          Expanded(
-                            child: Column(
-                              children: [
-                                _buildTabBar(isNarrow: false),
-                                const SizedBox(height: 16),
-                                Expanded(
-                                  child: _buildRightContent(
-                                    _liveTerminal ?? terminal,
-                                    isNarrow: false,
-                                    showOverviewCards: false,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
+                          ],
+                        ),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -674,8 +678,6 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
               _buildScreenPreviewCard(terminal),
               const SizedBox(height: 16),
               _buildSystemStatusCard(terminal),
-              const SizedBox(height: 16),
-              _buildRemarkCard(terminal),
               const SizedBox(height: 24),
             ],
             _buildSectionTitle('电源管理'),
@@ -689,6 +691,10 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
             _buildSectionTitle('最近日志'),
             const SizedBox(height: 12),
             _buildRecentLogsTable(),
+            if (showOverviewCards) ...[
+              const SizedBox(height: 24),
+              _buildRemarkCard(terminal),
+            ],
           ],
         ),
       );
@@ -730,15 +736,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         _liveTerminal = hb;
       });
       if (mounted && !silent) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('已刷新状态')),
-        );
+        showTopNotice(context, '已刷新状态', level: NoticeLevel.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('刷新失败：$e'), backgroundColor: Colors.red),
-        );
+        showTopNotice(context, '刷新失败：$e', level: NoticeLevel.error);
       }
     } finally {
       if (mounted) setState(() => _refreshing = false);
@@ -764,24 +766,24 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       children: [
         Row(
           children: [
-            Expanded(child: _buildPowerCard('关机', LucideIcons.power, () => _remoteAction(terminal.id, 'shutdown'))),
+            Expanded(child: _buildPowerCard('关机', LucideIcons.power, () => _remoteAction(terminal.id, 'shutdown'), compact: true)),
             const SizedBox(width: 12),
-            Expanded(child: _buildPowerCard('重启', LucideIcons.refreshCw, () => _remoteAction(terminal.id, 'restart'))),
+            Expanded(child: _buildPowerCard('重启', LucideIcons.refreshCw, () => _remoteAction(terminal.id, 'restart'), compact: true)),
           ],
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
         Row(
           children: [
-            Expanded(child: _buildPowerCard('注销', LucideIcons.logOut, () => _remoteAction(terminal.id, 'logout'))),
+            Expanded(child: _buildPowerCard('注销', LucideIcons.logOut, () => _remoteAction(terminal.id, 'logout'), compact: true)),
             const SizedBox(width: 12),
-            Expanded(child: _buildPowerCard('锁定', LucideIcons.lock, () => _remoteAction(terminal.id, 'lock'))),
+            Expanded(child: _buildPowerCard('锁定', LucideIcons.lock, () => _remoteAction(terminal.id, 'lock'), compact: true)),
           ],
         ),
       ],
     );
   }
 
-  Widget _buildPowerCard(String label, IconData icon, VoidCallback onTap) {
+  Widget _buildPowerCard(String label, IconData icon, VoidCallback onTap, {bool compact = false}) {
     return Material(
       color: Colors.white,
       shape: RoundedRectangleBorder(
@@ -792,20 +794,26 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 24),
+          padding: EdgeInsets.symmetric(vertical: compact ? 16 : 24),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                padding: const EdgeInsets.all(10),
+                padding: EdgeInsets.all(compact ? 8 : 10),
                 decoration: BoxDecoration(
                   color: Colors.grey.shade50,
                   shape: BoxShape.circle,
                 ),
-                child: Icon(icon, size: 20, color: Colors.grey.shade700),
+                child: Icon(icon, size: compact ? 18 : 20, color: Colors.grey.shade700),
               ),
-              const SizedBox(height: 12),
-              Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+              SizedBox(height: compact ? 8 : 12),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: compact ? 13 : 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ],
           ),
         ),
@@ -976,11 +984,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       final api = ref.read(terminalApiProvider);
       await api.remote(terminalId, action);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('指令 [$action] 已发送')));
+        showTopNotice(context, '指令 [$action] 已发送', level: NoticeLevel.success);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('操作失败: $e'), backgroundColor: Colors.red));
+        showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
       }
     }
   }
