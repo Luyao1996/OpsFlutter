@@ -3,11 +3,13 @@ package handler
 import (
 	"math/rand"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"netbar-ops-api/internal/database"
+	"netbar-ops-api/internal/middleware"
 	"netbar-ops-api/internal/model"
 )
 
@@ -25,7 +27,17 @@ func GetStartupItems(c *gin.Context) {
 	// - 分公司(BRANCH): netbar_id = 分组ID
 	// - 本网吧(PUBLIC): netbar_id = 网吧ID
 	if netbarID := c.Query("netbar_id"); netbarID != "" {
+		if id64, err := strconv.ParseUint(netbarID, 10, 32); err == nil && id64 > 0 {
+			if !middleware.RequireNetbarAccess(c, uint(id64)) {
+				return
+			}
+		}
 		query = query.Where("netbar_id = ?", netbarID)
+	} else {
+		if !middleware.IsSuperAdmin(c) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 netbar_id"})
+			return
+		}
 	}
 
 	if enabled := c.Query("enabled"); enabled != "" {
@@ -50,6 +62,9 @@ func GetStartupItem(c *gin.Context) {
 	var item model.StartupItem
 	if err := database.MainDB.First(&item, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "启动项不存在"})
+		return
+	}
+	if !middleware.RequireNetbarAccess(c, item.NetbarID) {
 		return
 	}
 
@@ -107,6 +122,9 @@ func CreateStartupItem(c *gin.Context) {
 	if item.CrashAction == "" {
 		item.CrashAction = "none"
 	}
+	if !middleware.RequireNetbarAccess(c, item.NetbarID) {
+		return
+	}
 
 	if err := database.MainDB.Create(&item).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败"})
@@ -122,6 +140,9 @@ func UpdateStartupItem(c *gin.Context) {
 	var item model.StartupItem
 	if err := database.MainDB.First(&item, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "启动项不存在"})
+		return
+	}
+	if !middleware.RequireNetbarAccess(c, item.NetbarID) {
 		return
 	}
 
@@ -180,6 +201,15 @@ func UpdateStartupItem(c *gin.Context) {
 func DeleteStartupItem(c *gin.Context) {
 	id := c.Param("id")
 
+	var item model.StartupItem
+	if err := database.MainDB.First(&item, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "启动项不存在"})
+		return
+	}
+	if !middleware.RequireNetbarAccess(c, item.NetbarID) {
+		return
+	}
+
 	if err := database.MainDB.Delete(&model.StartupItem{}, id).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})
 		return
@@ -194,7 +224,21 @@ func GetStartupItemMonitor(c *gin.Context) {
 	var netbars []model.Netbar
 	netbarQuery := database.MainDB.Model(&model.Netbar{})
 	if netbarID := c.Query("netbar_id"); netbarID != "" {
+		if id64, err := strconv.ParseUint(netbarID, 10, 32); err == nil && id64 > 0 {
+			if !middleware.RequireNetbarAccess(c, uint(id64)) {
+				return
+			}
+		}
 		netbarQuery = netbarQuery.Where("id = ?", netbarID)
+	} else {
+		if !middleware.IsSuperAdmin(c) {
+			allowed := middleware.GetAllowedNetbarIDs(c)
+			if len(allowed) == 0 {
+				c.JSON(http.StatusOK, []gin.H{})
+				return
+			}
+			netbarQuery = netbarQuery.Where("id IN ?", allowed)
+		}
 	}
 	netbarQuery.Find(&netbars)
 
@@ -209,10 +253,10 @@ func GetStartupItemMonitor(c *gin.Context) {
 		// 随机选择一些启动项
 		for _, item := range items {
 			if rand.Float32() > 0.5 {
-				launchCount := rand.Intn(200)
-				failureCount := rand.Intn(launchCount / 5)
-				survival1min := rand.Intn(launchCount)
-				survival10min := rand.Intn(survival1min)
+				launchCount := rand.Intn(200) + 1
+				failureCount := rand.Intn(launchCount/5 + 1)
+				survival1min := rand.Intn(launchCount + 1)
+				survival10min := rand.Intn(survival1min + 1)
 				itemStats = append(itemStats, gin.H{
 					"id":             item.ID,
 					"name":           item.Name,

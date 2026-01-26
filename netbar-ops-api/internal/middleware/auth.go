@@ -74,3 +74,45 @@ func AdminOnly() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// SuperAdminOnly 仅超级管理员可访问
+func SuperAdminOnly() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !IsSuperAdmin(c) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "需要超级管理员权限"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// NetbarAdminOnly 网吧管理员或超级管理员可访问
+func NetbarAdminOnly() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !IsNetbarAdmin(c) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员权限"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+func IsSuperAdmin(c *gin.Context) bool {
+	role, _ := c.Get("role")
+	username, _ := c.Get("username")
+	// 兼容：保留内置 admin 账号作为超级管理员
+	if username == "admin" {
+		return true
+	}
+	return role == "super_admin"
+}
+
+func IsNetbarAdmin(c *gin.Context) bool {
+	role, _ := c.Get("role")
+	if role == "admin" {
+		return true
+	}
+	return IsSuperAdmin(c)
+}

@@ -8,7 +8,9 @@ import (
 
 // Group 用户组
 type Group struct {
-	ID        uint           `gorm:"primarykey" json:"id"`
+	ID uint `gorm:"primarykey" json:"id"`
+	// NetbarID 为空表示“全局分组”（历史用途，如分公司/组织）；非空表示“网吧内账号组”
+	NetbarID  *uint          `gorm:"index" json:"netbar_id,omitempty"`
 	Name      string         `gorm:"size:100;not null" json:"name"`
 	ParentID  *uint          `gorm:"index" json:"parent_id,omitempty"`
 	CreatedAt time.Time      `json:"created_at"`
@@ -57,4 +59,3 @@ type NetbarGroupRelation struct {
 func (NetbarGroupRelation) TableName() string {
 	return "netbar_group_relations"
 }
-

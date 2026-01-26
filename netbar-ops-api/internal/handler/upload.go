@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"netbar-ops-api/internal/database"
+	"netbar-ops-api/internal/middleware"
 	"netbar-ops-api/internal/model"
 )
 
@@ -127,6 +128,9 @@ func UploadFile(c *gin.Context) {
 	if netbarIDStr != "" && netbarIDStr != "null" {
 		id, _ := strconv.ParseUint(netbarIDStr, 10, 32)
 		netbarID = uint(id)
+	}
+	if !middleware.RequireNetbarAccess(c, netbarID) {
+		return
 	}
 
 	// 获取相对路径（用于目录上传）
@@ -283,6 +287,9 @@ func UploadDesktopImage(c *gin.Context) {
 		if id, convErr := strconv.ParseUint(netbarIDStr, 10, 32); convErr == nil {
 			netbarID = uint(id)
 		}
+	}
+	if !middleware.RequireNetbarAccess(c, netbarID) {
+		return
 	}
 
 	username, _ := c.Get("username")
@@ -592,6 +599,9 @@ func DownloadFile(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "资源不存在"})
 		return
 	}
+	if !middleware.RequireNetbarAccess(c, resource.NetbarID) {
+		return
+	}
 
 	if resource.IsDirectory {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "不能下载目录"})
@@ -655,6 +665,9 @@ func DownloadDirectory(c *gin.Context) {
 	var resource model.Resource
 	if err := database.MainDB.First(&resource, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "资源不存在"})
+		return
+	}
+	if !middleware.RequireNetbarAccess(c, resource.NetbarID) {
 		return
 	}
 

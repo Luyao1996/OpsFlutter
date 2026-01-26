@@ -76,10 +76,19 @@ func initDefaultAdmin() {
 			Username: "admin",
 			Password: string(hashedPassword),
 			Name:     "Administrator",
-			Role:     "admin",
+			Role:     "super_admin",
 			Status:   1,
 		}
 		database.MainDB.Create(&admin)
 		log.Println("已创建默认管理员账户: admin / admin123")
+		return
+	}
+
+	// 兼容：升级内置 admin 账号为超级管理员
+	var adminUser model.User
+	if err := database.MainDB.Where("username = ?", "admin").First(&adminUser).Error; err == nil {
+		if adminUser.Role != "super_admin" {
+			_ = database.MainDB.Model(&adminUser).Update("role", "super_admin").Error
+		}
 	}
 }

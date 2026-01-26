@@ -2,15 +2,22 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
 	"netbar-ops-api/internal/database"
+	"netbar-ops-api/internal/middleware"
 	"netbar-ops-api/internal/model"
 )
 
 func GetNetbarAreas(c *gin.Context) {
 	netbarID := c.Param("netbar_id")
+	if id64, err := strconv.ParseUint(netbarID, 10, 32); err == nil && id64 > 0 {
+		if !middleware.RequireNetbarAccess(c, uint(id64)) {
+			return
+		}
+	}
 
 	var areas []model.NetbarArea
 	if err := database.MainDB.Where("netbar_id = ?", netbarID).Find(&areas).Error; err != nil {
@@ -27,6 +34,9 @@ func GetNetbarArea(c *gin.Context) {
 	var area model.NetbarArea
 	if err := database.MainDB.First(&area, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "区域不存在"})
+		return
+	}
+	if !middleware.RequireNetbarAccess(c, area.NetbarID) {
 		return
 	}
 
@@ -46,10 +56,18 @@ func CreateNetbarArea(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误"})
 		return
 	}
+	if !middleware.RequireNetbarAccess(c, req.NetbarID) {
+		return
+	}
 
 	// 从URL获取netbar_id
 	netbarIDStr := c.Param("netbar_id")
 	if netbarIDStr != "" {
+		if id64, err := strconv.ParseUint(netbarIDStr, 10, 32); err == nil && id64 > 0 {
+			if !middleware.RequireNetbarAccess(c, uint(id64)) {
+				return
+			}
+		}
 		// 验证网吧存在
 		var netbar model.Netbar
 		if err := database.MainDB.First(&netbar, netbarIDStr).Error; err != nil {
@@ -81,6 +99,9 @@ func UpdateNetbarArea(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "区域不存在"})
 		return
 	}
+	if !middleware.RequireNetbarAccess(c, area.NetbarID) {
+		return
+	}
 
 	var updates map[string]interface{}
 	if err := c.ShouldBindJSON(&updates); err != nil {
@@ -98,6 +119,15 @@ func UpdateNetbarArea(c *gin.Context) {
 
 func DeleteNetbarArea(c *gin.Context) {
 	id := c.Param("id")
+
+	var area model.NetbarArea
+	if err := database.MainDB.First(&area, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "区域不存在"})
+		return
+	}
+	if !middleware.RequireNetbarAccess(c, area.NetbarID) {
+		return
+	}
 
 	if err := database.MainDB.Delete(&model.NetbarArea{}, id).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})
@@ -124,4 +154,3 @@ func GetAllAreas(c *gin.Context) {
 
 	c.JSON(http.StatusOK, areas)
 }
-

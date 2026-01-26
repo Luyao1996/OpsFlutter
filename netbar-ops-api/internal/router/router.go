@@ -37,10 +37,12 @@ func Setup(mode string) *gin.Engine {
 		// 需要认证的路由
 		auth := v1.Group("")
 		auth.Use(middleware.JWTAuth())
+		auth.Use(middleware.NetbarScope())
 		auth.Use(middleware.SystemLogger())
 		{
 			// 认证相关
 			auth.GET("/auth/me", handler.GetCurrentUser)
+			auth.PUT("/auth/password", handler.ChangeMyPassword)
 			auth.POST("/auth/logout", handler.Logout)
 			auth.POST("/auth/qr/scan/:session_id", handler.ScanQRCode)
 			auth.POST("/auth/qr/confirm/:session_id", handler.ConfirmQRLogin)
@@ -52,14 +54,14 @@ func Setup(mode string) *gin.Engine {
 			auth.POST("/dashboard/network-diagnose", handler.NetworkDiagnose)
 
 			// 开发工具 - 生成测试数据 (需要认证，仅管理员可用)
-			auth.POST("/seed", handler.RunSeed)
+			auth.POST("/seed", middleware.SuperAdminOnly(), handler.RunSeed)
 
 			// 网吧管理
 			auth.GET("/netbars", handler.GetNetbars)
 			auth.GET("/netbars/:id", handler.GetNetbar)
-			auth.POST("/netbars", handler.CreateNetbar)
-			auth.PUT("/netbars/:id", handler.UpdateNetbar)
-			auth.DELETE("/netbars/:id", handler.DeleteNetbar)
+			auth.POST("/netbars", middleware.SuperAdminOnly(), handler.CreateNetbar)
+			auth.PUT("/netbars/:id", middleware.SuperAdminOnly(), handler.UpdateNetbar)
+			auth.DELETE("/netbars/:id", middleware.SuperAdminOnly(), handler.DeleteNetbar)
 
 			// 通道管理
 			auth.GET("/channels", handler.GetChannels)
@@ -82,15 +84,16 @@ func Setup(mode string) *gin.Engine {
 			auth.PUT("/desktop-layouts/:id", handler.UpdateDesktopLayout)
 			auth.DELETE("/desktop-layouts/:id", handler.DeleteDesktopLayout)
 
-			// 用户管理 (需要管理员权限)
+			// 用户管理（网吧管理员/超级管理员）
 			users := auth.Group("/users")
-			users.Use(middleware.AdminOnly())
+			users.Use(middleware.NetbarAdminOnly())
 			{
 				users.GET("", handler.GetUsers)
 				users.GET("/:id", handler.GetUser)
 				users.POST("", handler.CreateUser)
 				users.PUT("/:id", handler.UpdateUser)
-				users.DELETE("/:id", handler.DeleteUser)
+				users.POST("/:id/reset-password", handler.ResetUserPassword)
+				users.DELETE("/:id", middleware.SuperAdminOnly(), handler.DeleteUser)
 			}
 
 			// 系统日志
@@ -138,12 +141,26 @@ func Setup(mode string) *gin.Engine {
 			auth.DELETE("/startup-items/:id", handler.DeleteStartupItem)
 			auth.GET("/startup-items/monitor", handler.GetStartupItemMonitor)
 
-			// 用户组管理
-			auth.GET("/groups", handler.GetGroups)
-			auth.GET("/groups/:id", handler.GetGroup)
-			auth.POST("/groups", handler.CreateGroup)
-			auth.PUT("/groups/:id", handler.UpdateGroup)
-			auth.DELETE("/groups/:id", handler.DeleteGroup)
+			// 网吧账号组管理（网吧管理员/超级管理员）
+			// NOTE: Gin 对相同前缀的通配符参数名要求一致，这里复用 :id 以避免与 /netbars/:id 冲突
+			netbarGroups := auth.Group("/netbars/:id/groups")
+			netbarGroups.Use(middleware.NetbarAdminOnly())
+			{
+				netbarGroups.GET("", handler.GetNetbarUserGroups)
+				netbarGroups.POST("", handler.CreateNetbarUserGroup)
+				netbarGroups.PUT("/:group_id", handler.UpdateNetbarUserGroup)
+				netbarGroups.DELETE("/:group_id", handler.DeleteNetbarUserGroup)
+				netbarGroups.GET("/:group_id/users", handler.GetNetbarGroupUsers)
+				netbarGroups.POST("/:group_id/users", handler.AddUserToNetbarGroup)
+				netbarGroups.DELETE("/:group_id/users/:user_id", handler.RemoveUserFromNetbarGroup)
+			}
+
+			// 网吧成员列表（网吧管理员/超级管理员）
+			netbarUsers := auth.Group("/netbars/:id/users")
+			netbarUsers.Use(middleware.NetbarAdminOnly())
+			{
+				netbarUsers.GET("", handler.GetNetbarUsers)
+			}
 
 			// 网吧分组管理
 			auth.GET("/netbar-groups", handler.GetNetbarGroups)

@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"netbar-ops-api/internal/database"
+	"netbar-ops-api/internal/middleware"
 	"netbar-ops-api/internal/model"
 )
 
@@ -91,6 +93,11 @@ func GetResources(c *gin.Context) {
 	// - 分公司(BRANCH): netbar_id = 分组ID
 	// - 本网吧(PUBLIC): netbar_id = 网吧ID
 	if netbarID != "" {
+		if id64, err := strconv.ParseUint(netbarID, 10, 32); err == nil && id64 > 0 {
+			if !middleware.RequireNetbarAccess(c, uint(id64)) {
+				return
+			}
+		}
 		query = query.Where("netbar_id = ?", netbarID)
 	}
 
@@ -137,6 +144,11 @@ func SearchResources(c *gin.Context) {
 	}
 
 	if netbarID != "" {
+		if id64, err := strconv.ParseUint(netbarID, 10, 32); err == nil && id64 > 0 {
+			if !middleware.RequireNetbarAccess(c, uint(id64)) {
+				return
+			}
+		}
 		query = query.Where("netbar_id = ?", netbarID)
 	}
 
@@ -193,6 +205,9 @@ func GetResource(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "资源不存在"})
 		return
 	}
+	if !middleware.RequireNetbarAccess(c, resource.NetbarID) {
+		return
+	}
 
 	c.JSON(http.StatusOK, resource)
 }
@@ -204,6 +219,9 @@ func GetResourceContent(c *gin.Context) {
 	var resource model.Resource
 	if err := database.MainDB.First(&resource, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "资源不存在"})
+		return
+	}
+	if !middleware.RequireNetbarAccess(c, resource.NetbarID) {
 		return
 	}
 
@@ -242,6 +260,9 @@ func CreateResource(c *gin.Context) {
 	var req CreateResourceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误"})
+		return
+	}
+	if !middleware.RequireNetbarAccess(c, req.NetbarID) {
 		return
 	}
 
@@ -297,6 +318,9 @@ func UpdateResource(c *gin.Context) {
 	var resource model.Resource
 	if err := database.MainDB.First(&resource, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "资源不存在"})
+		return
+	}
+	if !middleware.RequireNetbarAccess(c, resource.NetbarID) {
 		return
 	}
 
@@ -356,7 +380,9 @@ func DeleteResource(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "资源不存在"})
 		return
 	}
-
+	if !middleware.RequireNetbarAccess(c, resource.NetbarID) {
+		return
+	}
 	// 如果是目录，需要删除所有子资源
 	if resource.IsDirectory {
 		database.MainDB.Where("parent_id = ?", id).Delete(&model.Resource{})
@@ -445,6 +471,9 @@ func CopyResource(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "资源不存在"})
 		return
 	}
+	if !middleware.RequireNetbarAccess(c, resource.NetbarID) {
+		return
+	}
 
 	var req CopyMoveRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -466,6 +495,9 @@ func CopyResource(c *gin.Context) {
 	if req.NetbarID != nil {
 		targetNetbarID = *req.NetbarID
 	}
+	if !middleware.RequireNetbarAccess(c, targetNetbarID) {
+		return
+	}
 
 	// 使用递归拷贝（支持目录）
 	newResource, err := copyResourceRecursive(resource.ID, req.TargetParentID, targetZone, targetNetbarID, username.(string), userID.(uint))
@@ -484,6 +516,9 @@ func MoveResource(c *gin.Context) {
 	var resource model.Resource
 	if err := database.MainDB.First(&resource, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "资源不存在"})
+		return
+	}
+	if !middleware.RequireNetbarAccess(c, resource.NetbarID) {
 		return
 	}
 
@@ -516,6 +551,9 @@ func MoveResource(c *gin.Context) {
 	// 如果提供了netbar_id，也更新netbar_id
 	if req.NetbarID != nil {
 		updates["netbar_id"] = *req.NetbarID
+		if !middleware.RequireNetbarAccess(c, *req.NetbarID) {
+			return
+		}
 	}
 
 	if err := database.MainDB.Model(&resource).Updates(updates).Error; err != nil {

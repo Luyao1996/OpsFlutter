@@ -2,11 +2,13 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"netbar-ops-api/internal/database"
+	"netbar-ops-api/internal/middleware"
 	"netbar-ops-api/internal/model"
 )
 
@@ -33,6 +35,14 @@ var serverStartTime = time.Now()
 func GetDashboard(c *gin.Context) {
 	var stats DashboardStats
 	netbarID := c.Query("netbar_id")
+	if netbarID != "" {
+		if id64, err := strconv.ParseUint(netbarID, 10, 32); err == nil && id64 > 0 {
+			if !middleware.RequireNetbarAccess(c, uint(id64)) {
+				return
+			}
+		}
+	}
+	isSuperAdmin := middleware.IsSuperAdmin(c)
 
 	// 网吧统计
 	if netbarID != "" {
@@ -44,6 +54,14 @@ func GetDashboard(c *gin.Context) {
 				stats.OnlineNetbars = 1
 			}
 		}
+	} else if !isSuperAdmin {
+		allowed := middleware.GetAllowedNetbarIDs(c)
+		if len(allowed) == 0 {
+			c.JSON(http.StatusOK, stats)
+			return
+		}
+		database.MainDB.Model(&model.Netbar{}).Where("id IN ?", allowed).Count(&stats.TotalNetbars)
+		database.MainDB.Model(&model.Netbar{}).Where("id IN ?", allowed).Where("status = 1").Count(&stats.OnlineNetbars)
 	} else {
 		database.MainDB.Model(&model.Netbar{}).Count(&stats.TotalNetbars)
 		database.MainDB.Model(&model.Netbar{}).Where("status = 1").Count(&stats.OnlineNetbars)
@@ -55,6 +73,10 @@ func GetDashboard(c *gin.Context) {
 	if netbarID != "" {
 		desktopQuery = desktopQuery.Where("netbar_id = ?", netbarID)
 		desktopOnlineQuery = desktopOnlineQuery.Where("netbar_id = ?", netbarID)
+	} else if !isSuperAdmin {
+		allowed := middleware.GetAllowedNetbarIDs(c)
+		desktopQuery = desktopQuery.Where("netbar_id IN ?", allowed)
+		desktopOnlineQuery = desktopOnlineQuery.Where("netbar_id IN ?", allowed)
 	}
 	desktopQuery.Count(&stats.TotalDesktops)
 	desktopOnlineQuery.Count(&stats.OnlineDesktops)
@@ -87,6 +109,14 @@ func GetTrendData(c *gin.Context) {
 	var trendData []TrendDataPoint
 	now := time.Now()
 	netbarID := c.Query("netbar_id")
+	if netbarID != "" {
+		if id64, err := strconv.ParseUint(netbarID, 10, 32); err == nil && id64 > 0 {
+			if !middleware.RequireNetbarAccess(c, uint(id64)) {
+				return
+			}
+		}
+	}
+	isSuperAdmin := middleware.IsSuperAdmin(c)
 
 	// 获取最近7天的数据，这里简化处理，实际应该从统计表获取历史数据
 	// 由于目前没有历史统计表，暂时返回模拟数据
@@ -96,6 +126,9 @@ func GetTrendData(c *gin.Context) {
 		query := database.MainDB.Model(&model.Desktop{})
 		if netbarID != "" {
 			query = query.Where("netbar_id = ?", netbarID)
+		} else if !isSuperAdmin {
+			allowed := middleware.GetAllowedNetbarIDs(c)
+			query = query.Where("netbar_id IN ?", allowed)
 		}
 		query.Count(&count)
 

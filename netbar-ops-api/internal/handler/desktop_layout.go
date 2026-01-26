@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"netbar-ops-api/internal/database"
+	"netbar-ops-api/internal/middleware"
 	"netbar-ops-api/internal/model"
 )
 
@@ -37,6 +38,9 @@ func GetDesktopLayouts(c *gin.Context) {
 		return
 	}
 	netbarID := uint(netbarID64)
+	if !middleware.RequireNetbarAccess(c, netbarID) {
+		return
+	}
 
 	var globals []model.DesktopLayout
 	if err := database.MainDB.
@@ -99,6 +103,11 @@ func GetDesktopLayout(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "桌面布局不存在"})
 		return
 	}
+	if layout.NetbarID != nil {
+		if !middleware.RequireNetbarAccess(c, *layout.NetbarID) {
+			return
+		}
+	}
 	c.JSON(http.StatusOK, layout)
 }
 
@@ -133,6 +142,11 @@ func CreateDesktopLayout(c *gin.Context) {
 		BackgroundDelay: req.BackgroundDelay,
 		Icons:           datatypes.JSON(iconsJSON),
 		LockIcons:       req.LockIcons,
+	}
+	if layout.NetbarID != nil {
+		if !middleware.RequireNetbarAccess(c, *layout.NetbarID) {
+			return
+		}
 	}
 
 	// 覆盖：base_layout_id 仅在网吧模式下允许
@@ -196,6 +210,11 @@ func UpdateDesktopLayout(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "桌面布局不存在"})
 		return
 	}
+	if layout.NetbarID != nil {
+		if !middleware.RequireNetbarAccess(c, *layout.NetbarID) {
+			return
+		}
+	}
 
 	var req struct {
 		NetbarID        *uint                     `json:"netbar_id"`
@@ -225,6 +244,9 @@ func UpdateDesktopLayout(c *gin.Context) {
 		return
 	}
 	if req.NetbarID != nil {
+		if !middleware.RequireNetbarAccess(c, *req.NetbarID) {
+			return
+		}
 		layout.NetbarID = req.NetbarID
 		layout.BaseLayoutID = req.BaseLayoutID
 	}
@@ -252,6 +274,17 @@ func DeleteDesktopLayout(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的ID"})
 		return
+	}
+
+	var layout model.DesktopLayout
+	if err := database.MainDB.First(&layout, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "桌面布局不存在"})
+		return
+	}
+	if layout.NetbarID != nil {
+		if !middleware.RequireNetbarAccess(c, *layout.NetbarID) {
+			return
+		}
 	}
 
 	if err := database.MainDB.Delete(&model.DesktopLayout{}, id).Error; err != nil {

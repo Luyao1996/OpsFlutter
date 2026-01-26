@@ -2,10 +2,12 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
 	"netbar-ops-api/internal/database"
+	"netbar-ops-api/internal/middleware"
 	"netbar-ops-api/internal/model"
 )
 
@@ -19,7 +21,21 @@ func GetTerminals(c *gin.Context) {
 	}
 
 	if netbarID := c.Query("netbar_id"); netbarID != "" {
+		if id64, err := strconv.ParseUint(netbarID, 10, 32); err == nil && id64 > 0 {
+			if !middleware.RequireNetbarAccess(c, uint(id64)) {
+				return
+			}
+		}
 		query = query.Where("netbar_id = ?", netbarID)
+	} else {
+		if !middleware.IsSuperAdmin(c) {
+			allowed := middleware.GetAllowedNetbarIDs(c)
+			if len(allowed) == 0 {
+				c.JSON(http.StatusOK, []model.Terminal{})
+				return
+			}
+			query = query.Where("netbar_id IN ?", allowed)
+		}
 	}
 
 	if status := c.Query("status"); status != "" {
@@ -44,6 +60,9 @@ func GetTerminal(c *gin.Context) {
 	var terminal model.Terminal
 	if err := database.MainDB.First(&terminal, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "终端不存在"})
+		return
+	}
+	if !middleware.RequireNetbarAccess(c, terminal.NetbarID) {
 		return
 	}
 
@@ -79,6 +98,9 @@ func CreateTerminal(c *gin.Context) {
 		Type:     req.Type,
 		Status:   0,
 	}
+	if !middleware.RequireNetbarAccess(c, terminal.NetbarID) {
+		return
+	}
 
 	if err := database.MainDB.Create(&terminal).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败"})
@@ -94,6 +116,9 @@ func UpdateTerminal(c *gin.Context) {
 	var terminal model.Terminal
 	if err := database.MainDB.First(&terminal, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "终端不存在"})
+		return
+	}
+	if !middleware.RequireNetbarAccess(c, terminal.NetbarID) {
 		return
 	}
 
@@ -114,6 +139,15 @@ func UpdateTerminal(c *gin.Context) {
 func DeleteTerminal(c *gin.Context) {
 	id := c.Param("id")
 
+	var terminal model.Terminal
+	if err := database.MainDB.First(&terminal, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "终端不存在"})
+		return
+	}
+	if !middleware.RequireNetbarAccess(c, terminal.NetbarID) {
+		return
+	}
+
 	if err := database.MainDB.Delete(&model.Terminal{}, id).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})
 		return
@@ -133,6 +167,9 @@ func TerminalRemote(c *gin.Context) {
 	var terminal model.Terminal
 	if err := database.MainDB.First(&terminal, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "终端不存在"})
+		return
+	}
+	if !middleware.RequireNetbarAccess(c, terminal.NetbarID) {
 		return
 	}
 
@@ -159,6 +196,9 @@ func GetTerminalHeartbeat(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "终端不存在"})
 		return
 	}
+	if !middleware.RequireNetbarAccess(c, terminal.NetbarID) {
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"terminal_id":    terminal.ID,
@@ -171,4 +211,3 @@ func GetTerminalHeartbeat(c *gin.Context) {
 		"last_heartbeat": terminal.LastHeartbeat,
 	})
 }
-
