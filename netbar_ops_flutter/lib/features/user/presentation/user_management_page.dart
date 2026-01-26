@@ -11,7 +11,8 @@ import '../data/user_mock_data.dart';
 import '../data/user_api.dart';
 import 'widgets/group_sidebar.dart';
 import 'widgets/user_grid.dart';
-import 'widgets/add_user_dialog.dart';
+import 'widgets/add_member_dialog.dart';
+import 'widgets/edit_user_dialog.dart';
 import 'widgets/two_factor_dialog.dart';
 
 class UserManagementPage extends ConsumerStatefulWidget {
@@ -27,12 +28,29 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   List<User> _users = [];
   int? _selectedGroupId;
   String _searchQuery = '';
+  String _groupSearchQuery = '';
   bool _isLoading = true;
+  ProviderSubscription<CurrentNetbar>? _netbarSub;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    _netbarSub = ref.listenManual(currentNetbarProvider, (prev, next) {
+      if (prev?.id != next.id) {
+        setState(() {
+          _selectedGroupId = 0;
+          _groupSearchQuery = '';
+        });
+        _loadData();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _netbarSub?.close();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -40,13 +58,25 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
       setState(() => _isLoading = false);
       return;
     }
+    final netbarId = ref.read(currentNetbarProvider).id;
+    if (netbarId == null) {
+      setState(() {
+        _groups = [];
+        _users = [];
+        _selectedGroupId = 0;
+        _isLoading = false;
+      });
+      return;
+    }
     setState(() => _isLoading = true);
     try {
-      final userApi = ref.read(userApiProvider);
-      final groupApi = ref.read(groupApiProvider);
+      final groupApi = ref.read(netbarUserGroupApiProvider);
 
-      final groups = await groupApi.getAll();
-      final users = await userApi.getList(search: _searchQuery.isNotEmpty ? _searchQuery : null);
+      final groups = await groupApi.getAll(netbarId);
+      final users = await groupApi.getNetbarUsers(
+        netbarId,
+        search: _searchQuery.isNotEmpty ? _searchQuery : null,
+      );
 
       setState(() {
         _groups = groups;
@@ -66,7 +96,8 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
     List<User> result = _users;
     // Filter by group only if not '0' (All Members)
     if (_selectedGroupId != null && _selectedGroupId != 0) {
-      result = result.where((u) => u.groupId == _selectedGroupId).toList();
+      final groupId = _selectedGroupId!;
+      result = result.where((u) => u.netbarGroupIds.contains(groupId)).toList();
     }
     if (_searchQuery.isNotEmpty) {
       final q = _searchQuery.toLowerCase();
@@ -83,11 +114,23 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
 
   bool get _isAdmin {
     final user = ref.read(authNotifierProvider).user;
-    return user?.role == 'admin';
+    final role = (user?.role ?? '').toLowerCase();
+    return role == 'admin' || role == 'super_admin';
+  }
+
+  bool get _isSuperAdmin {
+    final user = ref.read(authNotifierProvider).user;
+    final role = (user?.role ?? '').toLowerCase();
+    return role == 'super_admin' || (user?.username == 'admin');
   }
 
   // Actions
   void _handleAddGroup() async {
+    final netbarId = ref.read(currentNetbarProvider).id;
+    if (netbarId == null) {
+      _showError('请先选择网吧');
+      return;
+    }
     String? newName;
     await showDialog(
       context: context,
@@ -116,8 +159,8 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
 
     if (newName != null && newName!.isNotEmpty) {
       try {
-        final groupApi = ref.read(groupApiProvider);
-        await groupApi.create(name: newName!);
+        final groupApi = ref.read(netbarUserGroupApiProvider);
+        await groupApi.create(netbarId, name: newName!);
         _loadData();
       } catch (e) {
         _showApiError('创建分组', e);
@@ -126,19 +169,72 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   }
 
   void _handleAddUser() async {
+    final netbarId = ref.read(currentNetbarProvider).id;
+    if (netbarId == null) {
+      _showError('请先选择网吧');
+      return;
+    }
     final changed = await showDialog<bool>(
       context: context,
-      builder: (context) => AddUserDialog(groups: _groups, initialGroupId: _selectedGroupId),
+      builder: (context) => AddMemberDialog(
+        netbarId: netbarId,
+        groups: _groups,
+        initialGroupId: _selectedGroupId == 0 ? null : _selectedGroupId,
+      ),
     );
     if (changed == true) {
       _loadData(); // Reload after add
     }
   }
 
+  Future<void> _handleDeleteGroup(UserGroup group) async {
+    final netbarId = ref.read(currentNetbarProvider).id;
+    if (netbarId == null) {
+      _showError('请先选择网吧');
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除分组'),
+        content: Text('确定要删除分组 "${group.name}" 吗？\n该分组下的成员关系将被移除。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final groupApi = ref.read(netbarUserGroupApiProvider);
+      await groupApi.delete(netbarId, group.id);
+      if (!mounted) return;
+      if (_selectedGroupId == group.id) {
+        setState(() => _selectedGroupId = 0);
+      }
+      showTopNotice(context, '已删除分组：${group.name}', level: NoticeLevel.success);
+      _loadData();
+    } catch (e) {
+      _showApiError('删除分组', e);
+    }
+  }
+
   void _handleEditUser(User user) async {
+    final netbarId = ref.read(currentNetbarProvider).id;
     final changed = await showDialog<bool>(
       context: context,
-      builder: (context) => AddUserDialog(groups: _groups, initialUser: user),
+      builder: (context) => EditUserDialog(
+        user: user,
+        netbarId: netbarId,
+        groupId: (_selectedGroupId != null && _selectedGroupId! > 0) ? _selectedGroupId : null,
+      ),
     );
     if (changed == true) {
       _loadData(); // Reload after edit
@@ -224,6 +320,31 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
       );
     }
 
+    final currentNetbar = ref.watch(currentNetbarProvider);
+    if (currentNetbar.id == null) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF3F4F6),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(LucideIcons.store, size: 48, color: Colors.grey.shade400),
+              const SizedBox(height: 12),
+              const Text(
+                '需先选择网吧',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '请选择一个网吧后再管理该网吧下的账号分组与成员',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F6),
       body: LayoutBuilder(
@@ -236,6 +357,9 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
             selectedGroupId: _selectedGroupId,
             onSelectGroup: (id) => setState(() => _selectedGroupId = id),
             onAddGroup: _handleAddGroup,
+            groupSearchQuery: _groupSearchQuery,
+            onGroupSearchChanged: (v) => setState(() => _groupSearchQuery = v),
+            onDeleteGroup: _handleDeleteGroup,
           );
 
           final main = Column(
@@ -404,6 +528,12 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
             onAddGroup: () {
               Navigator.pop(context);
               _handleAddGroup();
+            },
+            groupSearchQuery: _groupSearchQuery,
+            onGroupSearchChanged: (v) => setState(() => _groupSearchQuery = v),
+            onDeleteGroup: (group) async {
+              Navigator.pop(context);
+              await _handleDeleteGroup(group);
             },
           ),
         ),

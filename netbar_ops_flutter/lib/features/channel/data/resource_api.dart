@@ -98,7 +98,7 @@ class ResourceApi {
     if (parentId != null) params['parent_id'] = parentId.toString();
     if (search != null) params['search'] = search;
     if (type != null) params['type'] = type;
-    if (netbarId != null) params['netbar_id'] = netbarId.toString();
+    if (netbarId != null && netbarId != 0) params['netbar_id'] = netbarId.toString();
 
     final response = await _client.get('/resources', queryParameters: params);
     final list = response.data as List? ?? [];
@@ -331,7 +331,7 @@ class ResourceApi {
   }) async {
     final params = <String, dynamic>{'keyword': keyword};
     if (zone != null) params['zone'] = zone;
-    if (netbarId != null) params['netbar_id'] = netbarId.toString();
+    if (netbarId != null && netbarId != 0) params['netbar_id'] = netbarId.toString();
     if (parentId != null) params['parent_id'] = parentId.toString();
 
     final response = await _client.get(

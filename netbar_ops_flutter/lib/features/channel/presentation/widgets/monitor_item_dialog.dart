@@ -6,12 +6,14 @@ class MonitorItemDialog extends StatelessWidget {
   final StartupItemStats item;
   final String netbarName;
   final VoidCallback onClose;
+  final VoidCallback? onEdit;
 
   const MonitorItemDialog({
     super.key,
     required this.item,
     required this.netbarName,
     required this.onClose,
+    this.onEdit,
   });
 
   @override
@@ -173,12 +175,22 @@ class MonitorItemDialog extends StatelessWidget {
                 borderRadius:
                     const BorderRadius.vertical(bottom: Radius.circular(20)),
               ),
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: onClose,
-                  child: const Text('关闭'),
-                ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (onEdit != null) ...[
+                    TextButton.icon(
+                      onPressed: onEdit,
+                      icon: const Icon(LucideIcons.pencil, size: 16),
+                      label: const Text('编辑'),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  TextButton(
+                    onPressed: onClose,
+                    child: const Text('关闭'),
+                  ),
+                ],
               ),
             ),
           ],

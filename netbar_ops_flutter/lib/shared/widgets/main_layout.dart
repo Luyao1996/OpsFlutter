@@ -107,30 +107,50 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     if (_tabsInitialized) return;
     _tabsInitialized = true;
 
-    final tabsState = ref.read(netbarTabsProvider);
-    if (tabsState.tabs.isNotEmpty) {
-      // 如果有历史标签但没有激活项，默认选中最后一个
-      if (tabsState.activeTabId == null && tabsState.tabs.isNotEmpty) {
-        await ref
-            .read(netbarTabsProvider.notifier)
-            .switchToTab(tabsState.tabs.last.id);
-      }
-      return;
-    }
-
     final netbarApi = NetbarApi();
     try {
       final netbars = await netbarApi.getList();
-      if (!mounted || netbars.isEmpty) return;
+      if (!mounted) return;
 
-      final target = netbars.first;
+      final tabsNotifier = ref.read(netbarTabsProvider.notifier);
+      final currentNotifier = ref.read(currentNetbarProvider.notifier);
+      final existing = ref.read(netbarTabsProvider);
 
-      await ref
-          .read(netbarTabsProvider.notifier)
-          .openTab(target.id, target.name, target.status);
-      await ref
-          .read(currentNetbarProvider.notifier)
-          .setNetbar(target.id, target.name, target.status);
+      if (netbars.isEmpty) {
+        await tabsNotifier.resetAll();
+        await currentNotifier.clear();
+        return;
+      }
+
+      final byId = {for (final n in netbars) n.id: n};
+
+      // 过滤掉已无权限的历史标签
+      final keptTabs = existing.tabs.where((t) => byId.containsKey(t.id)).toList();
+      int? activeId = existing.activeTabId;
+      if (activeId == null || !byId.containsKey(activeId)) {
+        activeId = keptTabs.isNotEmpty ? keptTabs.last.id : netbars.first.id;
+      }
+
+      if (keptTabs.isEmpty) {
+        // 无可用历史标签：打开第一个可访问网吧
+        final target = netbars.first;
+        await tabsNotifier.openTab(target.id, target.name, target.status);
+        await currentNotifier.setNetbar(target.id, target.name, target.status);
+        return;
+      }
+
+      // 用后端返回的最新 name/status 同步标签信息
+      final syncedTabs = keptTabs
+          .map((t) => OpenedNetbarTab(
+                id: t.id,
+                name: byId[t.id]!.name,
+                status: byId[t.id]!.status,
+                openedAt: t.openedAt,
+              ))
+          .toList();
+      await tabsNotifier.replaceAll(NetbarTabsState(tabs: syncedTabs, activeTabId: activeId));
+      final activeNetbar = byId[activeId]!;
+      await currentNotifier.setNetbar(activeNetbar.id, activeNetbar.name, activeNetbar.status);
     } catch (_) {
       // 网络或数据错误时保持现状，避免阻塞 UI
     }
@@ -352,7 +372,8 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
               LucideIcons.database,
               Colors.orange,
             ),
-            if ((authState.user?.role ?? 'user') == 'admin')
+            if (const {'admin', 'super_admin'}.contains((authState.user?.role ?? 'user').toLowerCase()) ||
+                (authState.user?.username == 'admin'))
               _buildMenuItem(
                 '用户账户',
                 '/user-management',

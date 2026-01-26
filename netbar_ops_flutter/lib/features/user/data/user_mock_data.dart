@@ -16,6 +16,10 @@ class User {
   final String roleRaw;
   final List<UserRole> roles;
   final int? groupId;
+  /// 该用户可访问的网吧列表（通过网吧账号组推导，管理员接口返回）
+  final List<int> netbarIds;
+  /// 该用户在当前网吧内所属的组ID列表（网吧成员接口返回）
+  final List<int> netbarGroupIds;
   final String? email;
   final String? phone;
   final bool is2FABound;
@@ -29,6 +33,8 @@ class User {
     required this.roleRaw,
     required this.roles,
     this.groupId,
+    this.netbarIds = const [],
+    this.netbarGroupIds = const [],
     this.email,
     this.phone,
     required this.is2FABound,
@@ -38,9 +44,20 @@ class User {
 
   factory User.fromJson(Map<String, dynamic> json) {
     final roleStr = (json['role'] ?? 'user').toString();
-    final mappedRole = roleStr == 'admin' ? UserRole.admin : UserRole.user;
+    final mappedRole =
+        (roleStr == 'admin' || roleStr == 'super_admin') ? UserRole.admin : UserRole.user;
     final username = (json['username'] ?? '').toString();
     final name = (json['name'] ?? username).toString();
+    final netbarIds = (json['netbar_ids'] as List?)
+            ?.map((e) => int.tryParse(e.toString()) ?? 0)
+            .where((v) => v > 0)
+            .toList() ??
+        const <int>[];
+    final groupIds = (json['group_ids'] as List?)
+            ?.map((e) => int.tryParse(e.toString()) ?? 0)
+            .where((v) => v > 0)
+            .toList() ??
+        const <int>[];
 
     return User(
       id: int.tryParse((json['id'] ?? 0).toString()) ?? 0,
@@ -49,6 +66,8 @@ class User {
       roleRaw: roleStr,
       roles: [mappedRole],
       groupId: json['group_id'] != null ? int.tryParse(json['group_id'].toString()) : null,
+      netbarIds: netbarIds,
+      netbarGroupIds: groupIds,
       email: json['email']?.toString(),
       phone: json['phone']?.toString(),
       is2FABound: json['is_2fa_bound'] ?? false,

@@ -25,87 +25,98 @@ class _QuickActionsState extends ConsumerState<QuickActions> {
         boxShadow: AppShadows.sm,
         border: Border.all(color: Colors.white),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '快捷操作',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 24),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final useFlexSpacer = constraints.hasBoundedHeight;
 
-          _buildActionButton(
-            context,
-            title: '全部重启',
-            subtitle: '重启所有离线服务',
-            icon: LucideIcons.activity,
-            color: Colors.blue,
-            onTap: () => _handleRestartAll(context),
-          ),
-          const SizedBox(height: 16),
-          _buildActionButton(
-            context,
-            title: '网络诊断',
-            subtitle: '检测节点连通性',
-            icon: LucideIcons.wifi,
-            color: Colors.orange,
-            onTap: () => _handleNetworkDiagnose(context),
-          ),
-
-          const SizedBox(height: 24),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Colors.blue, Colors.indigo],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '快捷操作',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Stack(
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '系统版本',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.white.withOpacity(0.9),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'v2.5.0 Pro',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '已是最新版本',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white.withOpacity(0.75),
-                      ),
-                    ),
-                  ],
+              const SizedBox(height: 24),
+
+              _buildActionButton(
+                context,
+                title: '全部重启',
+                subtitle: '重启所有离线服务',
+                icon: LucideIcons.activity,
+                color: Colors.blue,
+                onTap: () => _handleRestartAll(context),
+              ),
+              const SizedBox(height: 16),
+              _buildActionButton(
+                context,
+                title: '网络诊断',
+                subtitle: '检测节点连通性',
+                icon: LucideIcons.wifi,
+                color: Colors.orange,
+                onTap: () => _handleNetworkDiagnose(context),
+              ),
+
+              if (useFlexSpacer) const Spacer() else const SizedBox(height: 24),
+
+              _buildVersionCard(context),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildVersionCard(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Colors.blue, Colors.indigo],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Stack(
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '系统版本',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.white.withOpacity(0.9),
                 ),
-                Positioned(
-                  right: -16,
-                  bottom: -16,
-                  child: Icon(
-                    LucideIcons.activity,
-                    size: 80,
-                    color: Colors.white.withOpacity(0.1),
-                  ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'v2.5.0 Pro',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
                 ),
-              ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '已是最新版本',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.white.withOpacity(0.75),
+                ),
+              ),
+            ],
+          ),
+          Positioned(
+            right: -16,
+            bottom: -16,
+            child: Icon(
+              LucideIcons.activity,
+              size: 80,
+              color: Colors.white.withOpacity(0.1),
             ),
           ),
         ],

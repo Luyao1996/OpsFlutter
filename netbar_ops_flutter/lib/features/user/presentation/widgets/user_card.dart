@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../data/user_mock_data.dart';
 
@@ -36,6 +38,9 @@ class _UserCardState extends State<UserCard> {
 
   @override
   Widget build(BuildContext context) {
+    final alwaysShowEdit =
+        context.isPhone || (!kIsWeb && defaultTargetPlatform == TargetPlatform.android);
+    final showEdit = _isHovered || alwaysShowEdit;
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
@@ -98,11 +103,24 @@ class _UserCardState extends State<UserCard> {
                     ],
                   ),
                 ),
-                if (_isHovered)
-                  InkWell(
-                    onTap: widget.onEdit,
-                    child: const Icon(LucideIcons.edit3, size: 16, color: Colors.grey),
+                SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: IgnorePointer(
+                    ignoring: !showEdit,
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 120),
+                      opacity: showEdit ? 1 : 0,
+                      child: InkWell(
+                        onTap: widget.onEdit,
+                        borderRadius: BorderRadius.circular(8),
+                        child: const Center(
+                          child: Icon(LucideIcons.edit3, size: 16, color: Colors.grey),
+                        ),
+                      ),
+                    ),
                   ),
+                ),
               ],
             ),
             const SizedBox(height: 12),

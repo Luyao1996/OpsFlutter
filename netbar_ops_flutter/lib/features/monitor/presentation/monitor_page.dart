@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -10,6 +11,7 @@ import '../../../shared/providers/terminal_dock_provider.dart';
 import '../../../shared/services/terminal_window_bridge.dart';
 import '../../../shared/utils/platform_utils.dart';
 import '../../../shared/utils/top_notice.dart';
+import '../../../shared/utils/open_in_new_tab.dart';
 import '../data/terminal_api.dart';
 import 'widgets/terminal_card.dart';
 
@@ -480,7 +482,12 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
       );
       return;
     }
-    context.push('/terminal/${terminal.id}');
+    final location = '/terminal/${terminal.id}';
+    if (kIsWeb) {
+      openInNewTab(buildWebUrlForLocation(location));
+      return;
+    }
+    context.push(location);
   }
 
   /// 转换并格式化为东八区时间

@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/responsive/responsive.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../data/terminal_api.dart';
+
+enum _ProcessSortKey { name, pid, cpu, mem, user }
 
 class ProcessManagerTab extends ConsumerStatefulWidget {
   final int terminalId;
@@ -19,6 +22,8 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
   List<TerminalProcess> _processes = [];
   bool _loading = false;
   String? _error;
+  _ProcessSortKey? _sortKey;
+  bool _sortAsc = true;
 
   @override
   void initState() {
@@ -66,15 +71,66 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
     }
   }
 
+  bool _defaultSortAsc(_ProcessSortKey key) {
+    switch (key) {
+      case _ProcessSortKey.cpu:
+      case _ProcessSortKey.mem:
+        return false; // CPU/内存默认降序
+      case _ProcessSortKey.name:
+      case _ProcessSortKey.pid:
+      case _ProcessSortKey.user:
+        return true;
+    }
+  }
+
+  void _toggleSort(_ProcessSortKey key) {
+    setState(() {
+      if (_sortKey == key) {
+        _sortAsc = !_sortAsc;
+      } else {
+        _sortKey = key;
+        _sortAsc = _defaultSortAsc(key);
+      }
+    });
+  }
+
   List<TerminalProcess> get _filteredProcesses {
-    if (_processSearch.isEmpty) return _processes;
-    return _processes
-        .where(
-          (p) =>
-              p.name.toLowerCase().contains(_processSearch.toLowerCase()) ||
-              p.pid.toString().contains(_processSearch),
-        )
+    final query = _processSearch.trim().toLowerCase();
+    final list = (query.isEmpty
+            ? _processes
+            : _processes.where((p) {
+                return p.name.toLowerCase().contains(query) || p.pid.toString().contains(query);
+              }))
         .toList();
+
+    final sortKey = _sortKey;
+    if (sortKey == null) return list;
+
+    int compare(TerminalProcess a, TerminalProcess b) {
+      int c;
+      switch (sortKey) {
+        case _ProcessSortKey.name:
+          c = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+          break;
+        case _ProcessSortKey.pid:
+          c = a.pid.compareTo(b.pid);
+          break;
+        case _ProcessSortKey.cpu:
+          c = a.cpu.compareTo(b.cpu);
+          break;
+        case _ProcessSortKey.mem:
+          c = a.mem.compareTo(b.mem);
+          break;
+        case _ProcessSortKey.user:
+          c = a.user.toLowerCase().compareTo(b.user.toLowerCase());
+          break;
+      }
+      if (c == 0) c = a.pid.compareTo(b.pid);
+      return _sortAsc ? c : -c;
+    }
+
+    list.sort(compare);
+    return list;
   }
 
   @override
@@ -153,11 +209,11 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
             ),
             child: Row(
               children: [
-                Expanded(child: _buildHeaderCell('进程名')),
-                SizedBox(width: 80, child: _buildHeaderCell('PID')),
-                SizedBox(width: 100, child: _buildHeaderCell('CPU %')),
-                SizedBox(width: 100, child: _buildHeaderCell('内存 (MB)')),
-                SizedBox(width: 120, child: _buildHeaderCell('用户')),
+                Expanded(child: _buildSortHeaderCell('进程名', _ProcessSortKey.name)),
+                SizedBox(width: 80, child: _buildSortHeaderCell('PID', _ProcessSortKey.pid)),
+                SizedBox(width: 100, child: _buildSortHeaderCell('CPU %', _ProcessSortKey.cpu)),
+                SizedBox(width: 100, child: _buildSortHeaderCell('内存 (MB)', _ProcessSortKey.mem)),
+                SizedBox(width: 120, child: _buildSortHeaderCell('用户', _ProcessSortKey.user)),
                 const SizedBox(width: 48), // Action col (touch-safe)
               ],
             ),
@@ -170,7 +226,7 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
               : _error != null
               ? Center(
                   child: Text(
-                    _error!,
+                    '加载失败: $_error',
                     style: const TextStyle(color: Colors.red),
                   ),
                 )
@@ -351,6 +407,41 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
         fontSize: 12,
         color: Colors.grey.shade500,
         fontWeight: FontWeight.bold,
+      ),
+    );
+  }
+
+  Widget _buildSortHeaderCell(String text, _ProcessSortKey key) {
+    final isActive = _sortKey == key;
+    final color = isActive ? AppColors.iosBlue : Colors.grey.shade500;
+    return GestureDetector(
+      onTap: () => _toggleSort(key),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Row(
+          children: [
+            Flexible(
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: color,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            if (isActive) ...[
+              const SizedBox(width: 4),
+              Icon(
+                _sortAsc ? LucideIcons.arrowUp : LucideIcons.arrowDown,
+                size: 12,
+                color: AppColors.iosBlue,
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

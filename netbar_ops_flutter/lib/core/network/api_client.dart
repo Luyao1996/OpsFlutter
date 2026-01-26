@@ -46,7 +46,8 @@ class ApiClient {
           return handler.next(response);
         },
         onError: (error, handler) async {
-          if (error.response?.statusCode == 401) {
+          final ignoreUnauthorized = error.requestOptions.extra['ignoreUnauthorized'] == true;
+          if (!ignoreUnauthorized && error.response?.statusCode == 401) {
             // 清除认证数据
             await TokenStore.clearAuth();
             // 触发跳转登录
@@ -154,4 +155,3 @@ class ApiClient {
     );
   }
 }
-

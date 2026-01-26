@@ -8,7 +8,8 @@ class PermissionService {
 
   PermissionService({required this.role, required this.groupId});
 
-  bool get isAdmin => role == 'admin';
+  bool get isAdmin => role == 'admin' || role == 'super_admin';
+  bool get isSuperAdmin => role == 'super_admin';
   int get userGroupId => groupId;
 
   /// zone: PUBLIC/HEADQUARTERS/BRANCH

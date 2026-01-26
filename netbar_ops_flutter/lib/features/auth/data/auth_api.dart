@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import '../../../core/network/api_client.dart';
 
 /// 登录请求
@@ -133,6 +134,17 @@ class AuthApi {
   Future<User> getCurrentUser() async {
     final response = await _client.get('/auth/me');
     return User.fromJson(response.data);
+  }
+
+  /// 修改当前用户密码
+  Future<void> changeMyPassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    await _client.put('/auth/password', data: {
+      'current_password': currentPassword,
+      'new_password': newPassword,
+    }, options: Options(extra: {'ignoreUnauthorized': true}));
   }
 
   /// 创建 QR 会话

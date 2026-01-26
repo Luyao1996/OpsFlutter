@@ -67,6 +67,22 @@ class TerminalWindowBridge {
     WidgetRef ref,
     TerminalDockItem item,
   ) async {
+    // Prefer restoring the existing hidden window to avoid rebuilding state.
+    final wid = item.windowId;
+    if (wid != null) {
+      try {
+        final ids = await DesktopMultiWindow.getAllSubWindowIds();
+        if (ids.contains(wid)) {
+          final controller = WindowController.fromWindowId(wid);
+          await controller.show();
+          ref.read(terminalDockProvider.notifier).removeMinimized(item.terminalId);
+          return;
+        }
+      } catch (_) {
+        // Fallback to create new window.
+      }
+    }
+
     await openTerminalWindow(
       terminalId: item.terminalId,
       initialTab: item.lastTab,
@@ -79,6 +95,12 @@ class TerminalWindowBridge {
     if (!isDesktopPlatform) return;
     final controller = WindowController.fromWindowId(windowId);
     await controller.close();
+  }
+
+  static Future<void> hideWindowById(int windowId) async {
+    if (!isDesktopPlatform) return;
+    final controller = WindowController.fromWindowId(windowId);
+    await controller.hide();
   }
 
   static Future<void> closeAllSubWindows() async {

@@ -605,6 +605,19 @@ class _ResourceManagementPageState
     }
   }
 
+  /// 获取启动项查询用的 netbar_id
+  /// 后端 `/startup-items` 对非超管要求必须传 netbar_id，因此共享区也使用 0（全局）。
+  int _getStartupNetbarId() {
+    switch (_currentZone) {
+      case ResourceZone.headquarters:
+        return 0;
+      case ResourceZone.branch:
+        return ref.read(currentNetbarProvider).id ?? 0;
+      case ResourceZone.shared:
+        return 0;
+    }
+  }
+
   bool get _isAdmin {
     final auth = ref.watch(authNotifierProvider);
     final role = auth.user?.role.toLowerCase() ?? '';
@@ -674,7 +687,7 @@ class _ResourceManagementPageState
       } else {
         final items = await _startupItemApi.getAll(
           zone: _getZoneString(),
-          netbarId: _getNetbarId(),
+          netbarId: _getStartupNetbarId(),
         );
         if (mounted) setState(() => _startupItems = items);
       }
@@ -847,7 +860,19 @@ class _ResourceManagementPageState
   }
 
   List<Resource> get _selectedResources {
-    return _files.where((f) => _selectedIds.contains(f.id.toString())).toList();
+    final byId = <String, Resource>{};
+    for (final f in _files) {
+      byId[f.id.toString()] = f;
+    }
+    for (final f in _searchResults) {
+      byId[f.id.toString()] = f;
+    }
+    final selected = <Resource>[];
+    for (final id in _selectedIds) {
+      final f = byId[id];
+      if (f != null) selected.add(f);
+    }
+    return selected;
   }
 
   void _handleDragStart(DragStartDetails details) {
@@ -1229,9 +1254,6 @@ class _ResourceManagementPageState
       return;
     }
 
-    final pasteLabel = _clipboard.isNotEmpty
-        ? '粘贴 (已复制${_clipboard.length}个项)'
-        : '粘贴';
     showContextMenu(
       context: context,
       position: position,
@@ -1239,22 +1261,20 @@ class _ResourceManagementPageState
         ContextMenuItem(
           label: '新建文件夹',
           icon: LucideIcons.folderPlus,
-          onTap: _canEdit ? _handleCreateFolder : null,
-          disabled: !_canEdit,
+          onTap: _handleCreateFolder,
         ),
         ContextMenuItem(
           label: '上传文件',
           icon: LucideIcons.upload,
-          onTap: _canEdit ? _showUploadModal : null,
-          disabled: !_canEdit,
+          onTap: _showUploadModal,
         ),
-        ContextMenuItem(
-          label: pasteLabel,
-          icon: LucideIcons.clipboard,
-          onTap: _handlePaste,
-          disabled: !_canEdit || _clipboard.isEmpty,
-          divider: true,
-        ),
+        if (_clipboard.isNotEmpty)
+          ContextMenuItem(
+            label: '粘贴 (已复制${_clipboard.length}个项)',
+            icon: LucideIcons.clipboard,
+            onTap: _handlePaste,
+            divider: true,
+          ),
         ContextMenuItem(
           label: '刷新',
           icon: LucideIcons.refreshCw,
@@ -1849,15 +1869,17 @@ class _ResourceManagementPageState
       final utilityActions = <Widget>[];
 
       if (_activeModule == ModuleTab.files) {
-        if (_canEdit) {
-          if (_selectedResources.isNotEmpty) {
+        if (_selectedResources.isNotEmpty) {
+          quickActions.add(
+            _buildBatchButton(
+              '复制',
+              LucideIcons.copy,
+              AppColors.iosBlue,
+              _handleBatchCopy,
+            ),
+          );
+          if (_canEdit) {
             quickActions.addAll([
-              _buildBatchButton(
-                '复制',
-                LucideIcons.copy,
-                AppColors.iosBlue,
-                _handleBatchCopy,
-              ),
               _buildBatchButton(
                 '剪切',
                 LucideIcons.scissors,
@@ -1881,24 +1903,25 @@ class _ResourceManagementPageState
                 ),
             ]);
           }
+        }
+
+        if (_canEdit && _clipboard.isNotEmpty) {
           quickActions.add(
             _buildBatchButton(
-              '粘贴${_clipboard.isNotEmpty ? ' (${_clipboard.length})' : ''}',
+              '粘贴 (${_clipboard.length})',
               LucideIcons.clipboard,
               Colors.green,
               _handlePaste,
-              enabled: _canEdit && _clipboard.isNotEmpty,
             ),
           );
-
-          utilityActions.addAll([_buildLayoutToggle(), _buildUploadButton()]);
-        } else {
-          utilityActions.add(_buildLayoutToggle());
         }
-        } else {
-          if (_canEdit) {
-            if (_selectedStartupItems.isNotEmpty && !isPhone) {
-              quickActions.addAll([
+
+        utilityActions.add(_buildLayoutToggle());
+        if (_canEdit) utilityActions.add(_buildUploadButton());
+      } else {
+        if (_canEdit) {
+          if (_selectedStartupItems.isNotEmpty && !isPhone) {
+            quickActions.addAll([
                 _buildBatchButton(
                   isPhone ? '启用' : '批量启用',
                   LucideIcons.toggleRight,
@@ -2003,55 +2026,66 @@ class _ResourceManagementPageState
                 ],
               )
             else if (_activeModule == ModuleTab.startup && _canEdit && isPhone)
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildMobileActionButton(
-                      label: '启用',
-                      icon: LucideIcons.toggleRight,
-                      color: const Color(0xFF22C55E),
-                      enabled:
-                          _selectedStartupItems.isNotEmpty &&
-                          _canDisableStartupItem,
-                      onTap: () => _handleBatchStartupEnable(true),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _buildMobileActionButton(
-                      label: '禁用',
-                      icon: LucideIcons.toggleLeft,
-                      color: Colors.grey.shade600,
-                      enabled:
-                          _selectedStartupItems.isNotEmpty &&
-                          _canDisableStartupItem,
-                      onTap: () => _handleBatchStartupEnable(false),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _buildMobileActionButton(
-                      label: '删除',
-                      icon: LucideIcons.trash2,
-                      color: Colors.red,
-                      enabled:
-                          _selectedStartupItems.isNotEmpty &&
-                          _canDeleteStartupItem,
-                      onTap: _handleBatchStartupDelete,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _buildMobileActionButton(
-                      label: '新增',
-                      icon: LucideIcons.plus,
-                      color: const Color(0xFF22C55E),
-                      enabled: true,
-                      onTap: _showAddStartupItemModal,
-                    ),
-                  ),
-                ],
-              )
+              _selectedStartupItems.isEmpty
+                  ? Row(
+                      children: [
+                        _buildMobileActionButton(
+                          label: '新增',
+                          icon: LucideIcons.plus,
+                          color: const Color(0xFF22C55E),
+                          enabled: true,
+                          onTap: _showAddStartupItemModal,
+                        ),
+                        const Spacer(),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        if (_canDisableStartupItem) ...[
+                          Expanded(
+                            child: _buildMobileActionButton(
+                              label: '启用',
+                              icon: LucideIcons.toggleRight,
+                              color: const Color(0xFF22C55E),
+                              enabled: true,
+                              onTap: () => _handleBatchStartupEnable(true),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _buildMobileActionButton(
+                              label: '禁用',
+                              icon: LucideIcons.toggleLeft,
+                              color: Colors.grey.shade600,
+                              enabled: true,
+                              onTap: () => _handleBatchStartupEnable(false),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                        if (_canDeleteStartupItem) ...[
+                          Expanded(
+                            child: _buildMobileActionButton(
+                              label: '删除',
+                              icon: LucideIcons.trash2,
+                              color: Colors.red,
+                              enabled: true,
+                              onTap: _handleBatchStartupDelete,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                        Expanded(
+                          child: _buildMobileActionButton(
+                            label: '新增',
+                            icon: LucideIcons.plus,
+                            color: const Color(0xFF22C55E),
+                            enabled: true,
+                            onTap: _showAddStartupItemModal,
+                          ),
+                        ),
+                      ],
+                    )
             else if (utilityActions.isNotEmpty)
               Wrap(spacing: 8, runSpacing: 8, children: utilityActions),
           ],
@@ -2072,7 +2106,7 @@ class _ResourceManagementPageState
           _buildModuleTab(ModuleTab.startup, LucideIcons.zap, '启动项'),
           const Spacer(),
           if (_activeModule == ModuleTab.files) ...[
-            if (_canEdit && _selectedResources.isNotEmpty) ...[
+            if (_selectedResources.isNotEmpty) ...[
               Text(
                 '已选 ${_selectedResources.length} 项',
                 style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
@@ -2084,34 +2118,35 @@ class _ResourceManagementPageState
                 AppColors.iosBlue,
                 _handleBatchCopy,
               ),
-              const SizedBox(width: 8),
-              _buildBatchButton(
-                '剪切',
-                LucideIcons.scissors,
-                Colors.orange,
-                _handleBatchCut,
-                enabled: _canEdit,
-              ),
-              const SizedBox(width: 8),
-              _buildBatchButton(
-                '删除',
-                LucideIcons.trash2,
-                Colors.red,
-                _handleBatchDelete,
-                enabled: _canEdit,
-              ),
+              if (_canEdit) ...[
+                const SizedBox(width: 8),
+                _buildBatchButton(
+                  '剪切',
+                  LucideIcons.scissors,
+                  Colors.orange,
+                  _handleBatchCut,
+                  enabled: _canEdit,
+                ),
+                const SizedBox(width: 8),
+                _buildBatchButton(
+                  '删除',
+                  LucideIcons.trash2,
+                  Colors.red,
+                  _handleBatchDelete,
+                  enabled: _canEdit,
+                ),
+              ],
             ],
-            if (_canEdit) ...[
+            if (_canEdit && _clipboard.isNotEmpty) ...[
               const SizedBox(width: 12),
               _buildBatchButton(
-                '粘贴${_clipboard.isNotEmpty ? ' (${_clipboard.length})' : ''}',
+                '粘贴 (${_clipboard.length})',
                 LucideIcons.clipboard,
                 Colors.green,
                 _handlePaste,
-                enabled: _canEdit && _clipboard.isNotEmpty,
               ),
-              const SizedBox(width: 16),
             ],
+            if (_selectedResources.isNotEmpty || (_canEdit && _clipboard.isNotEmpty)) const SizedBox(width: 16),
             // 搜索框
             Container(
               width: 200,
@@ -2373,6 +2408,7 @@ class _ResourceManagementPageState
           ),
         ),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(icon, size: 14, color: fg),

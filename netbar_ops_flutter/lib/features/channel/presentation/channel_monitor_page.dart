@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
 import '../../../core/theme/app_theme.dart';
@@ -82,6 +83,9 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
                       i.path.toLowerCase().contains(query),
                 )
                 .toList();
+          }
+          if (_showOnlyAbnormal) {
+            items = items.where(_isItemAbnormal).toList();
           }
           return NetbarMonitorData(
             id: netbar.id,
@@ -709,7 +713,7 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
                           spacing: 8,
                           runSpacing: 8,
                           children: netbar.items
-                              .map((item) => _buildItemChip(item, netbar.name))
+                              .map((item) => _buildItemChip(item, netbar))
                               .toList(),
                         ),
                     ],
@@ -813,7 +817,7 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
                                   children: netbar.items
                                       .map(
                                         (item) =>
-                                            _buildItemChip(item, netbar.name),
+                                            _buildItemChip(item, netbar),
                                       )
                                       .toList(),
                                 ),
@@ -841,7 +845,7 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
     );
   }
 
-  Widget _buildItemChip(StartupItemStats item, String netbarName) {
+  Widget _buildItemChip(StartupItemStats item, NetbarMonitorData netbar) {
     final failureRate = item.failureRate;
     final isCritical = failureRate > 10 || item.shortLifeRate > 50;
     final isWarning =
@@ -859,13 +863,26 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
 
     return GestureDetector(
       onTap: () {
+        final startupItemId = int.tryParse(item.id);
         showDialog(
           context: context,
           barrierColor: Colors.black.withOpacity(0.3),
           builder: (context) => MonitorItemDialog(
             item: item,
-            netbarName: netbarName,
+            netbarName: netbar.name,
             onClose: () => Navigator.of(context).pop(),
+            onEdit: startupItemId == null
+                ? null
+                : () async {
+                    await ref.read(currentNetbarProvider.notifier).setNetbar(
+                          netbar.id,
+                          netbar.name,
+                          netbar.status,
+                        );
+                    if (!context.mounted) return;
+                    Navigator.of(context).pop();
+                    context.go('/channel-management?tab=startup&edit_startup_item_id=$startupItemId');
+                  },
           ),
         );
       },

@@ -94,6 +94,7 @@ class DashboardPage extends ConsumerWidget {
             // Total width = columns * itemWidth + (columns - 1) * gap
             // itemWidth = (Total width - (columns - 1) * gap) / columns
             final itemWidth = (width - (columns - 1) * gap) / columns;
+            const chartAndActionsHeight = 452.0;
 
             return SingleChildScrollView(
               padding: EdgeInsets.all(pagePadding),
@@ -180,10 +181,15 @@ class DashboardPage extends ConsumerWidget {
                       children: [
                         SizedBox(
                           width: itemWidth * 3 + gap * 2,
+                          height: chartAndActionsHeight,
                           child: const TrendChart(),
                         ),
                         SizedBox(width: gap),
-                        SizedBox(width: itemWidth, child: const QuickActions()),
+                        SizedBox(
+                          width: itemWidth,
+                          height: chartAndActionsHeight,
+                          child: const QuickActions(),
+                        ),
                       ],
                     )
                   else

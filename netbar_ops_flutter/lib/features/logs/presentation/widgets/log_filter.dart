@@ -69,8 +69,12 @@ class _LogFilterState extends State<LogFilter> {
     });
   }
 
-  String _formatRange(DateTimeRange range) {
-    String fmt(DateTime d) => '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  String _formatRange(DateTimeRange range, {required bool compact}) {
+    String full(DateTime d) =>
+        '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    String short(DateTime d) =>
+        '${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    final fmt = compact ? short : full;
     return '${fmt(range.start)} ~ ${fmt(range.end)}';
   }
 
@@ -91,39 +95,35 @@ class _LogFilterState extends State<LogFilter> {
           border: Border.all(color: Colors.grey.shade200),
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize: MainAxisSize.max,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Icon(LucideIcons.calendar, size: 14, color: Colors.grey.shade600),
             const SizedBox(width: 8),
-            Flexible(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.visible,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.grey.shade700,
-                    fontWeight: FontWeight.w500,
-                  ),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey.shade700,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ),
             if (onClear != null) ...[
               const SizedBox(width: 6),
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: onClear,
-                child: SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: Icon(
-                    LucideIcons.x,
-                    size: 16,
-                    color: Colors.grey.shade400,
-                  ),
+              IconButton(
+                onPressed: onClear,
+                tooltip: '清空',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  LucideIcons.x,
+                  size: 16,
+                  color: Colors.grey.shade400,
                 ),
               ),
             ],
@@ -266,7 +266,7 @@ class _LogFilterState extends State<LogFilter> {
         );
 
         final dateButton = _buildDateRangeButton(
-          label: widget.timeRange == null ? '时间范围' : _formatRange(widget.timeRange!),
+          label: widget.timeRange == null ? '时间范围' : _formatRange(widget.timeRange!, compact: isPhone),
           onPick: () async {
             final picked = await _pickDateRange(context);
             if (picked != null) widget.onTimeRangeChanged(picked);

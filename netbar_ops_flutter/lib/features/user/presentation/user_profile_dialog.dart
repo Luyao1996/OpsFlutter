@@ -7,6 +7,7 @@ import '../../../core/responsive/responsive.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../core/storage/token_store.dart';
+import '../../../shared/utils/top_notice.dart';
 
 class UserProfileDialog extends ConsumerStatefulWidget {
   final bool asBottomSheet;
@@ -22,11 +23,75 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
   bool _notifications = true;
   bool _autoConnect = false;
   bool _is2FAEnabled = true;
+  bool _changingPassword = false;
+
+  late final TextEditingController _currentPasswordController;
+  late final TextEditingController _newPasswordController;
+  late final TextEditingController _confirmPasswordController;
 
   @override
   void initState() {
     super.initState();
     _autoConnect = TokenStore.getAutoConnectLastNetbar();
+    _currentPasswordController = TextEditingController();
+    _newPasswordController = TextEditingController();
+    _confirmPasswordController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _currentPasswordController.dispose();
+    _newPasswordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleChangePassword() async {
+    if (_changingPassword) return;
+    final currentPassword = _currentPasswordController.text.trim();
+    final newPassword = _newPasswordController.text.trim();
+    final confirmPassword = _confirmPasswordController.text.trim();
+
+    if (currentPassword.isEmpty) {
+      showTopNotice(context, '请输入当前密码', level: NoticeLevel.warning);
+      return;
+    }
+    if (newPassword.isEmpty) {
+      showTopNotice(context, '请输入新密码', level: NoticeLevel.warning);
+      return;
+    }
+    if (newPassword.length < 6) {
+      showTopNotice(context, '新密码长度至少 6 位', level: NoticeLevel.warning);
+      return;
+    }
+    if (newPassword != confirmPassword) {
+      showTopNotice(context, '两次输入的新密码不一致', level: NoticeLevel.warning);
+      return;
+    }
+
+    setState(() => _changingPassword = true);
+    try {
+      final api = ref.read(authApiProvider);
+      await api.changeMyPassword(currentPassword: currentPassword, newPassword: newPassword);
+      if (!mounted) return;
+      _currentPasswordController.clear();
+      _newPasswordController.clear();
+      _confirmPasswordController.clear();
+      showTopNotice(context, '密码已更新，请重新登录', level: NoticeLevel.success);
+      await Future.delayed(const Duration(milliseconds: 450));
+      if (!mounted) return;
+      await ref.read(authNotifierProvider.notifier).logout();
+    } catch (e) {
+      if (!mounted) return;
+      showTopNotice(context, '更新密码失败：$e', level: NoticeLevel.error);
+    } finally {
+      if (mounted) setState(() => _changingPassword = false);
+    }
+  }
+
+  ScrollBehavior _contentScrollBehavior(BuildContext context) {
+    if (_activeTab == 'security') return const _NoScrollbarScrollBehavior();
+    return ScrollConfiguration.of(context);
   }
 
   @override
@@ -34,7 +99,12 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
     // 模拟 Vue 中的 User 数据
     final user = ref.watch(authNotifierProvider).user;
     final userName = user?.name ?? 'Administrator';
-    final userRole = user?.role == 'admin' ? '管理员' : '操作员';
+    final role = (user?.role ?? '').toLowerCase();
+    final userRole = switch (role) {
+      'super_admin' => '超级管理员',
+      'admin' => '管理员',
+      _ => '操作员',
+    };
     final userAccount = user?.username ?? 'N/A';
 
     final isNarrow = context.isNarrow || context.isPhone;
@@ -111,6 +181,7 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
 
   Widget _buildDesktopBody(String userName, String role, String account) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
           width: 256,
@@ -146,13 +217,16 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
           ),
         ),
         Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(32, 64, 32, 32),
-            child: _buildActiveTabContent(
-              userName,
-              role,
-              account,
-              isNarrow: false,
+          child: ScrollConfiguration(
+            behavior: _contentScrollBehavior(context),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(32, 72, 64, 24),
+              child: _buildActiveTabContent(
+                userName,
+                role,
+                account,
+                isNarrow: false,
+              ),
             ),
           ),
         ),
@@ -195,13 +269,16 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
         ),
         const SizedBox(height: 8),
         Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            child: _buildActiveTabContent(
-              userName,
-              role,
-              account,
-              isNarrow: true,
+          child: ScrollConfiguration(
+            behavior: _contentScrollBehavior(context),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: _buildActiveTabContent(
+                userName,
+                role,
+                account,
+                isNarrow: true,
+              ),
             ),
           ),
         ),
@@ -653,14 +730,16 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
           ],
         ),
         const SizedBox(height: 16),
-        _buildInput('当前密码'),
+        _buildInput('当前密码', controller: _currentPasswordController),
         const SizedBox(height: 12),
-        _buildInput('新密码'),
+        _buildInput('新密码', controller: _newPasswordController),
+        const SizedBox(height: 12),
+        _buildInput('确认新密码', controller: _confirmPasswordController),
         const SizedBox(height: 12),
         SizedBox(
           width: double.infinity,
           child: ElevatedButton(
-            onPressed: () {},
+            onPressed: _changingPassword ? null : _handleChangePassword,
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.white,
               foregroundColor: const Color(0xFF374151), // gray-700
@@ -671,7 +750,13 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
                 side: const BorderSide(color: Color(0xFFE5E7EB)),
               ),
             ),
-            child: const Text('更新密码', style: TextStyle(fontWeight: FontWeight.w500)),
+            child: _changingPassword
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('更新密码', style: TextStyle(fontWeight: FontWeight.w500)),
           ),
         ),
         
@@ -741,9 +826,10 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
     );
   }
 
-  Widget _buildInput(String hint) {
+  Widget _buildInput(String hint, {TextEditingController? controller}) {
     return TextField(
       obscureText: true,
+      controller: controller,
       decoration: InputDecoration(
         hintText: hint,
         hintStyle: const TextStyle(fontSize: 14, color: Color(0xFF9CA3AF)), // gray-400
@@ -864,5 +950,14 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
         ],
       ),
     );
+  }
+}
+
+class _NoScrollbarScrollBehavior extends MaterialScrollBehavior {
+  const _NoScrollbarScrollBehavior();
+
+  @override
+  Widget buildScrollbar(BuildContext context, Widget child, ScrollableDetails details) {
+    return child;
   }
 }

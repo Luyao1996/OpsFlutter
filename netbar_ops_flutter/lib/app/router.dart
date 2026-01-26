@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../features/auth/presentation/login_page.dart';
-import '../features/channel/presentation/channel_management_page.dart';
+import '../features/channel/presentation/channel_management_page.dart' as channel;
 import '../features/dashboard/presentation/dashboard_page.dart';
 import '../features/monitor/presentation/monitor_page.dart';
 import '../features/netbar/presentation/netbar_list_page.dart';
@@ -83,7 +83,10 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/channel-management',
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
-              child: const ChannelManagementPage(),
+              child: channel.ChannelManagementPage(
+                initialModule: state.uri.queryParameters['tab'] == 'startup' ? channel.ModuleTab.startup : null,
+                initialEditStartupItemId: int.tryParse(state.uri.queryParameters['edit_startup_item_id'] ?? ''),
+              ),
               transitionsBuilder: (context, animation, secondaryAnimation, child) {
                 return FadeTransition(opacity: animation, child: child);
               },

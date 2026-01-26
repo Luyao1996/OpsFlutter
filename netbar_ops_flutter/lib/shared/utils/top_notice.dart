@@ -37,6 +37,16 @@ IconData _icon(NoticeLevel level) {
 bool _useAndroidBanner() =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
+bool _preferOverlayNotice(BuildContext context) {
+  if (!_useAndroidBanner()) return true;
+  final route = ModalRoute.of(context);
+  // Dialog/BottomSheet 等 PopupRoute 场景下，ScaffoldMessenger 的 banner 会被遮罩层盖住；
+  // 用 root overlay 插入的 notice 才能保证在最顶层显示。
+  if (route is PopupRoute) return true;
+  // 某些场景下可能找不到 ScaffoldMessenger，也回退到 overlay。
+  return ScaffoldMessenger.maybeOf(context) == null;
+}
+
 void showTopNotice(
   BuildContext context,
   String message, {
@@ -57,7 +67,7 @@ void showTopBanner(
   NoticeLevel level = NoticeLevel.info,
   Duration? duration,
 }) {
-  if (!_useAndroidBanner()) {
+  if (_preferOverlayNotice(context)) {
     showTopBubble(
       context,
       content: content,

@@ -20,6 +20,7 @@ import 'package:re_highlight/languages/powershell.dart';
 import 'package:re_highlight/re_highlight.dart';
 import 'package:re_highlight/styles/atom-one-light.dart';
 
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../data/resource_api.dart';
 
@@ -232,10 +233,12 @@ class _FileEditorModalState extends State<FileEditorModal> {
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
-    final dialogWidth = _isFullscreen ? size.width * 0.98 : 800.0;
-    final dialogHeight = _isFullscreen ? size.height * 0.95 : 600.0;
+    final isPhone = context.isPhone;
+    final dialogWidth = _isFullscreen ? size.width * 0.98 : (isPhone ? size.width * 0.96 : 800.0);
+    final dialogHeight = _isFullscreen ? size.height * 0.95 : (isPhone ? size.height * 0.84 : 600.0);
     return Dialog(
       backgroundColor: Colors.transparent,
+      insetPadding: isPhone ? const EdgeInsets.all(12) : null,
       child: Container(
         width: dialogWidth,
         height: dialogHeight,
@@ -256,8 +259,9 @@ class _FileEditorModalState extends State<FileEditorModal> {
   }
 
   Widget _buildHeader() {
+    final isPhone = context.isPhone;
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(isPhone ? 16 : 20),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
       ),
@@ -280,14 +284,19 @@ class _FileEditorModalState extends State<FileEditorModal> {
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Row(
                   children: [
-                    Text(
-                      widget.file.name,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                    Expanded(
+                      child: Text(
+                        widget.file.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                     if (_hasChanges) ...[
@@ -322,6 +331,8 @@ class _FileEditorModalState extends State<FileEditorModal> {
           ),
           IconButton(
             onPressed: () => setState(() => _isFullscreen = !_isFullscreen),
+            padding: EdgeInsets.zero,
+            constraints: isPhone ? const BoxConstraints.tightFor(width: 40, height: 40) : null,
             icon: Icon(
               _isFullscreen ? LucideIcons.minimize2 : LucideIcons.maximize2,
               size: 20,
@@ -335,6 +346,8 @@ class _FileEditorModalState extends State<FileEditorModal> {
               if (!mounted) return;
               if (shouldClose) Navigator.of(context).pop();
             },
+            padding: EdgeInsets.zero,
+            constraints: isPhone ? const BoxConstraints.tightFor(width: 40, height: 40) : null,
             icon: Icon(LucideIcons.x, size: 20, color: Colors.grey.shade400),
           ),
         ],
@@ -540,8 +553,9 @@ class _FileEditorModalState extends State<FileEditorModal> {
   }
 
   Widget _buildFooter() {
+    final isPhone = context.isPhone;
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(isPhone ? 16 : 20),
       decoration: BoxDecoration(
         color: Colors.grey.shade50,
         border: Border(top: BorderSide(color: Colors.grey.shade200)),

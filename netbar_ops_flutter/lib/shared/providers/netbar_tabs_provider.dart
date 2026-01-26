@@ -152,6 +152,16 @@ class NetbarTabsNotifier extends StateNotifier<NetbarTabsState> {
       await _saveToStorage();
     }
   }
+
+  Future<void> resetAll() async {
+    state = NetbarTabsState();
+    await _saveToStorage();
+  }
+
+  Future<void> replaceAll(NetbarTabsState next) async {
+    state = next;
+    await _saveToStorage();
+  }
 }
 
 final netbarTabsProvider = StateNotifierProvider<NetbarTabsNotifier, NetbarTabsState>((ref) {

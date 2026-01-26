@@ -154,7 +154,11 @@ class _LoginPageState extends ConsumerState<LoginPage>
         id: userId,
         username: username,
         displayName: displayName.isNotEmpty ? displayName : username,
-        role: role == 'admin' ? '超级管理员' : '网吧运维',
+        role: switch (role) {
+          'super_admin' => '超级管理员',
+          'admin' => '管理员',
+          _ => '网吧运维',
+        },
         avatarColor: colors[math.Random().nextInt(colors.length)],
         lastLogin: '刚刚',
         password: encodedPassword,

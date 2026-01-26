@@ -398,7 +398,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       'windowId': widget.windowId,
     });
     if (widget.isStandaloneWindow && widget.windowId != null) {
-      await TerminalWindowBridge.closeWindowById(widget.windowId!);
+      // Minimize-to-dock should keep window alive to avoid refresh on restore.
+      await TerminalWindowBridge.hideWindowById(widget.windowId!);
     } else if (mounted) {
       context.pop();
     }

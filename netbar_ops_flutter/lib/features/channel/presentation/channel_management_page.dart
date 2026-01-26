@@ -45,7 +45,14 @@ class BreadcrumbItem {
 }
 
 class ChannelManagementPage extends ConsumerStatefulWidget {
-  const ChannelManagementPage({super.key});
+  final ModuleTab? initialModule;
+  final int? initialEditStartupItemId;
+
+  const ChannelManagementPage({
+    super.key,
+    this.initialModule,
+    this.initialEditStartupItemId,
+  });
 
   @override
   ConsumerState<ChannelManagementPage> createState() =>
@@ -62,6 +69,9 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   String _currentZone = 'PUBLIC'; // PUBLIC/BRANCH/HEADQUARTERS
   ModuleTab _activeModule = ModuleTab.files;
   LayoutMode _layoutMode = LayoutMode.grid;
+
+  int? _pendingEditStartupItemId;
+  bool _startupEditHandled = false;
 
   String _searchQuery = '';
   final TextEditingController _fileSearchController = TextEditingController();
@@ -119,6 +129,12 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     return null;
   }
 
+  int? _getStartupNetbarId() {
+    if (_currentZone == 'HEADQUARTERS') return 0;
+    // BRANCH / PUBLIC: use current netbar id
+    return ref.read(currentNetbarProvider).id;
+  }
+
   String _editDeniedReason() {
     final netbarId = ref.read(currentNetbarProvider).id;
     if (_currentZone == 'PUBLIC') {
@@ -136,6 +152,10 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialModule != null) {
+      _activeModule = widget.initialModule!;
+    }
+    _pendingEditStartupItemId = widget.initialEditStartupItemId;
     _loadData();
     HardwareKeyboard.instance.addHandler(_handleKeyboard);
     if (kIsWeb) {
@@ -254,17 +274,60 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
         );
         if (mounted) setState(() => _files = resources);
       } else {
+        final startupNetbarId = _getStartupNetbarId();
+        if (startupNetbarId == null) {
+          if (mounted) {
+            setState(() {
+              _startupItems = [];
+              _error = '请先选择网吧';
+            });
+          }
+          return;
+        }
         final items = await _startupItemApi.getAll(
           zone: _currentZone,
-          netbarId: _getNetbarId(),
+          netbarId: startupNetbarId,
         );
         if (mounted) setState(() => _startupItems = items);
+        _maybeOpenStartupEditor(items);
       }
     } catch (e) {
       if (mounted) setState(() => _error = '加载失败: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _maybeOpenStartupEditor(List<StartupItem> items) {
+    if (!mounted) return;
+    if (_startupEditHandled) return;
+    if (_pendingEditStartupItemId == null) return;
+    if (_activeModule != ModuleTab.startup) return;
+
+    final id = _pendingEditStartupItemId!;
+    StartupItem? match;
+    for (final item in items) {
+      if (item.id == id) {
+        match = item;
+        break;
+      }
+    }
+
+    _startupEditHandled = true;
+    _pendingEditStartupItemId = null;
+
+    if (match == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        showTopNotice(context, '未找到启动项：$id', level: NoticeLevel.warning);
+      });
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _showStartupConfigModal(match!);
+    });
   }
 
   void _handleZoneChange(String zone) {
@@ -337,7 +400,19 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   }
 
   List<Resource> get _selectedResources {
-    return _files.where((f) => _selectedIds.contains(f.id.toString())).toList();
+    final byId = <String, Resource>{};
+    for (final f in _files) {
+      byId[f.id.toString()] = f;
+    }
+    for (final f in _searchResults) {
+      byId[f.id.toString()] = f;
+    }
+    final selected = <Resource>[];
+    for (final id in _selectedIds) {
+      final f = byId[id];
+      if (f != null) selected.add(f);
+    }
+    return selected;
   }
 
   List<StartupItem> get _selectedStartupItems {
@@ -950,9 +1025,6 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       return;
     }
 
-    final pasteLabel = _clipboard.isNotEmpty
-        ? '粘贴 (已复制${_clipboard.length}个项)'
-        : '粘贴';
     showContextMenu(
       context: context,
       position: position,
@@ -960,22 +1032,20 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
         ContextMenuItem(
           label: '新建文件夹',
           icon: LucideIcons.folderPlus,
-          onTap: _canEdit ? _handleCreateFolder : null,
-          disabled: !_canEdit,
+          onTap: _handleCreateFolder,
         ),
         ContextMenuItem(
           label: '上传文件',
           icon: LucideIcons.upload,
-          onTap: _canEdit ? _showUploadModal : null,
-          disabled: !_canEdit,
+          onTap: _showUploadModal,
         ),
-        ContextMenuItem(
-          label: pasteLabel,
-          icon: LucideIcons.clipboard,
-          onTap: _handlePaste,
-          disabled: !_canEdit || _clipboard.isEmpty,
-          divider: true,
-        ),
+        if (_clipboard.isNotEmpty)
+          ContextMenuItem(
+            label: '粘贴 (已复制${_clipboard.length}个项)',
+            icon: LucideIcons.clipboard,
+            onTap: _handlePaste,
+            divider: true,
+          ),
         ContextMenuItem(
           label: '刷新',
           icon: LucideIcons.refreshCw,
@@ -1547,6 +1617,9 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   }
 
   Widget _buildSidebar() {
+    final netbarId = ref.watch(currentNetbarProvider).id;
+    final perm = ref.watch(permissionProvider);
+    final publicCanEdit = perm.canEditZone('PUBLIC', netbarId: netbarId);
     return Container(
       width: 256,
       decoration: BoxDecoration(
@@ -1576,11 +1649,9 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
                   'PUBLIC',
                   LucideIcons.globe,
                   '本网吧资源',
-                  subtitle: _canEdit
-                      ? null
-                      : (ref.watch(currentNetbarProvider).id == null
-                            ? '（需选择网吧）'
-                            : '（只读）'),
+                  subtitle: netbarId == null
+                      ? '（需选择网吧）'
+                      : (publicCanEdit ? null : '（只读）'),
                 ),
                 const SizedBox(height: 4),
                 _buildZoneButton(
@@ -1605,14 +1676,15 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   }
 
   Widget _buildMobileZoneSelector() {
+    final netbarId = ref.watch(currentNetbarProvider).id;
+    final perm = ref.watch(permissionProvider);
+    final publicCanEdit = perm.canEditZone('PUBLIC', netbarId: netbarId);
     final pills = <Widget>[
       _buildZonePill(
         'PUBLIC',
         '本网吧',
         LucideIcons.globe,
-        subtitle: _canEdit
-            ? null
-            : (ref.watch(currentNetbarProvider).id == null ? '需选择网吧' : '只读'),
+        subtitle: netbarId == null ? '需选择网吧' : (publicCanEdit ? null : '只读'),
       ),
       _buildZonePill('BRANCH', '分公司', LucideIcons.building2, subtitle: '只读'),
       _buildZonePill(
@@ -1653,6 +1725,44 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     String? subtitle,
   }) {
     final isActive = _currentZone == zone;
+    final isAndroidApp = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    final subtitleText = subtitle?.trim();
+    final showSubtitle = subtitleText != null && subtitleText.isNotEmpty;
+    final labelStyle = TextStyle(
+      fontSize: 12,
+      fontWeight: FontWeight.w600,
+      color: isActive ? Colors.white : Colors.grey.shade700,
+    );
+    final subtitleStyle = TextStyle(
+      fontSize: 11,
+      fontWeight: FontWeight.w600,
+      color: isActive ? Colors.white.withValues(alpha: 0.9) : Colors.grey.shade500,
+    );
+
+    final textBlock = showSubtitle
+        ? Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(label, style: labelStyle),
+              Text(
+                subtitleText,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: subtitleStyle,
+              ),
+            ],
+          )
+        : SizedBox(
+            height: 28,
+            child: Center(
+              child: Transform.translate(
+                // Android 字体度量下视觉上会偏上，向下微调 1px；其他平台不变
+                offset: isAndroidApp ? const Offset(0, 1) : Offset.zero,
+                child: Text(label, style: labelStyle, textAlign: TextAlign.center),
+              ),
+            ),
+          );
     return Expanded(
       child: GestureDetector(
         onTap: () => _handleZoneChange(zone),
@@ -1676,31 +1786,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
                 color: isActive ? Colors.white : Colors.grey.shade600,
               ),
               const SizedBox(width: 8),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: isActive ? Colors.white : Colors.grey.shade700,
-                    ),
-                  ),
-                  Text(
-                    subtitle ?? ' ',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: isActive
-                          ? Colors.white.withValues(alpha: 0.9)
-                          : Colors.grey.shade500,
-                    ),
-                  ),
-                ],
-              ),
+              textBlock,
             ],
           ),
         ),
@@ -1783,11 +1869,48 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   Widget _buildModuleTabs() {
     final isPhone = context.isPhone;
     final actions = <Widget>[];
+    final mobileQuickActions = <Widget>[];
+    final mobileUtilityActions = <Widget>[];
     if (_activeModule == ModuleTab.files) {
       if (_isMobile) {
-        actions.add(_buildSearchBox(width: double.infinity));
-        actions.add(_buildLayoutToggle());
-        if (_canEdit) actions.add(_buildUploadButton());
+        if (_selectedResources.isNotEmpty) {
+          mobileQuickActions.add(
+            _buildBatchButton(
+              '复制',
+              LucideIcons.copy,
+              AppColors.iosBlue,
+              _handleBatchCopy,
+            ),
+          );
+          if (_canEdit) {
+            mobileQuickActions.addAll([
+              _buildBatchButton(
+                '剪切',
+                LucideIcons.scissors,
+                Colors.orange,
+                _handleBatchCut,
+              ),
+              _buildBatchButton(
+                '删除',
+                LucideIcons.trash2,
+                Colors.red,
+                _handleBatchDelete,
+              ),
+            ]);
+          }
+        }
+        if (_canEdit && _clipboard.isNotEmpty) {
+          mobileQuickActions.add(
+            _buildBatchButton(
+              '粘贴 (${_clipboard.length})',
+              LucideIcons.clipboard,
+              Colors.green,
+              _handlePaste,
+            ),
+          );
+        }
+        mobileUtilityActions.add(_buildLayoutToggle());
+        if (_canEdit) mobileUtilityActions.add(_buildUploadButton());
       } else {
         if (_canEdit) {
           if (_selectedResources.isNotEmpty) {
@@ -1797,6 +1920,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
                 style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
               ),
             );
+            actions.add(const SizedBox(width: 12));
             actions.addAll([
               _buildBatchButton(
                 '复制',
@@ -1804,6 +1928,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
                 AppColors.iosBlue,
                 _handleBatchCopy,
               ),
+              const SizedBox(width: 8),
               _buildBatchButton(
                 '剪切',
                 LucideIcons.scissors,
@@ -1811,6 +1936,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
                 _handleBatchCut,
                 enabled: _canEdit,
               ),
+              const SizedBox(width: 8),
               _buildBatchButton(
                 '删除',
                 LucideIcons.trash2,
@@ -1820,17 +1946,18 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
               ),
             ]);
           }
-          actions.add(const SizedBox(width: 12));
-          actions.add(
-            _buildBatchButton(
-              '粘贴${_clipboard.isNotEmpty ? ' (${_clipboard.length})' : ''}',
-              LucideIcons.clipboard,
-              Colors.green,
-              _handlePaste,
-              enabled: _canEdit && _clipboard.isNotEmpty,
-            ),
-          );
-          actions.add(const SizedBox(width: 16));
+          if (_clipboard.isNotEmpty) {
+            actions.add(const SizedBox(width: 12));
+            actions.add(
+              _buildBatchButton(
+                '粘贴 (${_clipboard.length})',
+                LucideIcons.clipboard,
+                Colors.green,
+                _handlePaste,
+              ),
+            );
+          }
+          if (_selectedResources.isNotEmpty || _clipboard.isNotEmpty) actions.add(const SizedBox(width: 16));
         }
 
         actions.add(_buildSearchBox());
@@ -1850,6 +1977,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
               style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
             ),
           );
+          actions.add(const SizedBox(width: 12));
           actions.addAll([
             _buildBatchButton(
               isPhone ? '启用' : '批量启用',
@@ -1858,6 +1986,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
               () => _handleBatchStartupEnable(true),
               enabled: _canEdit,
             ),
+            const SizedBox(width: 8),
             _buildBatchButton(
               isPhone ? '禁用' : '批量禁用',
               LucideIcons.toggleLeft,
@@ -1865,6 +1994,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
               () => _handleBatchStartupEnable(false),
               enabled: _canEdit,
             ),
+            const SizedBox(width: 8),
             _buildBatchButton(
               isPhone ? '删除' : '批量删除',
               LucideIcons.trash2,
@@ -1873,26 +2003,9 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
               enabled: _canEdit,
             ),
           ]);
+          actions.add(const SizedBox(width: 8));
         }
-        actions.add(
-          ElevatedButton.icon(
-            onPressed: _showAddStartupItemModal,
-            icon: const Icon(LucideIcons.plus, size: 14),
-            label: const Text('新增启动项'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF22C55E),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-              textStyle: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-        );
+        actions.add(_buildPrimaryButton('新增启动项', LucideIcons.plus, const Color(0xFF22C55E), _showAddStartupItemModal));
       }
     }
 
@@ -1918,51 +2031,87 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
               ],
             ),
             const SizedBox(height: 8),
-            if (_activeModule == ModuleTab.startup && _canEdit && isPhone) ...[
+            if (_activeModule == ModuleTab.files) ...[
+              if (_selectedResources.isNotEmpty) ...[
+                Text(
+                  '已选 ${_selectedResources.length} 项',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                ),
+                const SizedBox(height: 8),
+              ],
+              if (mobileQuickActions.isNotEmpty) ...[
+                Wrap(spacing: 8, runSpacing: 8, children: mobileQuickActions),
+                const SizedBox(height: 8),
+              ],
               Row(
                 children: [
-                  Expanded(
-                    child: _buildMobileActionButton(
-                      label: '启用',
-                      icon: LucideIcons.toggleRight,
-                      color: const Color(0xFF22C55E),
-                      enabled: _selectedStartupItems.isNotEmpty,
-                      onTap: () => _handleBatchStartupEnable(true),
-                    ),
-                  ),
+                  Expanded(child: _buildSearchBox(width: double.infinity)),
                   const SizedBox(width: 8),
-                  Expanded(
-                    child: _buildMobileActionButton(
-                      label: '禁用',
-                      icon: LucideIcons.toggleLeft,
-                      color: Colors.grey.shade600,
-                      enabled: _selectedStartupItems.isNotEmpty,
-                      onTap: () => _handleBatchStartupEnable(false),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _buildMobileActionButton(
-                      label: '删除',
-                      icon: LucideIcons.trash2,
-                      color: Colors.red,
-                      enabled: _selectedStartupItems.isNotEmpty,
-                      onTap: _handleBatchStartupDelete,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _buildMobileActionButton(
-                      label: '新增',
-                      icon: LucideIcons.plus,
-                      color: const Color(0xFF22C55E),
-                      enabled: true,
-                      onTap: _showAddStartupItemModal,
-                    ),
-                  ),
+                  for (int i = 0; i < mobileUtilityActions.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 8),
+                    mobileUtilityActions[i],
+                  ],
                 ],
               ),
             ] else
+            if (_activeModule == ModuleTab.startup && _canEdit && isPhone)
+              _selectedStartupItems.isEmpty
+                  ? Row(
+                      children: [
+                        _buildMobileActionButton(
+                          label: '新增',
+                          icon: LucideIcons.plus,
+                          color: const Color(0xFF22C55E),
+                          enabled: true,
+                          onTap: _showAddStartupItemModal,
+                        ),
+                        const Spacer(),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        Expanded(
+                          child: _buildMobileActionButton(
+                            label: '启用',
+                            icon: LucideIcons.toggleRight,
+                            color: const Color(0xFF22C55E),
+                            enabled: true,
+                            onTap: () => _handleBatchStartupEnable(true),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _buildMobileActionButton(
+                            label: '禁用',
+                            icon: LucideIcons.toggleLeft,
+                            color: Colors.grey.shade600,
+                            enabled: true,
+                            onTap: () => _handleBatchStartupEnable(false),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _buildMobileActionButton(
+                            label: '删除',
+                            icon: LucideIcons.trash2,
+                            color: Colors.red,
+                            enabled: true,
+                            onTap: _handleBatchStartupDelete,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _buildMobileActionButton(
+                            label: '新增',
+                            icon: LucideIcons.plus,
+                            color: const Color(0xFF22C55E),
+                            enabled: true,
+                            onTap: _showAddStartupItemModal,
+                          ),
+                        ),
+                      ],
+                    )
+            else
               Wrap(spacing: 8, runSpacing: 8, children: actions),
           ],
         ),
@@ -2030,34 +2179,92 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     VoidCallback onTap, {
     bool enabled = true,
   }) {
-    return InkWell(
-      onTap: enabled ? onTap : null,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: enabled ? color.withValues(alpha: 0.1) : Colors.grey.shade100,
+    final bg = enabled ? color.withValues(alpha: 0.10) : Colors.grey.shade100;
+    final fg = enabled ? color : Colors.grey.shade400;
+    final borderColor =
+        enabled ? color.withValues(alpha: 0.25) : Colors.grey.shade200;
+
+    return SizedBox(
+      height: 32,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: enabled ? onTap : null,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: enabled
-                ? color.withValues(alpha: 0.3)
-                : Colors.grey.shade200,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: enabled ? color : Colors.grey.shade400),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                color: enabled ? color : Colors.grey.shade400,
-                fontWeight: FontWeight.w600,
+          child: Ink(
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: borderColor),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 14, color: fg),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: fg,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPrimaryButton(
+    String label,
+    IconData icon,
+    Color color,
+    VoidCallback onTap, {
+    bool enabled = true,
+  }) {
+    final bg = enabled ? color : Colors.grey.shade300;
+    final fg = enabled ? Colors.white : Colors.white.withValues(alpha: 0.7);
+
+    return SizedBox(
+      height: 32,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: enabled ? onTap : null,
+          borderRadius: BorderRadius.circular(8),
+          child: Ink(
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: enabled ? color.withValues(alpha: 0.25) : Colors.grey.shade300,
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 14, color: fg),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: fg,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -2088,6 +2295,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
           ),
         ),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(icon, size: 14, color: fg),

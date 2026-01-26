@@ -21,6 +21,8 @@ class TerminalWindowBridge {
 
   static Future<void> closeWindowById(int windowId) async {}
 
+  static Future<void> hideWindowById(int windowId) async {}
+
   static Future<void> closeAllSubWindows() async {}
 
   static Future<void> sendToMain(

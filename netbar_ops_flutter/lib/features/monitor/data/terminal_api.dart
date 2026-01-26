@@ -1,228 +1,24 @@
 import '../../../core/network/api_client.dart';
+import 'terminal_mock_data.dart';
+import 'terminal_models.dart';
 
-/// 终端模型
-class Terminal {
-  final int id;
-  final String name;
-  final String code;
-  final int netbarId;
-  final int? areaId;
-  final String ip;
-  final String mac;
-  final String os;
-  final String type; // server, client, console, cashier
-  final int status; // 0: 离线, 1: 在线空闲, 2: 使用中
-  final double cpuUsage;
-  final double ramUsage;
-  final double gpuUsage;
-  final double diskUsage;
-  final String uptime;
-  final String? screenshotUrl;
-  final String? lastOnline;
-  final String? lastHeartbeat;
-  final String? createdAt;
-  final String? updatedAt;
-
-  Terminal({
-    required this.id,
-    required this.name,
-    required this.code,
-    required this.netbarId,
-    this.areaId,
-    required this.ip,
-    required this.mac,
-    required this.os,
-    required this.type,
-    required this.status,
-    required this.cpuUsage,
-    required this.ramUsage,
-    required this.gpuUsage,
-    required this.diskUsage,
-    required this.uptime,
-    this.screenshotUrl,
-    this.lastOnline,
-    this.lastHeartbeat,
-    this.createdAt,
-    this.updatedAt,
-  });
-
-  factory Terminal.fromJson(Map<String, dynamic> json) {
-    return Terminal(
-      id: json['id'] ?? 0,
-      name: json['name'] ?? '',
-      code: json['code'] ?? '',
-      netbarId: json['netbar_id'] ?? 0,
-      areaId: json['area_id'],
-      ip: json['ip'] ?? '',
-      mac: json['mac'] ?? '',
-      os: json['os'] ?? '',
-      type: json['type'] ?? 'client',
-      status: json['status'] ?? 0,
-      cpuUsage: (json['cpu_usage'] ?? 0).toDouble(),
-      ramUsage: (json['ram_usage'] ?? 0).toDouble(),
-      gpuUsage: (json['gpu_usage'] ?? 0).toDouble(),
-      diskUsage: (json['disk_usage'] ?? 0).toDouble(),
-      uptime: json['uptime'] ?? '0天',
-      screenshotUrl: json['screenshot_url'] ?? json['screenshotUrl'],
-      lastOnline: json['last_online'],
-      lastHeartbeat: json['last_heartbeat'],
-      createdAt: json['created_at'],
-      updatedAt: json['updated_at'],
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'code': code,
-        'netbar_id': netbarId,
-        'area_id': areaId,
-        'ip': ip,
-        'mac': mac,
-        'os': os,
-        'type': type,
-        'status': status,
-        'cpu_usage': cpuUsage,
-        'ram_usage': ramUsage,
-        'gpu_usage': gpuUsage,
-        'disk_usage': diskUsage,
-        'uptime': uptime,
-        'screenshot_url': screenshotUrl,
-        'last_online': lastOnline,
-        'last_heartbeat': lastHeartbeat,
-        'created_at': createdAt,
-        'updated_at': updatedAt,
-      };
-
-  /// 获取状态字符串
-  String get statusString {
-    switch (status) {
-      case 0:
-        return 'offline';
-      case 2:
-        return 'busy';
-      default:
-        return 'online';
-    }
-  }
-
-  /// 是否为关键设备
-  bool get isKeyDevice => ['server', 'console', 'cashier'].contains(type);
-
-  /// 桌面预览/缩略图 URL（有真实截图则优先使用）
-  String desktopPreviewUrl({int width = 400, int height = 225}) {
-    final url = screenshotUrl;
-    if (url != null && url.isNotEmpty) return url;
-    return 'https://picsum.photos/seed/$id/$width/$height';
-  }
-
-  String get desktopThumbnailUrl => desktopPreviewUrl();
-}
-
-class TerminalProcess {
-  final String name;
-  final int pid;
-  final double cpu;
-  final double mem; // MB
-  final String user;
-
-  TerminalProcess({
-    required this.name,
-    required this.pid,
-    required this.cpu,
-    required this.mem,
-    required this.user,
-  });
-
-  factory TerminalProcess.fromJson(Map<String, dynamic> json) {
-    return TerminalProcess(
-      name: json['name'] ?? '',
-      pid: json['pid'] ?? 0,
-      cpu: (json['cpu'] ?? 0).toDouble(),
-      mem: (json['mem'] ?? 0).toDouble(),
-      user: json['user'] ?? '',
-    );
-  }
-}
-
-class TerminalFile {
-  final String name;
-  final String path;
-  final bool isDirectory;
-  final int size;
-  final String updatedAt;
-
-  TerminalFile({
-    required this.name,
-    required this.path,
-    required this.isDirectory,
-    required this.size,
-    required this.updatedAt,
-  });
-
-  factory TerminalFile.fromJson(Map<String, dynamic> json) {
-    return TerminalFile(
-      name: json['name'] ?? '',
-      path: json['path'] ?? '',
-      isDirectory: json['is_directory'] ?? false,
-      size: json['size'] ?? 0,
-      updatedAt: json['updated_at'] ?? '',
-    );
-  }
-}
-
-class TerminalChatMessage {
-  final String content;
-  final String sender; // 'admin' or 'user'
-  final String time;
-
-  TerminalChatMessage({
-    required this.content,
-    required this.sender,
-    required this.time,
-  });
-
-  factory TerminalChatMessage.fromJson(Map<String, dynamic> json) {
-    return TerminalChatMessage(
-      content: json['content'] ?? '',
-      sender: json['sender'] ?? 'user',
-      time: json['time'] ?? '',
-    );
-  }
-}
-
-class TerminalLog {
-  final String level;
-  final String time;
-  final String source;
-  final int eventId;
-  final String category;
-  final String message;
-
-  TerminalLog({
-    required this.level,
-    required this.time,
-    required this.source,
-    required this.eventId,
-    required this.category,
-    required this.message,
-  });
-
-  factory TerminalLog.fromJson(Map<String, dynamic> json) {
-    return TerminalLog(
-      level: json['level'] ?? 'Info',
-      time: json['time'] ?? '',
-      source: json['source'] ?? '',
-      eventId: json['event_id'] ?? 0,
-      category: json['category'] ?? 'None',
-      message: json['message'] ?? '',
-    );
-  }
-}
+export 'terminal_models.dart';
 
 /// Terminal API 服务
 class TerminalApi {
   final ApiClient _client = ApiClient.instance;
+
+  bool _shouldUseMock(Object e) {
+    if (e is ApiError) {
+      final code = e.code ?? 0;
+      if (code == 404 || code == 405 || code == 501) return true;
+      final msg = e.message.toLowerCase();
+      if (msg.contains('not found') || msg.contains('no route')) return true;
+      return false;
+    }
+    final msg = e.toString().toLowerCase();
+    return msg.contains('404') || msg.contains('not found') || msg.contains('no route');
+  }
 
   /// 获取所有终端
   Future<List<Terminal>> getAll({
@@ -267,28 +63,51 @@ class TerminalApi {
 
   /// 获取进程列表
   Future<List<TerminalProcess>> getProcesses(int id) async {
-    final response = await _client.get('/terminals/$id/processes');
-    final list = response.data as List? ?? [];
-    return list.map((e) => TerminalProcess.fromJson(e)).toList();
+    try {
+      final response = await _client.get('/terminals/$id/processes');
+      final list = response.data as List? ?? [];
+      return list.map((e) => TerminalProcess.fromJson(e)).toList();
+    } catch (e) {
+      if (_shouldUseMock(e)) return TerminalMockData.processes(id);
+      rethrow;
+    }
   }
 
   /// 结束进程
   Future<void> killProcess(int id, int pid) async {
-    await _client.post('/terminals/$id/processes/$pid/kill');
+    try {
+      await _client.post('/terminals/$id/processes/$pid/kill');
+    } catch (e) {
+      if (_shouldUseMock(e)) return;
+      rethrow;
+    }
   }
 
   /// 获取文件列表
   Future<List<TerminalFile>> getFiles(int id, String path) async {
-    final response = await _client.get('/terminals/$id/files', queryParameters: {'path': path});
-    final list = response.data as List? ?? [];
-    return list.map((e) => TerminalFile.fromJson(e)).toList();
+    try {
+      final response = await _client.get(
+        '/terminals/$id/files',
+        queryParameters: {'path': path},
+      );
+      final list = response.data as List? ?? [];
+      return list.map((e) => TerminalFile.fromJson(e)).toList();
+    } catch (e) {
+      if (_shouldUseMock(e)) return TerminalMockData.files(id, path);
+      rethrow;
+    }
   }
 
   /// 获取硬件信息 (返回 Map，结构较灵活)
   Future<List<Map<String, dynamic>>> getHardwareInfo(int id) async {
-    final response = await _client.get('/terminals/$id/hardware');
-    final list = response.data as List? ?? [];
-    return list.map((e) => e as Map<String, dynamic>).toList();
+    try {
+      final response = await _client.get('/terminals/$id/hardware');
+      final list = response.data as List? ?? [];
+      return list.map((e) => e as Map<String, dynamic>).toList();
+    } catch (e) {
+      if (_shouldUseMock(e)) return TerminalMockData.hardware(id);
+      rethrow;
+    }
   }
 
   /// 获取聊天记录
@@ -305,15 +124,26 @@ class TerminalApi {
 
   /// 获取终端日志
   Future<List<TerminalLog>> getLogs(int id) async {
-    final response = await _client.get('/terminals/$id/logs');
-    final list = response.data as List? ?? [];
-    return list.map((e) => TerminalLog.fromJson(e)).toList();
+    try {
+      final response = await _client.get('/terminals/$id/logs');
+      final list = response.data as List? ?? [];
+      return list.map((e) => TerminalLog.fromJson(e)).toList();
+    } catch (e) {
+      if (_shouldUseMock(e)) return TerminalMockData.logs(id);
+      rethrow;
+    }
   }
 
   /// 执行终端命令
   Future<String> executeCommand(int id, String command) async {
-    final response = await _client.post('/terminals/$id/command', data: {'command': command});
-    return response.data['output'] ?? '';
+    try {
+      final response =
+          await _client.post('/terminals/$id/command', data: {'command': command});
+      return response.data['output'] ?? '';
+    } catch (e) {
+      if (_shouldUseMock(e)) return TerminalMockData.commandOutput(id, command);
+      rethrow;
+    }
   }
 
   /// 远程唤醒 (WOL)

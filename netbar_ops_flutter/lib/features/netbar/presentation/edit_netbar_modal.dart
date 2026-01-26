@@ -9,11 +9,28 @@ import '../data/area_api.dart';
 /// 可编辑的区域
 class EditableArea {
   int? id;
-  String name;
-  String startIp;
-  String endIp;
+  final TextEditingController nameController;
+  final TextEditingController startIpController;
+  final TextEditingController endIpController;
 
-  EditableArea({this.id, this.name = '', this.startIp = '', this.endIp = ''});
+  EditableArea({
+    this.id,
+    String name = '',
+    String startIp = '',
+    String endIp = '',
+  })  : nameController = TextEditingController(text: name),
+        startIpController = TextEditingController(text: startIp),
+        endIpController = TextEditingController(text: endIp);
+
+  String get name => nameController.text.trim();
+  String get startIp => startIpController.text.trim();
+  String get endIp => endIpController.text.trim();
+
+  void dispose() {
+    nameController.dispose();
+    startIpController.dispose();
+    endIpController.dispose();
+  }
 
   factory EditableArea.fromNetbarArea(NetbarArea area) {
     return EditableArea(
@@ -64,6 +81,9 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
     HardwareKeyboard.instance.removeHandler(_handleKey);
     _nameController.dispose();
     _terminalCountController.dispose();
+    for (final a in _areas) {
+      a.dispose();
+    }
     super.dispose();
   }
 
@@ -80,6 +100,9 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
     try {
       final areas = await _areaApi.getByNetbar(widget.netbar.id);
       setState(() {
+        for (final a in _areas) {
+          a.dispose();
+        }
         _areas = areas.map((a) => EditableArea.fromNetbarArea(a)).toList();
         _loading = false;
       });
@@ -100,6 +123,7 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
       _areasToDelete.add(area.id!);
     }
     setState(() {
+      area.dispose();
       _areas.removeAt(index);
     });
   }
@@ -109,7 +133,7 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
     try {
       // 1. 更新网吧基本信息
       await _netbarApi.update(widget.netbar.id, {
-        'name': _nameController.text,
+        'name': _nameController.text.trim(),
         'total_seats': int.tryParse(_terminalCountController.text) ?? 0,
       });
 
@@ -151,26 +175,33 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
 
   @override
   Widget build(BuildContext context) {
+    final screen = MediaQuery.sizeOf(context);
+    final isNarrow = screen.width < 860;
     return Dialog(
       backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 100, vertical: 50),
-      child: Container(
-        width: 640,
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: isNarrow ? 16 : 80,
+        vertical: isNarrow ? 16 : 50,
+      ),
+      child: ConstrainedBox(
         constraints: BoxConstraints(
+          maxWidth: 760,
           maxHeight: MediaQuery.of(context).size.height * 0.9,
         ),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.95),
-          borderRadius: BorderRadius.circular(24),
-          boxShadow: AppShadows.xl,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildHeader(),
-            Flexible(child: _buildContent()),
-            _buildFooter(),
-          ],
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: AppShadows.xl,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildHeader(),
+              Flexible(child: _buildContent()),
+              _buildFooter(),
+            ],
+          ),
         ),
       ),
     );
@@ -228,30 +259,28 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
 
   Widget _buildContent() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(32),
+      padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 基本信息
           _buildSectionLabel('基本信息'),
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey.shade100),
-            ),
+          _buildCard(
             child: Column(
               children: [
-                _buildTextField(_nameController, '网吧名称'),
+                _buildLabeledField(
+                  label: '网吧名称',
+                  controller: _nameController,
+                ),
                 Divider(
                   height: 1,
                   indent: 16,
                   endIndent: 16,
                   color: Colors.grey.shade200,
                 ),
-                _buildTextField(
-                  _terminalCountController,
-                  '终端数量',
+                _buildLabeledField(
+                  label: '终端数量',
+                  controller: _terminalCountController,
                   isNumber: true,
                 ),
               ],
@@ -281,24 +310,60 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
     );
   }
 
-  Widget _buildTextField(
-    TextEditingController controller,
-    String placeholder, {
+  Widget _buildCard({required Widget child}) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade100),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _buildLabeledField({
+    required String label,
+    required TextEditingController controller,
     bool isNumber = false,
   }) {
-    return TextField(
-      controller: controller,
-      keyboardType: isNumber ? TextInputType.number : TextInputType.text,
-      decoration: InputDecoration(
-        hintText: placeholder,
-        hintStyle: TextStyle(color: Colors.grey.shade400),
-        border: InputBorder.none,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 12,
-        ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade600),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: controller,
+            keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+            inputFormatters: isNumber ? [FilteringTextInputFormatter.digitsOnly] : null,
+            decoration: InputDecoration(
+              isDense: true,
+              filled: true,
+              fillColor: Colors.white,
+              hintText: label,
+              hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.grey.shade200),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.grey.shade200),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppColors.iosBlue, width: 2),
+              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+            style: const TextStyle(fontSize: 14),
+          ),
+        ],
       ),
-      style: const TextStyle(fontSize: 14),
     );
   }
 
@@ -314,21 +379,39 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
       );
     }
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade100),
-      ),
-      child: Column(
-        children: [
-          ..._areas.asMap().entries.map(
-            (entry) => _buildAreaRow(entry.key, entry.value),
-          ),
-          const SizedBox(height: 8),
-          _buildAddAreaButton(),
-        ],
+    return _buildCard(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                const SizedBox(width: 24),
+                Expanded(
+                  flex: 2,
+                  child: Text('分区名称', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade600)),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 2,
+                  child: Text('开始 IP', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade600)),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 2,
+                  child: Text('结束 IP', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade600)),
+                ),
+                const SizedBox(width: 44),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ..._areas.asMap().entries.map(
+              (entry) => _buildAreaRow(entry.key, entry.value),
+            ),
+            const SizedBox(height: 8),
+            _buildAddAreaButton(),
+          ],
+        ),
       ),
     );
   }
@@ -338,13 +421,16 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         children: [
-          Icon(LucideIcons.gripVertical, size: 16, color: Colors.grey.shade300),
+          SizedBox(
+            width: 24,
+            child: Icon(LucideIcons.gripVertical, size: 16, color: Colors.grey.shade300),
+          ),
           const SizedBox(width: 8),
-          Expanded(flex: 2, child: _buildAreaInput(area, 'name', '分区名称')),
+          Expanded(flex: 2, child: _buildAreaInput(area.nameController, '分区名称')),
           const SizedBox(width: 8),
-          Expanded(flex: 2, child: _buildAreaInput(area, 'startIp', '开始 IP')),
+          Expanded(flex: 2, child: _buildAreaInput(area.startIpController, '开始 IP')),
           const SizedBox(width: 8),
-          Expanded(flex: 2, child: _buildAreaInput(area, 'endIp', '结束 IP')),
+          Expanded(flex: 2, child: _buildAreaInput(area.endIpController, '结束 IP')),
           const SizedBox(width: 8),
           IconButton(
             onPressed: () => _removeArea(index),
@@ -361,7 +447,7 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
     );
   }
 
-  Widget _buildAreaInput(EditableArea area, String field, String placeholder) {
+  Widget _buildAreaInput(TextEditingController controller, String placeholder) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -369,19 +455,7 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
         border: Border.all(color: Colors.grey.shade200),
       ),
       child: TextField(
-        controller: TextEditingController(
-          text: field == 'name'
-              ? area.name
-              : (field == 'startIp' ? area.startIp : area.endIp),
-        ),
-        onChanged: (v) {
-          if (field == 'name') {
-            area.name = v;
-          } else if (field == 'startIp')
-            area.startIp = v;
-          else
-            area.endIp = v;
-        },
+        controller: controller,
         decoration: InputDecoration(
           hintText: placeholder,
           hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
@@ -438,19 +512,6 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
       ),
       child: Row(
         children: [
-          // 删除按钮
-          TextButton.icon(
-            onPressed: () {}, // TODO: 实现删除
-            icon: Icon(
-              LucideIcons.trash2,
-              size: 16,
-              color: Colors.red.shade500,
-            ),
-            label: Text('删除档案', style: TextStyle(color: Colors.red.shade500)),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            ),
-          ),
           const Spacer(),
           // 取消按钮
           TextButton(
@@ -481,12 +542,11 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.iosBlue,
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(12),
               ),
-              elevation: 4,
-              shadowColor: AppColors.iosBlue.withValues(alpha: 0.3),
+              elevation: 0,
             ),
           ),
         ],

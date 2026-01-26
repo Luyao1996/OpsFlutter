@@ -237,7 +237,7 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
       error: (err, _) => _buildError(err.toString()),
       data: (netbars) {
         final filtered = _filterAndSort(netbars);
-        if (filtered.isEmpty) return _buildEmpty();
+        if (filtered.isEmpty) return _buildEmpty(noAccess: netbars.isEmpty);
         return ListView.separated(
           padding: EdgeInsets.zero,
           itemCount: filtered.length,
@@ -269,7 +269,7 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
       data: (netbars) {
         final filtered = _filterAndSort(netbars);
         if (filtered.isEmpty) {
-          return _buildEmpty();
+          return _buildEmpty(noAccess: netbars.isEmpty);
         }
         return _buildTable(filtered);
       },
@@ -304,14 +304,28 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
     );
   }
 
-  Widget _buildEmpty() {
+  Widget _buildEmpty({required bool noAccess}) {
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(LucideIcons.search, size: 48, color: Colors.grey.shade200),
+          Icon(
+            noAccess ? LucideIcons.shieldOff : LucideIcons.search,
+            size: 48,
+            color: Colors.grey.shade200,
+          ),
           const SizedBox(height: 16),
-          Text('未找到匹配的网吧', style: TextStyle(fontSize: 14, color: Colors.grey.shade400)),
+          Text(
+            noAccess ? '暂无可访问网吧' : '未找到匹配的网吧',
+            style: TextStyle(fontSize: 14, color: Colors.grey.shade400),
+          ),
+          if (noAccess) ...[
+            const SizedBox(height: 6),
+            Text(
+              '请联系管理员将账号加入该网吧的分组',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+            ),
+          ],
         ],
       ),
     );
