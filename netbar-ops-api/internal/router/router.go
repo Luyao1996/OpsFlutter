@@ -142,25 +142,16 @@ func Setup(mode string) *gin.Engine {
 			auth.GET("/startup-items/monitor", handler.GetStartupItemMonitor)
 
 			// 网吧账号组管理（网吧管理员/超级管理员）
-			// NOTE: Gin 对相同前缀的通配符参数名要求一致，这里复用 :id 以避免与 /netbars/:id 冲突
-			netbarGroups := auth.Group("/netbars/:id/groups")
-			netbarGroups.Use(middleware.NetbarAdminOnly())
-			{
-				netbarGroups.GET("", handler.GetNetbarUserGroups)
-				netbarGroups.POST("", handler.CreateNetbarUserGroup)
-				netbarGroups.PUT("/:group_id", handler.UpdateNetbarUserGroup)
-				netbarGroups.DELETE("/:group_id", handler.DeleteNetbarUserGroup)
-				netbarGroups.GET("/:group_id/users", handler.GetNetbarGroupUsers)
-				netbarGroups.POST("/:group_id/users", handler.AddUserToNetbarGroup)
-				netbarGroups.DELETE("/:group_id/users/:user_id", handler.RemoveUserFromNetbarGroup)
-			}
+			auth.GET("/netbars/:id/groups", middleware.NetbarAdminOnly(), handler.GetNetbarUserGroups)
+			auth.POST("/netbars/:id/groups", middleware.NetbarAdminOnly(), handler.CreateNetbarUserGroup)
+			auth.PUT("/netbars/:id/groups/:group_id", middleware.NetbarAdminOnly(), handler.UpdateNetbarUserGroup)
+			auth.DELETE("/netbars/:id/groups/:group_id", middleware.NetbarAdminOnly(), handler.DeleteNetbarUserGroup)
+			auth.GET("/netbars/:id/groups/:group_id/users", middleware.NetbarAdminOnly(), handler.GetNetbarGroupUsers)
+			auth.POST("/netbars/:id/groups/:group_id/users", middleware.NetbarAdminOnly(), handler.AddUserToNetbarGroup)
+			auth.DELETE("/netbars/:id/groups/:group_id/users/:user_id", middleware.NetbarAdminOnly(), handler.RemoveUserFromNetbarGroup)
 
 			// 网吧成员列表（网吧管理员/超级管理员）
-			netbarUsers := auth.Group("/netbars/:id/users")
-			netbarUsers.Use(middleware.NetbarAdminOnly())
-			{
-				netbarUsers.GET("", handler.GetNetbarUsers)
-			}
+			auth.GET("/netbars/:id/users", middleware.NetbarAdminOnly(), handler.GetNetbarUsers)
 
 			// 网吧分组管理
 			auth.GET("/netbar-groups", handler.GetNetbarGroups)

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:webrtc_remote/webrtc_remote.dart' as webrtc;
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../data/terminal_api.dart';
@@ -829,6 +830,18 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           Expanded(
             flex: 2,
             child: _buildBigActionButton(
+              'WebRTC 远程',
+              'WebRTC低延迟',
+              LucideIcons.video,
+              const Color(0xFF10B981),  // 绿色
+              Colors.white,
+              () => _openWebRTCRemote(terminal),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            flex: 2,
+            child: _buildBigActionButton(
               'VNC 远程桌面',
               '极速连接，低延迟',
               LucideIcons.monitor,
@@ -868,6 +881,15 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     return Column(
       children: [
         _buildBigActionButton(
+          'WebRTC 远程',
+          'WebRTC低延迟',
+          LucideIcons.video,
+          const Color(0xFF10B981),  // 绿色
+          Colors.white,
+          () => _openWebRTCRemote(terminal),
+        ),
+        const SizedBox(height: 12),
+        _buildBigActionButton(
           'VNC 远程桌面',
           '极速连接，低延迟',
           LucideIcons.monitor,
@@ -894,6 +916,29 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           () => _remoteAction(terminal.id, 'screenshot'),
         ),
       ],
+    );
+  }
+
+  /// 打开 WebRTC 远程桌面
+  void _openWebRTCRemote(Terminal terminal) {
+    // TODO: 后续从 terminal 获取 peerId
+    const peerId = 'xxx';  // 暂时写死
+    const wsUrl = 'wss://webrtc.03kan.com/ws?Peer=$peerId&type=Client';
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => webrtc.RemoteScreen(
+          server: webrtc.ServerConfig(
+            id: 'webrtc_${terminal.id}',
+            name: 'WebRTC ${terminal.name}',
+            host: 'webrtc.03kan.com',
+            port: 443,
+            wsUrl: wsUrl,
+          ),
+          onDisconnect: () => Navigator.pop(context),
+        ),
+      ),
     );
   }
 

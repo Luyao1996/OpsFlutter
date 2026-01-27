@@ -64,7 +64,7 @@ dependencies:
 
   # Web 支持
   web: ^1.0.0
-  file_picker: ^10.3.7
+  file_picker: ^8.3.7
   path_provider: ^2.1.3
   desktop_drop: ^0.4.4
   cross_file: ^0.3.4+2
@@ -74,6 +74,18 @@ dependencies:
   super_editor: ^0.3.0-dev.43
   code_text_field: ^1.1.0
   re_editor: ^0.8.0
+
+  # WebRTC 远程桌面
+  webrtc_remote:
+    git:
+      url: https://github.com/Luyao1996/WebRtcGo.git
+      path: examples/FlutterUi
+      ref: feature/andriod
+
+  # WebRTC 依赖
+  flutter_webrtc: ^0.12.1
+  web_socket_channel: ^2.4.0
+  wakelock_plus: ^1.2.5
 
 dev_dependencies:
   flutter_test:
