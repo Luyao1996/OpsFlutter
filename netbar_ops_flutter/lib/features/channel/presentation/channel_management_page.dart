@@ -82,7 +82,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   List<Resource> _files = [];
   List<Resource> _searchResults = [];
   bool _isSearching = false;
-  List<StartupItem> _startupItems = [];
+  List<TacticItem> _startupItems = [];
 
   final Set<String> _selectedIds = {};
 
@@ -298,14 +298,14 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     }
   }
 
-  void _maybeOpenStartupEditor(List<StartupItem> items) {
+  void _maybeOpenStartupEditor(List<TacticItem> items) {
     if (!mounted) return;
     if (_startupEditHandled) return;
     if (_pendingEditStartupItemId == null) return;
     if (_activeModule != ModuleTab.startup) return;
 
     final id = _pendingEditStartupItemId!;
-    StartupItem? match;
+    TacticItem? match;
     for (final item in items) {
       if (item.id == id) {
         match = item;
@@ -415,7 +415,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     return selected;
   }
 
-  List<StartupItem> get _selectedStartupItems {
+  List<TacticItem> get _selectedStartupItems {
     return _startupItems
         .where((s) => _selectedIds.contains('startup-${s.id}'))
         .toList();
@@ -1409,7 +1409,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
 
   // ---- Startup item actions (align with ResourceManagement) ----
 
-  Future<void> _handleDeleteStartupItem(StartupItem item) async {
+  Future<void> _handleDeleteStartupItem(TacticItem item) async {
     if (!_ensureCanEdit('删除启动项')) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1444,13 +1444,15 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     }
   }
 
-  Future<void> _toggleStartupItemEnabled(StartupItem item, bool enable) async {
+  Future<void> _toggleStartupItemEnabled(TacticItem item, bool enable) async {
     if (!_ensureCanEdit(enable ? '启用启动项' : '禁用启动项')) return;
+    final startupId = item.startupId;
+    if (startupId == null) return;
     try {
       if (enable) {
-        await _startupItemApi.enable(item.id);
+        await _startupItemApi.enable(startupId);
       } else {
-        await _startupItemApi.disable(item.id, item.enabledState);
+        await _startupItemApi.disable(startupId, item.enabledState);
       }
       _loadData();
     } catch (e) {
@@ -1463,10 +1465,12 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   Future<void> _handleBatchStartupEnable(bool enable) async {
     if (!_ensureCanEdit(enable ? '启用启动项' : '禁用启动项')) return;
     for (final item in _selectedStartupItems) {
+      final startupId = item.startupId;
+      if (startupId == null) continue;
       if (enable) {
-        await _startupItemApi.enable(item.id);
+        await _startupItemApi.enable(startupId);
       } else {
-        await _startupItemApi.disable(item.id, item.enabledState);
+        await _startupItemApi.disable(startupId, item.enabledState);
       }
     }
     _loadData();
@@ -1480,7 +1484,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     _loadData();
   }
 
-  void _showStartupItemContextMenu(Offset position, StartupItem item) {
+  void _showStartupItemContextMenu(Offset position, TacticItem item) {
     showContextMenu(
       context: context,
       position: position,
@@ -1532,7 +1536,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     );
   }
 
-  void _showStartupConfigModal(StartupItem item) {
+  void _showStartupConfigModal(TacticItem item) {
     if (context.isPhone) {
       showModalBottomSheet(
         context: context,
@@ -2838,14 +2842,14 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     );
   }
 
-  Widget _buildStartupCard(StartupItem item) {
+  Widget _buildStartupCard(TacticItem item) {
     final isSelected = _selectedIds.contains('startup-${item.id}');
     return _ResourceStartupCard(
       key: ValueKey('startup-${item.id}'),
       item: item,
       isSelected: isSelected,
       canEdit: _canEdit,
-      updatedAtText: _formatDate(item.updatedAt),
+      updatedAtText: _formatDate(DateTime.tryParse(item.updatedAt) ?? DateTime.now()),
       onToggleEnabled: _canEdit
           ? (val) => _toggleStartupItemEnabled(item, val)
           : null,
@@ -2896,7 +2900,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
 }
 
 class _ResourceStartupCard extends StatelessWidget {
-  final StartupItem item;
+  final TacticItem item;
   final bool isSelected;
   final bool canEdit;
   final String updatedAtText;

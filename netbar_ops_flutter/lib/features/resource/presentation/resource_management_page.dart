@@ -84,7 +84,7 @@ class _ResourceManagementPageState
   List<Resource> _files = [];
   List<Resource> _searchResults = []; // 搜索结果
   bool _isSearching = false; // 是否正在搜索模式
-  List<StartupItem> _startupItems = [];
+  List<TacticItem> _startupItems = [];
   final List<NetbarArea> _areas = [];
   final Set<String> _selectedIds = {};
   final Set<int> _draggingFileIds = {};
@@ -125,7 +125,7 @@ class _ResourceManagementPageState
     }
   }
 
-  List<StartupItem> get _selectedStartupItems {
+  List<TacticItem> get _selectedStartupItems {
     return _startupItems
         .where((s) => _selectedIds.contains('startup-${s.id}'))
         .toList();
@@ -137,10 +137,12 @@ class _ResourceManagementPageState
   Future<void> _handleBatchStartupEnable(bool enable) async {
     if (!_ensureCanEdit(enable ? '启用启动项' : '禁用启动项')) return;
     for (final item in _selectedStartupItems) {
+      final startupId = item.startupId;
+      if (startupId == null) continue;
       if (enable) {
-        await _startupItemApi.enable(item.id);
+        await _startupItemApi.enable(startupId);
       } else {
-        await _startupItemApi.disable(item.id, item.enabledState);
+        await _startupItemApi.disable(startupId, item.enabledState);
       }
     }
     _loadData();
@@ -154,13 +156,15 @@ class _ResourceManagementPageState
     _loadData();
   }
 
-  Future<void> _toggleStartupItemEnabled(StartupItem item, bool enable) async {
+  Future<void> _toggleStartupItemEnabled(TacticItem item, bool enable) async {
     if (!_ensureCanEdit(enable ? '启用启动项' : '禁用启动项')) return;
+    final startupId = item.startupId;
+    if (startupId == null) return;
     try {
       if (enable) {
-        await _startupItemApi.enable(item.id);
+        await _startupItemApi.enable(startupId);
       } else {
-        await _startupItemApi.disable(item.id, item.enabledState);
+        await _startupItemApi.disable(startupId, item.enabledState);
       }
       _loadData();
     } catch (e) {
@@ -777,7 +781,7 @@ class _ResourceManagementPageState
     return files;
   }
 
-  List<StartupItem> get _filteredStartupItems {
+  List<TacticItem> get _filteredStartupItems {
     var items = _startupItems.toList();
     if (_searchQuery.isNotEmpty) {
       items = items
@@ -3011,14 +3015,14 @@ class _ResourceManagementPageState
     );
   }
 
-  Widget _buildStartupCard(StartupItem item) {
+  Widget _buildStartupCard(TacticItem item) {
     final isSelected = _selectedIds.contains('startup-${item.id}');
     return _ResourceStartupCard(
       key: ValueKey('startup-${item.id}'),
       item: item,
       isSelected: isSelected,
       canEdit: _canEdit,
-      updatedAtText: _formatDate(item.updatedAt),
+      updatedAtText: _formatDate(DateTime.tryParse(item.updatedAt) ?? DateTime.now()),
       onToggleEnabled: _canEdit
           ? (val) => _toggleStartupItemEnabled(item, val)
           : null,
@@ -3053,7 +3057,7 @@ class _ResourceManagementPageState
     );
   }
 
-  void _showStartupItemContextMenu(Offset position, StartupItem item) {
+  void _showStartupItemContextMenu(Offset position, TacticItem item) {
     showContextMenu(
       context: context,
       position: position,
@@ -3107,7 +3111,7 @@ class _ResourceManagementPageState
     );
   }
 
-  void _showStartupConfigModal(StartupItem item) {
+  void _showStartupConfigModal(TacticItem item) {
     if (context.isPhone) {
       showModalBottomSheet(
         context: context,
@@ -3136,7 +3140,7 @@ class _ResourceManagementPageState
     );
   }
 
-  Future<void> _handleDeleteStartupItem(StartupItem item) async {
+  Future<void> _handleDeleteStartupItem(TacticItem item) async {
     if (!_ensureCanEdit('删除启动项')) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -3174,7 +3178,7 @@ class _ResourceManagementPageState
 
 /// 资源管理启动项卡片组件（样式与通道管理启动项一致）
 class _ResourceStartupCard extends StatefulWidget {
-  final StartupItem item;
+  final TacticItem item;
   final bool isSelected;
   final bool canEdit;
   final String updatedAtText;
@@ -3328,7 +3332,7 @@ class _ResourceStartupCardState extends State<_ResourceStartupCard> {
                 spacing: 8,
                 runSpacing: 4,
                 children: [
-                  if (widget.item.delay > 0)
+                  if ((widget.item.delay ?? 0) > 0)
                     _buildTag(
                       LucideIcons.clock,
                       '${widget.item.delay}s',
