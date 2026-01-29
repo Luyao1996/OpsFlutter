@@ -90,6 +90,10 @@ class _ResourceManagementPageState
   final Set<int> _draggingFileIds = {};
   int? _dropTargetFolderId;
 
+  // 网吧视图选择（分公司资源用）
+  List<MerchantOption> _merchants = [];
+  int? _selectedMerchantId;
+
   bool _loading = false;
   String? _error;
 
@@ -273,6 +277,64 @@ class _ResourceManagementPageState
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+        ),
+      ),
+    );
+  }
+
+  /// 网吧选择器
+  Widget _buildMerchantSelector() {
+    return SizedBox(
+      height: 32,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<int?>(
+            value: _selectedMerchantId,
+            hint: Text(
+              '选择网吧视图',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+            ),
+            isDense: true,
+            icon: Icon(LucideIcons.chevronDown, size: 14, color: Colors.grey.shade500),
+            style: const TextStyle(fontSize: 12, color: Colors.black87),
+            items: [
+              DropdownMenuItem<int?>(
+                value: null,
+                child: Row(
+                  children: [
+                    Icon(LucideIcons.x, size: 12, color: Colors.grey.shade400),
+                    const SizedBox(width: 6),
+                    Text('清除选择', style: TextStyle(color: Colors.grey.shade500)),
+                  ],
+                ),
+              ),
+              ..._merchants.map((m) => DropdownMenuItem<int?>(
+                value: m.id,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(LucideIcons.building2, size: 12, color: Colors.grey.shade600),
+                    const SizedBox(width: 6),
+                    Text(m.name),
+                    if (m.terminalCount > 0) ...[
+                      const SizedBox(width: 4),
+                      Text(
+                        '(${m.terminalCount}台)',
+                        style: TextStyle(fontSize: 10, color: Colors.grey.shade400),
+                      ),
+                    ],
+                  ],
+                ),
+              )),
+            ],
+            onChanged: _handleMerchantSelect,
+          ),
         ),
       ),
     );
@@ -591,21 +653,18 @@ class _ResourceManagementPageState
   }
 
   /// 获取有效的 netbar_id（用于资源管理）
-  /// - 总部(HEADQUARTERS): netbar_id = 0
-  /// - 分公司(BRANCH): netbar_id = 用户的分组ID
+  /// - 总部(HEADQUARTERS): 不传 merchant_id（显示 group_id=0 的文件）
+  /// - 分公司(BRANCH): merchant_id = 选中的网吧ID（网吧视图）
   /// - 共享区(SHARED): 所有人可访问
   int? _getNetbarId() {
-    final auth = ref.read(authNotifierProvider);
-    final user = auth.user;
-
     switch (_currentZone) {
       case ResourceZone.headquarters:
-        return 0; // 总部
+        return null; // 总部不传 merchant_id
       case ResourceZone.branch:
-        // 分公司用用户的分公司ID
-        return user?.groupId ?? 0;
+        // 分公司用选中的网吧ID
+        return _selectedMerchantId;
       case ResourceZone.shared:
-        return null; // 共享区不需要 netbar_id
+        return null; // 共享区不需要 merchant_id
     }
   }
 
@@ -624,8 +683,7 @@ class _ResourceManagementPageState
 
   bool get _isAdmin {
     final auth = ref.watch(authNotifierProvider);
-    final role = auth.user?.role.toLowerCase() ?? '';
-    return role.contains('admin');
+    return auth.user?.hasAdminAccess == true;
   }
 
   int get _userGroupId {
@@ -637,11 +695,11 @@ class _ResourceManagementPageState
   bool get _canEdit {
     switch (_currentZone) {
       case ResourceZone.headquarters:
-        return _isAdmin; // 总部资源仅管理员可编辑
+        return _isManager; // 总部资源仅管理员可编辑
       case ResourceZone.branch:
-        return !_isAdmin && _userGroupId > 0; // 分公司资源：普通用户编辑自己的分公司
+        return _isManager && _selectedMerchantId != null; // 网吧视图：管理员且已选择网吧
       case ResourceZone.shared:
-        return true; // 共享区：所有用户可编辑
+        return _isManager; // 共享区：管理员可编辑
     }
   }
 
@@ -651,7 +709,7 @@ class _ResourceManagementPageState
       case ResourceZone.headquarters:
         return true; // 所有人可查看总部资源
       case ResourceZone.branch:
-        return !_isAdmin && _userGroupId > 0; // 分公司资源：仅普通用户查看自己的分公司
+        return true; // 所有人可查看网吧视图（需选择网吧）
       case ResourceZone.shared:
         return true; // 共享区所有人可查看
     }
@@ -662,10 +720,24 @@ class _ResourceManagementPageState
       case ResourceZone.headquarters:
         return '总部资源仅管理员可编辑';
       case ResourceZone.branch:
-        return '分公司资源仅所属分公司成员可编辑';
+        if (_selectedMerchantId == null) return '请先选择网吧视图';
+        return '网吧视图资源仅管理员可编辑';
       case ResourceZone.shared:
-        return '共享区暂无写入权限';
+        return '共享区仅管理员可编辑';
     }
+  }
+
+  /// 是否是管理员（有编辑权限）
+  bool get _isManager {
+    final auth = ref.watch(authNotifierProvider);
+    return auth.user?.hasAdminAccess == true;
+  }
+
+  /// 选中的网吧名称
+  String? get _selectedMerchantName {
+    if (_selectedMerchantId == null) return null;
+    final merchant = _merchants.where((m) => m.id == _selectedMerchantId).firstOrNull;
+    return merchant?.name;
   }
 
   bool _ensureCanEdit(String actionLabel) {
@@ -682,11 +754,32 @@ class _ResourceManagementPageState
     });
     try {
       if (_activeModule == ModuleTab.files) {
-        final resources = await _resourceApi.getAll(
-          zone: _getZoneString(),
-          parentId: _currentFolderId,
-          netbarId: _getNetbarId(),
-        );
+        List<Resource> resources;
+        if (_currentZone == ResourceZone.shared) {
+          // 共享区：调用 /file/shared (根目录) 或 /file/view (子目录)
+          resources = await _resourceApi.getSharedFiles(parentId: _currentFolderId);
+        } else if (_currentZone == ResourceZone.branch) {
+          // 分公司资源（网吧视图）：调用 /file/view?merchant_id=xxx
+          final response = await _resourceApi.getAllWithMerchants(
+            parentId: _currentFolderId,
+            merchantId: _selectedMerchantId,
+          );
+          resources = response.files;
+          // 更新网吧列表（仅在根目录时）
+          if (_currentFolderId == null && response.merchants.isNotEmpty) {
+            _merchants = response.merchants;
+          }
+        } else {
+          // 总公司资源：调用 /file/view（不传 merchant_id）
+          final response = await _resourceApi.getAllWithMerchants(
+            parentId: _currentFolderId,
+          );
+          resources = response.files;
+          // 保存网吧列表供分公司资源使用
+          if (_currentFolderId == null && response.merchants.isNotEmpty) {
+            _merchants = response.merchants;
+          }
+        }
         if (mounted) setState(() => _files = resources);
       } else {
         final items = await _startupItemApi.getAll(
@@ -703,13 +796,6 @@ class _ResourceManagementPageState
   }
 
   void _handleZoneChange(ResourceZone zone) {
-    // 权限限制：管理员不能切到分公司；普通用户必须有分公司才能进入分公司资源
-    if (zone == ResourceZone.branch) {
-      if (_isAdmin || _userGroupId <= 0) {
-        showTopNotice(context, '无权限访问分公司资源', level: NoticeLevel.warning);
-        return;
-      }
-    }
     _searchDebounce?.cancel();
     _fileSearchController.clear();
     setState(() {
@@ -717,6 +803,21 @@ class _ResourceManagementPageState
       _isSearching = false;
       _searchResults = [];
       _currentZone = zone;
+      _currentFolderId = null;
+      _folderHistory = [BreadcrumbItem(id: null, name: '根目录')];
+      _selectedIds.clear();
+      // 切换到分公司资源时，清空选中的网吧
+      if (zone == ResourceZone.branch) {
+        _selectedMerchantId = null;
+      }
+    });
+    _loadData();
+  }
+
+  /// 处理网吧视图选择
+  void _handleMerchantSelect(int? merchantId) {
+    setState(() {
+      _selectedMerchantId = merchantId;
       _currentFolderId = null;
       _folderHistory = [BreadcrumbItem(id: null, name: '根目录')];
       _selectedIds.clear();
@@ -1649,17 +1750,16 @@ class _ResourceManagementPageState
                   ResourceZone.headquarters,
                   LucideIcons.shieldAlert,
                   '总公司资源',
-                  subtitle: _isAdmin ? null : '（只读）',
+                  subtitle: _isManager ? null : '（只读）',
                 ),
                 const SizedBox(height: 4),
-                if (!_isAdmin && _userGroupId > 0) ...[
-                  _buildZoneButton(
-                    ResourceZone.branch,
-                    LucideIcons.building2,
-                    '我的分公司资源',
-                  ),
-                  const SizedBox(height: 4),
-                ],
+                _buildZoneButton(
+                  ResourceZone.branch,
+                  LucideIcons.building2,
+                  '网吧视图',
+                  subtitle: _selectedMerchantName,
+                ),
+                const SizedBox(height: 4),
                 _buildZoneButton(
                   ResourceZone.shared,
                   LucideIcons.share2,
@@ -1679,10 +1779,14 @@ class _ResourceManagementPageState
         ResourceZone.headquarters,
         '总部',
         LucideIcons.shieldAlert,
-        subtitle: _isAdmin ? null : '只读',
+        subtitle: _isManager ? null : '只读',
       ),
-      if (!_isAdmin && _userGroupId > 0)
-        _buildZonePill(ResourceZone.branch, '我的分公司', LucideIcons.building2),
+      _buildZonePill(
+        ResourceZone.branch,
+        '网吧',
+        LucideIcons.building2,
+        subtitle: _selectedMerchantName,
+      ),
       _buildZonePill(ResourceZone.shared, '共享', LucideIcons.share2),
     ];
     return SafeArea(
@@ -1920,6 +2024,10 @@ class _ResourceManagementPageState
           );
         }
 
+        // 网吧视图时显示选择器
+        if (_currentZone == ResourceZone.branch) {
+          utilityActions.add(_buildMerchantSelector());
+        }
         utilityActions.add(_buildLayoutToggle());
         if (_canEdit) utilityActions.add(_buildUploadButton());
       } else {

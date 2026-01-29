@@ -9,12 +9,16 @@ class UserCard extends StatefulWidget {
   final User user;
   final VoidCallback onEdit;
   final VoidCallback onBind2FA;
+  final VoidCallback onBindMiniProgram;
+  final VoidCallback onUnbindMiniProgram;
 
   const UserCard({
     super.key,
     required this.user,
     required this.onEdit,
     required this.onBind2FA,
+    required this.onBindMiniProgram,
+    required this.onUnbindMiniProgram,
   });
 
   @override
@@ -152,7 +156,7 @@ class _UserCardState extends State<UserCard> {
               }).toList(),
             ),
             const Spacer(),
-            // Footer
+            // Footer - 2FA绑定
             Container(
               padding: const EdgeInsets.only(top: 12),
               decoration: BoxDecoration(
@@ -164,16 +168,16 @@ class _UserCardState extends State<UserCard> {
                   Row(
                     children: [
                       Icon(
-                        widget.user.is2FABound ? LucideIcons.shield : LucideIcons.lock,
-                        size: 14, // Smaller icon
-                        color: Colors.grey.shade400,
+                        widget.user.is2FABound ? LucideIcons.shieldCheck : LucideIcons.shieldAlert,
+                        size: 14,
+                        color: widget.user.is2FABound ? Colors.green.shade600 : Colors.grey.shade400,
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        widget.user.is2FABound ? '已绑定' : '未绑定',
+                        widget.user.is2FABound ? '已绑定2FA' : '未绑定',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey.shade500,
+                          color: widget.user.is2FABound ? Colors.green.shade600 : Colors.grey.shade500,
                         ),
                       ),
                     ],
@@ -188,6 +192,51 @@ class _UserCardState extends State<UserCard> {
                     child: Text(
                       widget.user.is2FABound ? '重新绑定' : '去绑定',
                       style: const TextStyle(fontSize: 12, color: AppColors.iosBlue),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Footer - 微信小程序绑定
+            Container(
+              padding: const EdgeInsets.only(top: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        LucideIcons.smartphone,
+                        size: 14,
+                        color: widget.user.isBindWx ? Colors.green.shade600 : Colors.grey.shade400,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        widget.user.isBindWx
+                            ? (widget.user.phoneNumber ?? '已绑定小程序')
+                            : '未绑定小程序',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: widget.user.isBindWx ? Colors.green.shade600 : Colors.grey.shade500,
+                        ),
+                      ),
+                    ],
+                  ),
+                  TextButton(
+                    onPressed: widget.user.isBindWx
+                        ? widget.onUnbindMiniProgram
+                        : widget.onBindMiniProgram,
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(
+                      widget.user.isBindWx ? '解绑' : '绑定小程序',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: widget.user.isBindWx ? Colors.red.shade600 : AppColors.iosBlue,
+                      ),
                     ),
                   ),
                 ],

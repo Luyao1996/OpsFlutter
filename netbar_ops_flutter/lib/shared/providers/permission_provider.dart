@@ -1,16 +1,29 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app_providers.dart';
 
-/// 统一权限判断，与 Vue 端保持一致
+/// 统一权限判断，与后端 toolbox 保持一致
 class PermissionService {
-  final String role;
-  final int groupId;
+  final int? groupId;
+  final bool isManager;
 
-  PermissionService({required this.role, required this.groupId});
+  PermissionService({required this.groupId, required this.isManager});
 
-  bool get isAdmin => role == 'admin' || role == 'super_admin';
-  bool get isSuperAdmin => role == 'super_admin';
-  int get userGroupId => groupId;
+  /// 总部管理员：group_id 为空（0 或 null）
+  bool get isTopManager => groupId == null || groupId == 0;
+
+  /// 分部管理员：group_id > 0 且 is_manager 为 true
+  bool get isSubManager => (groupId != null && groupId! > 0) && isManager;
+
+  /// 普通用户：group_id > 0 且 is_manager 为 false
+  bool get isNormalUser => (groupId != null && groupId! > 0) && !isManager;
+
+  /// 是否有管理权限（总部管理员或分部管理员）
+  bool get isAdmin => isTopManager || isSubManager;
+
+  /// 是否是超级管理员（总部管理员）
+  bool get isSuperAdmin => isTopManager;
+
+  int get userGroupId => groupId ?? 0;
 
   /// zone: PUBLIC/HEADQUARTERS/BRANCH
   /// netbarId: 当前网吧 id（仅 PUBLIC 需要）
@@ -30,7 +43,7 @@ class PermissionService {
 final permissionProvider = Provider<PermissionService>((ref) {
   final user = ref.watch(authNotifierProvider).user;
   return PermissionService(
-    role: user?.role ?? 'user',
-    groupId: user?.groupId ?? 0,
+    groupId: user?.groupId,
+    isManager: user?.isManager ?? false,
   );
 });

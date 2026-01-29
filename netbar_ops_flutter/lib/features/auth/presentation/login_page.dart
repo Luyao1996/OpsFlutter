@@ -154,11 +154,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
         id: userId,
         username: username,
         displayName: displayName.isNotEmpty ? displayName : username,
-        role: switch (role) {
-          'super_admin' => '超级管理员',
-          'admin' => '管理员',
-          _ => '网吧运维',
-        },
+        role: role, // 已经是中文角色名
         avatarColor: colors[math.Random().nextInt(colors.length)],
         lastLogin: '刚刚',
         password: encodedPassword,
@@ -253,11 +249,17 @@ class _LoginPageState extends ConsumerState<LoginPage>
       final authState = ref.read(authNotifierProvider);
       if (authState.user != null) {
         final encodedPassword = base64Encode(utf8.encode(password));
+        // 根据后端逻辑判断角色
+        final roleLabel = authState.user!.isTopManager
+            ? '总部管理员'
+            : authState.user!.isSubManager
+                ? '分部管理员'
+                : '操作员';
         await _saveUser(
           authState.user!.id.toString(),
           authState.user!.username, // 登录用户名
           authState.user!.name, // 显示名称
-          authState.user!.role,
+          roleLabel,
           encodedPassword,
         );
       }
@@ -289,10 +291,11 @@ class _LoginPageState extends ConsumerState<LoginPage>
 
     try {
       final api = ref.read(authApiProvider);
-      final session = await api.createQRSession();
+      // 调用预登录接口获取二维码
+      final response = await api.preLogin();
       setState(() {
-        _qrSessionId = session.sessionId;
-        _qrData = session.qrData;
+        _qrSessionId = response.pwd; // pwd 作为会话ID
+        _qrData = response.qrCode; // base64 二维码图片
         _qrStatus = 'pending';
       });
       _startQRPolling();
@@ -306,26 +309,43 @@ class _LoginPageState extends ConsumerState<LoginPage>
 
   void _startQRPolling() {
     _qrPollTimer?.cancel();
+    int pollCount = 0;
+    const maxPollCount = 150; // 5分钟 (150 * 2秒)
+
     _qrPollTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
+      pollCount++;
       if (_qrSessionId.isEmpty || _viewState != 'qrcode') {
         _qrPollTimer?.cancel();
         return;
       }
+
+      // 超时处理
+      if (pollCount >= maxPollCount) {
+        _qrPollTimer?.cancel();
+        setState(() => _qrStatus = 'expired');
+        return;
+      }
+
       try {
         final api = ref.read(authApiProvider);
-        final status = await api.checkQRStatus(_qrSessionId);
-        if (status.status == 'scanned') {
-          setState(() => _qrStatus = 'scanned');
-        } else if (status.status == 'confirmed' && status.token != null) {
+        // 轮询获取token接口
+        final tokenResponse = await api.getToken(_qrSessionId);
+
+        if (tokenResponse.isValid) {
+          // 登录成功
           _qrPollTimer?.cancel();
           setState(() => _qrStatus = 'confirmed');
-          // TODO: 保存 token 并跳转
-          if (mounted) context.go('/monitor');
-        } else if (status.status == 'expired') {
-          _qrPollTimer?.cancel();
-          setState(() => _qrStatus = 'expired');
+
+          // 使用token登录
+          final authNotifier = ref.read(authNotifierProvider.notifier);
+          await authNotifier.loginWithToken(tokenResponse.accessToken);
+
+          if (mounted) context.go('/dashboard');
         }
-      } catch (_) {}
+      } catch (e) {
+        // 继续轮询，未授权时后端返回错误
+        // 检查是否是已扫码状态（如果后端支持）
+      }
     });
   }
 
@@ -1026,6 +1046,13 @@ class _LoginPageState extends ConsumerState<LoginPage>
       return _buildQRLoading('生成二维码...');
     }
 
+    // 解析 base64 图片数据
+    // 后端返回格式可能是 "data:image/png;base64,xxxxx" 或直接是 base64 字符串
+    String base64Data = _qrData;
+    if (base64Data.contains(',')) {
+      base64Data = base64Data.split(',').last;
+    }
+
     return Container(
       width: 192,
       height: 192,
@@ -1034,37 +1061,9 @@ class _LoginPageState extends ConsumerState<LoginPage>
         borderRadius: BorderRadius.circular(12),
       ),
       padding: const EdgeInsets.all(8),
-      child: Image.network(
-        'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${Uri.encodeComponent(_qrData)}',
+      child: Image.memory(
+        base64Decode(base64Data),
         fit: BoxFit.cover,
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
-          final progress = loadingProgress.expectedTotalBytes != null
-              ? loadingProgress.cumulativeBytesLoaded /
-                    loadingProgress.expectedTotalBytes!
-              : null;
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                SizedBox(
-                  width: 48,
-                  height: 48,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 3,
-                    value: progress,
-                    color: AppColors.iosBlue,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  progress != null ? '${(progress * 100).toInt()}%' : '加载中...',
-                  style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-                ),
-              ],
-            ),
-          );
-        },
         errorBuilder: (context, error, stackTrace) {
           return Center(
             child: Column(
@@ -1077,7 +1076,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '加载失败',
+                  '二维码解析失败',
                   style: TextStyle(fontSize: 13, color: Colors.grey[600]),
                 ),
                 const SizedBox(height: 8),

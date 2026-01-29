@@ -1,198 +1,449 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
-import '../../data/desktop_model.dart';
 
+/// 网吧选项（用于复制布局时选择其他网吧）
+class NetbarOption {
+  final int? id;
+  final String name;
+  final String? domain;
+
+  NetbarOption({this.id, required this.name, this.domain});
+}
+
+/// 机号选项
+class SeatOption {
+  final String id;
+  final String name;
+
+  SeatOption({required this.id, required this.name});
+}
+
+/// 桌面管理工具栏
 class DesktopToolbar extends StatelessWidget {
-  final List<DesktopLayout>? layouts;
-  final DesktopLayout? currentLayout;
-  final ValueChanged<DesktopLayout?>? onLayoutChanged;
-  final String resolution;
-  final ValueChanged<String> onResolutionChanged;
-  final bool lockIcons;
-  final ValueChanged<bool> onLockIconsChanged;
-  final double scale;
-  final VoidCallback onZoomIn;
-  final VoidCallback onZoomOut;
-  final VoidCallback onResetZoom;
-  final VoidCallback onAlignGrid;
-  final VoidCallback onAddIcon;
-  final VoidCallback onBackgroundSettings;
-  final VoidCallback onSave;
+  // 导航
   final VoidCallback onBack;
-  final VoidCallback? onRefresh;
-  final VoidCallback? onDeleteLayout;
+
+  // 筛选器
+  final List<SeatOption> seatOptions;
+  final String? selectedSeatId;
+  final ValueChanged<String?> onSeatChanged;
+
+  // 截图
+  final bool screenshotLoading;
+  final VoidCallback onScreenshot;
+
+  // 分辨率
+  final List<String> resolutionOptions;
+  final String? currentResolution;
+  final ValueChanged<String> onResolutionChanged;
+  final ValueChanged<String>? onResolutionDelete;
+
+  // 操作
+  final VoidCallback onAddIcon;
+  final VoidCallback onSave;
+  final VoidCallback onForceUpdate;
+  final VoidCallback? onCopyLayout;
+
+  // 帮助
+  final VoidCallback? onHelp;
 
   const DesktopToolbar({
     super.key,
-    this.layouts,
-    this.currentLayout,
-    this.onLayoutChanged,
-    required this.resolution,
-    required this.onResolutionChanged,
-    required this.lockIcons,
-    required this.onLockIconsChanged,
-    required this.scale,
-    required this.onZoomIn,
-    required this.onZoomOut,
-    required this.onResetZoom,
-    required this.onAlignGrid,
-    required this.onAddIcon,
-    required this.onBackgroundSettings,
-    required this.onSave,
     required this.onBack,
-    this.onRefresh,
-    this.onDeleteLayout,
+    required this.seatOptions,
+    this.selectedSeatId,
+    required this.onSeatChanged,
+    required this.screenshotLoading,
+    required this.onScreenshot,
+    required this.resolutionOptions,
+    this.currentResolution,
+    required this.onResolutionChanged,
+    this.onResolutionDelete,
+    required this.onAddIcon,
+    required this.onSave,
+    required this.onForceUpdate,
+    this.onCopyLayout,
+    this.onHelp,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 72,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: const BoxDecoration(
         color: Colors.white,
-        border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
+        border: Border(bottom: BorderSide(color: Color(0xFFD7D9E0))),
       ),
       child: Row(
         children: [
-          // Left block
-          _buildGhostButton(icon: LucideIcons.arrowLeft, onTap: onBack),
-          const SizedBox(width: 12),
-          const Text('桌面管理', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-          const SizedBox(width: 12),
-          _buildGhostButton(icon: LucideIcons.layoutGrid, onTap: onAlignGrid, tooltip: '对齐网格'),
-          const SizedBox(width: 12),
-          _buildZoomGroup(),
-          const SizedBox(width: 12),
-          _buildGhostButton(icon: LucideIcons.rotateCcw, onTap: onResetZoom, tooltip: '重置'),
+          // Left section
+          _buildLeftSection(),
           const Spacer(),
-          // Right block
+          // Right section
+          _buildRightSection(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLeftSection() {
+    return Row(
+      children: [
+        // Title
+        const Text(
+          '桌面管理',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(width: 12),
+
+        // Seat selector
+        _buildDropdown<String?>(
+          value: selectedSeatId,
+          hint: '选择机号',
+          items: seatOptions.map((s) => DropdownMenuItem(
+            value: s.id,
+            child: Text(s.name, style: const TextStyle(fontSize: 13)),
+          )).toList(),
+          onChanged: onSeatChanged,
+          width: 120,
+        ),
+        const SizedBox(width: 8),
+
+        // Screenshot button
+        _buildGhostButton(
+          label: '获取电脑截图',
+          onTap: selectedSeatId != null && !screenshotLoading ? onScreenshot : null,
+          loading: screenshotLoading,
+        ),
+
+        // Help button
+        if (onHelp != null) ...[
+          const SizedBox(width: 4),
+          IconButton(
+            onPressed: onHelp,
+            icon: Icon(LucideIcons.helpCircle, size: 18, color: Colors.grey.shade500),
+            tooltip: '帮助',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildRightSection() {
+    return Row(
+      children: [
+        // Resolution selector
+        if (resolutionOptions.isNotEmpty) ...[
           _buildResolutionDropdown(),
-          const SizedBox(width: 12),
-          Row(
-            children: [
-              Checkbox(
-                value: lockIcons,
-                onChanged: (v) => onLockIconsChanged(v ?? false),
-                activeColor: AppColors.iosBlue,
-                visualDensity: VisualDensity.compact,
-              ),
-              const Text('锁定', style: TextStyle(fontSize: 13)),
-            ],
+          const SizedBox(width: 8),
+        ],
+
+        // Copy layout
+        if (onCopyLayout != null) ...[
+          _buildGhostButton(
+            label: '复制其他网吧',
+            onTap: onCopyLayout,
           ),
           const SizedBox(width: 8),
-          _buildGhostButton(icon: LucideIcons.image, onTap: onBackgroundSettings, tooltip: '桌面背景'),
-          const SizedBox(width: 8),
-          _buildGhostButton(icon: LucideIcons.plus, onTap: onAddIcon, label: '添加图标'),
-          const SizedBox(width: 12),
-          _buildPrimaryButton(),
         ],
-      ),
-    );
-  }
 
-  Widget _buildGhostButton({required IconData icon, required VoidCallback onTap, String? label, String? tooltip}) {
-    return Tooltip(
-      message: tooltip ?? '',
-      child: TextButton.icon(
-        onPressed: onTap,
-        style: TextButton.styleFrom(
-          foregroundColor: Colors.grey.shade700,
-          backgroundColor: Colors.grey.shade100,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-          minimumSize: const Size(40, 40),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        // Add icon
+        _buildPrimaryButton(
+          label: '添加图标',
+          icon: LucideIcons.plus,
+          onTap: onAddIcon,
         ),
-        icon: Icon(icon, size: 18),
-        label: label != null
-            ? Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))
-            : const SizedBox.shrink(),
-      ),
-    );
-  }
+        const SizedBox(width: 8),
 
-  Widget _buildZoomGroup() {
-    return Container(
-      height: 40,
-      decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade300),
-      ),
-      child: Row(
-        children: [
-          _buildSquareButton(LucideIcons.minus, onZoomOut),
-          SizedBox(
-            width: 56,
-            child: Text(
-              '${(scale * 100).round()}%',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-            ),
-          ),
-          _buildSquareButton(LucideIcons.plus, onZoomIn),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSquareButton(IconData icon, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        width: 40,
-        height: 40,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
+        // Save
+        _buildSuccessButton(
+          label: '保存',
+          onTap: onSave,
         ),
-        child: Icon(icon, size: 18, color: Colors.grey.shade700),
-      ),
+        const SizedBox(width: 8),
+
+        // Force update
+        _buildPrimaryButton(
+          label: '强制更新桌面',
+          onTap: onForceUpdate,
+        ),
+      ],
     );
   }
 
   Widget _buildResolutionDropdown() {
     return Container(
-      height: 40,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      height: 32,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        border: Border.all(color: Colors.grey.shade200),
-        borderRadius: BorderRadius.circular(10),
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(6),
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
-          value: resolution,
-          onChanged: (v) => onResolutionChanged(v!),
-          items: const [
-            DropdownMenuItem(value: '1920*1080', child: Text('1920*1080')),
-            DropdownMenuItem(value: '2560*1440', child: Text('2560*1440')),
-            DropdownMenuItem(value: '3840*2160', child: Text('3840*2160')),
-          ],
-          style: const TextStyle(fontSize: 14, color: Colors.black87),
+          value: currentResolution,
+          hint: Text('选择分辨率', style: TextStyle(fontSize: 13, color: Colors.grey.shade500)),
+          isDense: true,
+          onChanged: (v) {
+            if (v != null) onResolutionChanged(v);
+          },
+          items: resolutionOptions.map((res) {
+            return DropdownMenuItem<String>(
+              value: res,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(res, style: const TextStyle(fontSize: 13)),
+                  if (onResolutionDelete != null) ...[
+                    const SizedBox(width: 8),
+                    InkWell(
+                      onTap: () => onResolutionDelete!(res),
+                      child: Icon(
+                        LucideIcons.trash2,
+                        size: 14,
+                        color: Colors.red.shade400,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            );
+          }).toList(),
+          style: const TextStyle(fontSize: 13, color: Colors.black87),
+          icon: Icon(LucideIcons.chevronDown, size: 14, color: Colors.grey.shade600),
         ),
       ),
     );
   }
 
-  Widget _buildLayoutDropdown() {
-    // Deprecated in current UI; kept for compatibility if needed later.
-    return const SizedBox.shrink();
+  Widget _buildDropdown<T>({
+    required T value,
+    required String hint,
+    required List<DropdownMenuItem<T>> items,
+    required ValueChanged<T?> onChanged,
+    double width = 130,
+  }) {
+    return Container(
+      width: width,
+      height: 32,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<T>(
+          value: value,
+          hint: Text(hint, style: TextStyle(fontSize: 13, color: Colors.grey.shade500)),
+          isExpanded: true,
+          isDense: true,
+          onChanged: onChanged,
+          items: items,
+          style: const TextStyle(fontSize: 13, color: Colors.black87),
+          icon: Icon(LucideIcons.chevronDown, size: 14, color: Colors.grey.shade600),
+        ),
+      ),
+    );
   }
 
-  Widget _buildPrimaryButton() {
-    return ElevatedButton.icon(
-      onPressed: onSave,
-      icon: const Icon(LucideIcons.save, size: 16),
-      label: const Text('保存配置'),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: AppColors.iosBlue,
-        foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        elevation: 0,
+  Widget _buildGhostButton({
+    required String label,
+    VoidCallback? onTap,
+    bool loading = false,
+  }) {
+    return SizedBox(
+      height: 32,
+      child: TextButton(
+        onPressed: onTap,
+        style: TextButton.styleFrom(
+          foregroundColor: Colors.grey.shade700,
+          backgroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(6),
+            side: BorderSide(color: Colors.grey.shade300),
+          ),
+        ),
+        child: loading
+            ? SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.grey.shade600,
+                ),
+              )
+            : Text(label, style: const TextStyle(fontSize: 13)),
+      ),
+    );
+  }
+
+  Widget _buildPrimaryButton({
+    required String label,
+    IconData? icon,
+    required VoidCallback onTap,
+  }) {
+    return SizedBox(
+      height: 32,
+      child: ElevatedButton(
+        onPressed: onTap,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.iosBlue,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(6),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 14),
+              const SizedBox(width: 4),
+            ],
+            Text(label, style: const TextStyle(fontSize: 13)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSuccessButton({
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return SizedBox(
+      height: 32,
+      child: ElevatedButton(
+        onPressed: onTap,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.green,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(6),
+          ),
+        ),
+        child: Text(label, style: const TextStyle(fontSize: 13)),
+      ),
+    );
+  }
+}
+
+/// 分辨率切换器（固定位置）
+class ResolutionSwitcher extends StatelessWidget {
+  final List<String> options;
+  final String? currentResolution;
+  final ValueChanged<String> onChanged;
+  final ValueChanged<String>? onDelete;
+
+  const ResolutionSwitcher({
+    super.key,
+    required this.options,
+    this.currentResolution,
+    required this.onChanged,
+    this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 180,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: const Color(0xFFCDD2DF)),
+        borderRadius: BorderRadius.circular(6),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: Color(0xFFE1E5EF))),
+            ),
+            child: const Text(
+              '切换分辨率',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+          ),
+
+          // Options
+          if (options.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                '没有任何截图请先点击截图',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              child: _buildDropdown(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDropdown() {
+    return Container(
+      height: 32,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: currentResolution,
+          isExpanded: true,
+          isDense: true,
+          onChanged: (v) {
+            if (v != null) onChanged(v);
+          },
+          items: options.map((res) {
+            return DropdownMenuItem<String>(
+              value: res,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(res, style: const TextStyle(fontSize: 13)),
+                  ),
+                  if (onDelete != null)
+                    InkWell(
+                      onTap: () => onDelete!(res),
+                      child: Icon(
+                        LucideIcons.trash2,
+                        size: 14,
+                        color: Colors.red.shade400,
+                      ),
+                    ),
+                ],
+              ),
+            );
+          }).toList(),
+          style: const TextStyle(fontSize: 13, color: Colors.black87),
+        ),
       ),
     );
   }

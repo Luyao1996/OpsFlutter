@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
-import '../../../../core/config/app_config.dart';
-import '../../../../core/storage/token_store.dart';
+import '../../../../core/utils/icon_loader.dart';
+import '../../data/desktop_api.dart';
 import '../../data/desktop_model.dart';
 
 class DesktopIconWidget extends StatelessWidget {
@@ -22,6 +22,12 @@ class DesktopIconWidget extends StatelessWidget {
     required this.onDelete,
     required this.onEdit,
   });
+
+  /// 获取图标显示名称（兼容新旧模型）
+  String get _displayName => icon.label.isNotEmpty ? icon.label : icon.config.name;
+
+  /// 获取图标URL（兼容新旧模型）
+  String? get _iconUrl => icon.iconUrl ?? icon.config.iconUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -79,7 +85,7 @@ class DesktopIconWidget extends StatelessWidget {
                       ],
                     ),
                     child: Text(
-                      icon.name,
+                      _displayName,
                       textAlign: TextAlign.center,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
@@ -120,45 +126,50 @@ class DesktopIconWidget extends StatelessWidget {
   }
 
   Widget _buildIconGraphic() {
-    final path = icon.config.iconPath;
+    final path = _iconUrl;
     if (path != null && path.isNotEmpty) {
-      ImageProvider? provider;
-      final token = TokenStore.getToken();
-
-      if (path.startsWith('http')) {
-        provider = NetworkImage(_appendToken(path, token));
-      } else if (path.startsWith('/resources/')) {
-        provider = NetworkImage(_appendToken('${AppConfig.baseUrl}$path', token));
-      } else if (path.contains('://')) {
-        provider = NetworkImage(_appendToken(path, token));
-      } else if (path.isNotEmpty) {
-        provider = NetworkImage(_appendToken(_normalizeUrl(path), token));
+      // 处理 data URL
+      if (path.startsWith('data:')) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: SizedBox.expand(
+            child: Image.network(
+              path,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              filterQuality: FilterQuality.medium,
+              errorBuilder: (_, __, ___) => _buildDefaultText(),
+            ),
+          ),
+        );
       }
 
-      if (provider == null) {
-        return const Icon(LucideIcons.monitor, color: Colors.white, size: 20);
+      // 使用 DesktopApi 处理 URL，避免重复 /api
+      final url = DesktopApi().getBackgroundUrl(path);
+      if (url.isEmpty) {
+        return _buildDefaultText();
       }
 
+      // 使用支持 ICO 格式的 NetworkIconImage
       return ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: SizedBox.expand(
-          child: Image(
-            image: provider,
+          child: NetworkIconImage(
+            url: url,
             fit: BoxFit.cover,
-            gaplessPlayback: true,
-            filterQuality: FilterQuality.medium,
-            errorBuilder: (_, __, ___) => const Icon(
-              LucideIcons.monitor,
-              color: Colors.white,
-              size: 20,
-            ),
+            errorBuilder: (_, __, ___) => _buildDefaultText(),
           ),
         ),
       );
     }
 
+    return _buildDefaultText();
+  }
+
+  Widget _buildDefaultText() {
+    final name = _displayName;
     return Text(
-      icon.name.isNotEmpty ? icon.name[0] : '?',
+      name.isNotEmpty ? name[0].toUpperCase() : '?',
       style: const TextStyle(
         fontSize: 18,
         fontWeight: FontWeight.bold,
@@ -185,23 +196,4 @@ class DesktopIconWidget extends StatelessWidget {
       ),
     );
   }
-}
-
-String _normalizeUrl(String url) {
-  if (url.startsWith('http://') ||
-      url.startsWith('https://') ||
-      url.startsWith('data:')) {
-    return url;
-  }
-  final base = AppConfig.baseUrl.endsWith('/')
-      ? AppConfig.baseUrl.substring(0, AppConfig.baseUrl.length - 1)
-      : AppConfig.baseUrl;
-  if (url.startsWith('/')) return '$base$url';
-  return '$base/$url';
-}
-
-String _appendToken(String url, String? token) {
-  if (token == null || token.isEmpty || url.contains('token=')) return url;
-  final sep = url.contains('?') ? '&' : '?';
-  return '$url${sep}token=$token';
 }

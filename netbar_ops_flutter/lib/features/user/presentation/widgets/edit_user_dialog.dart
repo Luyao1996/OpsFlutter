@@ -1,24 +1,21 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../data/user_api.dart';
-import '../../data/user_mock_data.dart';
 
 class EditUserDialog extends ConsumerStatefulWidget {
   final User user;
-  final int? netbarId;
-  final int? groupId;
+  final List<UserGroup> groups;
 
   const EditUserDialog({
     super.key,
     required this.user,
-    this.netbarId,
-    this.groupId,
+    required this.groups,
   });
 
   @override
@@ -26,39 +23,101 @@ class EditUserDialog extends ConsumerStatefulWidget {
 }
 
 class _EditUserDialogState extends ConsumerState<EditUserDialog> {
-  late final TextEditingController _name;
-  late UserRole _role;
+  late TextEditingController _nickname;
+  late TextEditingController _username;
+  late TextEditingController _password;
+  late int? _selectedGroupId;
+  late bool _isManager;
+  List<int> _selectedRoleIds = [];
+  List<Role> _roleList = [];
   bool _saving = false;
+  bool _loadingUser = true;
 
   @override
   void initState() {
     super.initState();
-    _name = TextEditingController(text: widget.user.nickname);
-    _role = widget.user.roles.contains(UserRole.admin) ? UserRole.admin : UserRole.user;
+    _nickname = TextEditingController(text: widget.user.nickname);
+    _username = TextEditingController(text: widget.user.username);
+    _password = TextEditingController();
+    _selectedGroupId = widget.user.groupId;
+    _isManager = widget.user.isManager;
+    _loadUserDetails();
   }
 
   bool get _isSuperAdmin {
     final auth = ref.read(authNotifierProvider);
-    final role = (auth.user?.role ?? '').toLowerCase();
-    return role == 'super_admin' || (auth.user?.username == 'admin');
+    return auth.user?.isTopManager == true;
   }
 
   @override
   void dispose() {
-    _name.dispose();
+    _nickname.dispose();
+    _username.dispose();
+    _password.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadUserDetails() async {
+    setState(() => _loadingUser = true);
+    try {
+      final api = ref.read(userApiProvider);
+      // 加载角色列表
+      final roles = await api.getRoleList();
+      // 加载用户详情（包含 roles）
+      final user = await api.getById(widget.user.id);
+      if (!mounted) return;
+      setState(() {
+        _roleList = roles;
+        _nickname.text = user.nickname;
+        _username.text = user.username;
+        _selectedGroupId = user.groupId;
+        _isManager = user.isManager;
+        // 直接使用用户详情中解析好的 roleIds
+        _selectedRoleIds = List<int>.from(user.roleIds);
+        _loadingUser = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loadingUser = false);
+    }
   }
 
   Future<void> _save() async {
     if (_saving) return;
+    final nickname = _nickname.text.trim();
+    final username = _username.text.trim();
+    final password = _password.text.trim();
+
+    if (nickname.isEmpty) {
+      showTopNotice(context, '请输入昵称', level: NoticeLevel.warning);
+      return;
+    }
+    if (username.isEmpty) {
+      showTopNotice(context, '请输入账号', level: NoticeLevel.warning);
+      return;
+    }
+    if (password.isNotEmpty && password.length < 6) {
+      showTopNotice(context, '密码长度至少6位', level: NoticeLevel.warning);
+      return;
+    }
+
     setState(() => _saving = true);
     try {
-      await ref.read(userApiProvider).update(widget.user.id, {
-        'name': _name.text.trim(),
-        'role': _role == UserRole.admin ? 'admin' : 'user',
-      });
-      if (mounted) Navigator.pop(context, true);
+      final api = ref.read(userApiProvider);
+      await api.update(
+        widget.user.id,
+        nickname: nickname,
+        username: username,
+        password: password.isNotEmpty ? password : null,
+        groupId: _selectedGroupId,
+        isManager: _isManager,
+        roleIds: _selectedRoleIds.isNotEmpty ? _selectedRoleIds : null,
+      );
+      if (!mounted) return;
+      showTopNotice(context, '保存成功', level: NoticeLevel.success);
+      Navigator.pop(context, true);
     } catch (e) {
+      if (!mounted) return;
       showTopNotice(context, '保存失败：$e', level: NoticeLevel.error);
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -69,301 +128,302 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('确认删除'),
-        content: Text('确定删除用户 ${widget.user.nickname} 吗？此操作不可恢复。'),
+        title: const Text('删除成员'),
+        content: Text('确定要删除成员 "${widget.user.nickname}" 吗？'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
             child: const Text('删除'),
           ),
         ],
       ),
     );
-    if (confirmed != true) return;
 
-    setState(() => _saving = true);
-    try {
-      await ref.read(userApiProvider).delete(widget.user.id);
-      if (mounted) Navigator.pop(context, true);
-    } catch (e) {
-      showTopNotice(context, '删除失败：$e', level: NoticeLevel.error);
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  Future<void> _resetPassword() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('重置密码'),
-        content: const Text('将为该用户生成随机新密码，并且仅本窗口可见。是否继续？'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.iosBlue, foregroundColor: Colors.white),
-            child: const Text('继续'),
-          ),
-        ],
-      ),
-    );
     if (confirmed != true) return;
 
     try {
-      final pwd = await ref.read(userApiProvider).resetPassword(widget.user.id);
+      final api = ref.read(userApiProvider);
+      await api.delete(widget.user.id);
       if (!mounted) return;
-      await _showPasswordOnce(pwd);
-    } catch (e) {
-      if (!mounted) return;
-      showTopNotice(context, '重置失败：$e', level: NoticeLevel.error);
-    }
-  }
-
-  Future<void> _removeFromGroup() async {
-    if (_saving) return;
-    final netbarId = widget.netbarId ?? ref.read(currentNetbarProvider).id;
-    final groupId = widget.groupId;
-    if (netbarId == null || groupId == null || groupId <= 0) {
-      showTopNotice(context, '当前未选择分组', level: NoticeLevel.warning);
-      return;
-    }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('移出分组'),
-        content: Text('确定将用户 ${widget.user.nickname} 移出当前分组吗？'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-            child: const Text('移出'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    setState(() => _saving = true);
-    try {
-      await ref.read(netbarUserGroupApiProvider).removeUserFromGroup(netbarId, groupId, widget.user.id);
-      if (!mounted) return;
-      showTopNotice(context, '已移出分组', level: NoticeLevel.success);
+      showTopNotice(context, '删除成功', level: NoticeLevel.success);
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
-      showTopNotice(context, '移出失败：$e', level: NoticeLevel.error);
-    } finally {
-      if (mounted) setState(() => _saving = false);
+      showTopNotice(context, '删除失败：$e', level: NoticeLevel.error);
     }
-  }
-
-  Future<void> _showPasswordOnce(String password) {
-    return showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('新密码'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('新密码仅本窗口可见，请及时复制保存。'),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade50,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey.shade200),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: SelectableText(
-                      password,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: '复制',
-                    onPressed: () async {
-                      await Clipboard.setData(ClipboardData(text: password));
-                      if (context.mounted) showTopNotice(context, '已复制', level: NoticeLevel.success);
-                    },
-                    icon: const Icon(LucideIcons.copy, size: 18),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭')),
-        ],
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final isCompact = MediaQuery.sizeOf(context).width < 420;
-    final canRemoveFromGroup = widget.groupId != null && widget.groupId! > 0;
-    final inSelectedGroup = canRemoveFromGroup && widget.user.netbarGroupIds.contains(widget.groupId);
+    final isNarrow = context.isNarrow;
+    final dialogWidth = isNarrow ? MediaQuery.of(context).size.width * 0.95 : 500.0;
+
     return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: SizedBox(
-        width: 520,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: dialogWidth, maxHeight: 600),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text('编辑用户', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(LucideIcons.x, size: 20),
-                    splashRadius: 18,
-                  ),
-                ],
+            _buildHeader(),
+            if (_loadingUser)
+              const Padding(
+                padding: EdgeInsets.all(40),
+                child: CircularProgressIndicator(),
+              )
+            else
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: _buildForm(),
+                ),
               ),
-            ),
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  TextFormField(
-                    initialValue: widget.user.username,
-                    readOnly: true,
-                    decoration: InputDecoration(
-                      labelText: '账号',
-                      isDense: true,
-                      filled: true,
-                      fillColor: Colors.grey.shade50,
-                      border:
-                          OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _name,
-                    decoration: InputDecoration(
-                      labelText: '昵称',
-                      isDense: true,
-                      filled: true,
-                      fillColor: Colors.grey.shade50,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      const Text('角色', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                      const SizedBox(width: 12),
-                      ChoiceChip(
-                        label: const Text('普通用户'),
-                        selected: _role == UserRole.user,
-                        onSelected: (_) => setState(() => _role = UserRole.user),
-                      ),
-                      const SizedBox(width: 8),
-                      ChoiceChip(
-                        label: const Text('管理员'),
-                        selected: _role == UserRole.admin,
-                        onSelected: (_) => setState(() => _role = UserRole.admin),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  if (isCompact)
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        OutlinedButton.icon(
-                          onPressed: _saving ? null : _resetPassword,
-                          icon: const Icon(LucideIcons.keyRound, size: 16),
-                          label: const Text('重置密码'),
-                        ),
-                        if (canRemoveFromGroup)
-                          OutlinedButton.icon(
-                            onPressed: (_saving || !inSelectedGroup) ? null : _removeFromGroup,
-                            icon: const Icon(Icons.group_remove_outlined, size: 16),
-                            label: const Text('移出分组'),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.red.shade600,
-                            ),
-                          ),
-                        if (_isSuperAdmin)
-                          TextButton.icon(
-                            onPressed: _saving ? null : _delete,
-                            icon: const Icon(LucideIcons.trash2, size: 16, color: Colors.red),
-                            label: const Text('删除用户', style: TextStyle(color: Colors.red)),
-                          ),
-                      ],
-                    )
-                  else
-                    Row(
-                      children: [
-                        OutlinedButton.icon(
-                          onPressed: _saving ? null : _resetPassword,
-                          icon: const Icon(LucideIcons.keyRound, size: 16),
-                          label: const Text('重置密码'),
-                        ),
-                        const SizedBox(width: 8),
-                        if (canRemoveFromGroup)
-                          OutlinedButton.icon(
-                            onPressed: (_saving || !inSelectedGroup) ? null : _removeFromGroup,
-                            icon: const Icon(Icons.group_remove_outlined, size: 16),
-                            label: const Text('移出分组'),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.red.shade600,
-                            ),
-                          ),
-                        const Spacer(),
-                        if (_isSuperAdmin)
-                          TextButton.icon(
-                            onPressed: _saving ? null : _delete,
-                            icon: const Icon(LucideIcons.trash2, size: 16, color: Colors.red),
-                            label: const Text('删除用户', style: TextStyle(color: Colors.red)),
-                          ),
-                      ],
-                    ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-              child: Row(
-                children: [
-                  TextButton(onPressed: _saving ? null : () => Navigator.pop(context), child: const Text('取消')),
-                  const Spacer(),
-                  ElevatedButton(
-                    onPressed: _saving ? null : _save,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.iosBlue,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    child: Text(_saving ? '保存中...' : '保存'),
-                  ),
-                ],
-              ),
-            ),
+            _buildFooter(),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
+      ),
+      child: Row(
+        children: [
+          const Icon(LucideIcons.userCog, size: 20, color: AppColors.iosBlue),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              '编辑成员',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ),
+          IconButton(
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(LucideIcons.x, size: 18),
+            splashRadius: 18,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 昵称
+        _buildLabel('昵称'),
+        const SizedBox(height: 6),
+        _buildTextField(
+          controller: _nickname,
+          hint: '显示名称',
+          icon: LucideIcons.user,
+        ),
+        const SizedBox(height: 16),
+
+        // 账号
+        _buildLabel('账号'),
+        const SizedBox(height: 6),
+        _buildTextField(
+          controller: _username,
+          hint: '登录账号',
+          icon: LucideIcons.atSign,
+        ),
+        const SizedBox(height: 16),
+
+        // 密码
+        _buildLabel('密码'),
+        const SizedBox(height: 6),
+        _buildTextField(
+          controller: _password,
+          hint: '不修改请留空',
+          icon: LucideIcons.lock,
+          obscureText: true,
+        ),
+        const SizedBox(height: 16),
+
+        // 所属分组
+        _buildLabel('所属分组'),
+        const SizedBox(height: 6),
+        _buildGroupDropdown(),
+        const SizedBox(height: 16),
+
+        // 权限设置
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade50,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '权限设置',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('设为管理员', style: TextStyle(fontSize: 14)),
+                  Switch.adaptive(
+                    value: _isManager,
+                    activeColor: AppColors.iosBlue,
+                    onChanged: (v) => setState(() => _isManager = v),
+                  ),
+                ],
+              ),
+              if (_roleList.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Divider(height: 1),
+                const SizedBox(height: 12),
+                const Text(
+                  '权限分配',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _roleList.map((role) {
+                    final selected = _selectedRoleIds.contains(role.id);
+                    return FilterChip(
+                      label: Text(role.name),
+                      selected: selected,
+                      onSelected: (v) {
+                        setState(() {
+                          if (v) {
+                            _selectedRoleIds.add(role.id);
+                          } else {
+                            _selectedRoleIds.remove(role.id);
+                          }
+                        });
+                      },
+                      selectedColor: AppColors.iosBlue.withOpacity(0.15),
+                      checkmarkColor: AppColors.iosBlue,
+                    );
+                  }).toList(),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLabel(String text) {
+    return Text(
+      text,
+      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+    );
+  }
+
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required String hint,
+    required IconData icon,
+    bool obscureText = false,
+  }) {
+    return TextField(
+      controller: controller,
+      obscureText: obscureText,
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+        prefixIcon: Icon(icon, size: 18, color: Colors.grey.shade400),
+        filled: true,
+        fillColor: Colors.grey.shade50,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: Colors.grey.shade200),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: Colors.grey.shade200),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: AppColors.iosBlue, width: 2),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      ),
+      style: const TextStyle(fontSize: 14),
+    );
+  }
+
+  Widget _buildGroupDropdown() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<int>(
+          value: _selectedGroupId,
+          isExpanded: true,
+          hint: const Text('选择分组'),
+          items: widget.groups.map((g) {
+            return DropdownMenuItem(value: g.id, child: Text(g.name));
+          }).toList(),
+          onChanged: (v) => setState(() => _selectedGroupId = v),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFooter() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: Color(0xFFE5E7EB))),
+      ),
+      child: Row(
+        children: [
+          TextButton.icon(
+            onPressed: _delete,
+            icon: const Icon(LucideIcons.trash2, size: 16, color: Colors.red),
+            label: const Text('删除成员', style: TextStyle(color: Colors.red)),
+          ),
+          const Spacer(),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          const SizedBox(width: 12),
+          ElevatedButton(
+            onPressed: _saving ? null : _save,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.iosBlue,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              elevation: 0,
+            ),
+            child: _saving
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : const Text('保存修改'),
+          ),
+        ],
       ),
     );
   }

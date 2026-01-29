@@ -7,12 +7,14 @@ class OpenedNetbarTab {
   final int id;
   final String name;
   final String status;
+  final String? subdomainFull;
   final DateTime openedAt;
 
   OpenedNetbarTab({
     required this.id,
     required this.name,
     required this.status,
+    this.subdomainFull,
     required this.openedAt,
   });
 
@@ -34,6 +36,7 @@ class OpenedNetbarTab {
     'id': id,
     'name': name,
     'status': status,
+    'subdomainFull': subdomainFull,
     'openedAt': openedAt.toIso8601String(),
   };
 
@@ -42,6 +45,7 @@ class OpenedNetbarTab {
       id: json['id'],
       name: json['name'],
       status: json['status'],
+      subdomainFull: json['subdomainFull'],
       openedAt: DateTime.parse(json['openedAt']),
     );
   }
@@ -109,7 +113,7 @@ class NetbarTabsNotifier extends StateNotifier<NetbarTabsState> {
   }
 
   /// 打开新标签页（如果已存在则激活）
-  Future<void> openTab(int id, String name, String status) async {
+  Future<void> openTab(int id, String name, String status, {String? subdomainFull}) async {
     final existingIndex = state.tabs.indexWhere((t) => t.id == id);
     if (existingIndex >= 0) {
       // 已存在，只激活
@@ -120,6 +124,7 @@ class NetbarTabsNotifier extends StateNotifier<NetbarTabsState> {
         id: id,
         name: name,
         status: status,
+        subdomainFull: subdomainFull,
         openedAt: DateTime.now(),
       );
       state = NetbarTabsState(

@@ -7,12 +7,16 @@ class UserGrid extends StatelessWidget {
   final List<User> users;
   final Function(User) onEditUser;
   final Function(User) onBind2FA;
+  final Function(User) onBindMiniProgram;
+  final Function(User) onUnbindMiniProgram;
 
   const UserGrid({
     super.key,
     required this.users,
     required this.onEditUser,
     required this.onBind2FA,
+    required this.onBindMiniProgram,
+    required this.onUnbindMiniProgram,
   });
 
   @override
@@ -63,7 +67,7 @@ class UserGrid extends StatelessWidget {
             crossAxisCount: crossAxisCount,
             crossAxisSpacing: 16,
             mainAxisSpacing: 16,
-            childAspectRatio: 1.4, // Adjust ratio for card height
+            childAspectRatio: 1.15, // Adjust ratio for card height (lowered for mini program binding section)
           ),
           itemCount: users.length,
           itemBuilder: (context, index) {
@@ -72,6 +76,8 @@ class UserGrid extends StatelessWidget {
               user: user,
               onEdit: () => onEditUser(user),
               onBind2FA: () => onBind2FA(user),
+              onBindMiniProgram: () => onBindMiniProgram(user),
+              onUnbindMiniProgram: () => onUnbindMiniProgram(user),
             );
           },
         );

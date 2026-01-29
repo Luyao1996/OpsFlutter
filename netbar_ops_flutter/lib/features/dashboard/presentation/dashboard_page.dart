@@ -3,36 +3,29 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/responsive/responsive.dart';
-import '../../../shared/providers/app_providers.dart';
 import '../data/dashboard_api.dart';
 import 'widgets/stat_card.dart';
 import 'widgets/trend_chart.dart';
-import 'widgets/quick_actions.dart';
 
-final dashboardRangeProvider = StateProvider.autoDispose<String>(
-  (ref) => '最近7天',
+/// 时间范围枚举
+enum TimeRange { days30, months12 }
+
+/// 时间范围 Provider
+final dashboardRangeProvider = StateProvider.autoDispose<TimeRange>(
+  (ref) => TimeRange.days30,
 );
 
-final dashboardStatsProvider = FutureProvider.autoDispose<DashboardStats>((
-  ref,
-) async {
-  final netbar = ref.watch(currentNetbarProvider);
+/// 统计数据 Provider（不使用 autoDispose，让顶栏状态栏能持续访问）
+final dashboardStatsProvider = FutureProvider<DashboardStats>((ref) async {
   final api = ref.read(dashboardApiProvider);
-  return api.getStats(netbarId: netbar.id);
+  return api.getStats();
 });
 
-final dashboardTrendProvider = FutureProvider.autoDispose<List<TrendDataPoint>>(
-  (ref) async {
-    final netbar = ref.watch(currentNetbarProvider);
-    final api = ref.read(dashboardApiProvider);
-    final range = ref.watch(dashboardRangeProvider);
-
-    // Map display string to API param
-    final rangeParam = range == '最近30天' ? '30d' : '7d';
-
-    return api.getTrendData(netbarId: netbar.id, range: rangeParam);
-  },
-);
+/// 趋势数据 Provider
+final dashboardTrendProvider = FutureProvider.autoDispose<TrendData>((ref) async {
+  final api = ref.read(dashboardApiProvider);
+  return api.getTrendData();
+});
 
 class DashboardPage extends ConsumerWidget {
   const DashboardPage({super.key});
@@ -77,9 +70,8 @@ class DashboardPage extends ConsumerWidget {
             );
             final gap = isPhone ? 12.0 : 24.0;
 
-            // Determine columns based on breakpoints (matching Vue: lg=1024, md=768)
+            // Determine columns based on breakpoints
             int columns;
-            // Use the original constraint width for breakpoint checking
             if (isPhone) {
               columns = 2;
             } else if (constraints.maxWidth >= 1024) {
@@ -90,11 +82,8 @@ class DashboardPage extends ConsumerWidget {
               columns = 1;
             }
 
-            // Calculate item width exactly
-            // Total width = columns * itemWidth + (columns - 1) * gap
-            // itemWidth = (Total width - (columns - 1) * gap) / columns
             final itemWidth = (width - (columns - 1) * gap) / columns;
-            const chartAndActionsHeight = 452.0;
+            const chartAndActionsHeight = 500.0;
 
             return SingleChildScrollView(
               padding: EdgeInsets.all(pagePadding),
@@ -124,49 +113,45 @@ class DashboardPage extends ConsumerWidget {
                   ),
                   const SizedBox(height: 32),
 
-                  // Stats Grid (Using Wrap for precise width control to match manual calc)
+                  // Stats Grid - 4个卡片
                   Wrap(
                     spacing: gap,
                     runSpacing: gap,
                     children: [
                       _buildStatItem(
                         itemWidth,
-                        '总网吧数',
-                        stats.totalNetbars.toString(),
-                        '${stats.onlineNetbars} 个在线 / ${stats.totalNetbars - stats.onlineNetbars} 个离线',
+                        '网吧数',
+                        stats.merchantTotal.toString(),
+                        '${stats.merchantOffline} 个离线 / ${stats.merchantOnline} 个在线',
                         LucideIcons.server,
-                        Colors.blue,
-                        null,
+                        Colors.indigo,
                         compact: isPhone,
                       ),
                       _buildStatItem(
                         itemWidth,
-                        '终端总数',
-                        stats.totalDesktops.toString(),
+                        '离线网吧数',
+                        stats.merchantOffline.toString(),
+                        null,
+                        LucideIcons.serverOff,
+                        Colors.grey,
+                        compact: isPhone,
+                      ),
+                      _buildStatItem(
+                        itemWidth,
+                        '终端数',
+                        stats.terminalTotal.toString(),
                         null,
                         LucideIcons.monitor,
-                        Colors.indigo,
-                        2.4,
+                        Colors.orange,
                         compact: isPhone,
                       ),
                       _buildStatItem(
                         itemWidth,
-                        '在线终端',
-                        stats.onlineDesktops.toString(),
+                        '近7日运行终端数',
+                        stats.terminal7days.toString(),
                         null,
                         LucideIcons.activity,
                         Colors.green,
-                        12.5,
-                        compact: isPhone,
-                      ),
-                      _buildStatItem(
-                        itemWidth,
-                        '活跃通道',
-                        '${stats.activeChannels}/${stats.totalChannels}',
-                        null,
-                        LucideIcons.wifi,
-                        Colors.orange,
-                        null,
                         compact: isPhone,
                       ),
                     ],
@@ -174,32 +159,11 @@ class DashboardPage extends ConsumerWidget {
 
                   const SizedBox(height: 32),
 
-                  // Chart & Actions
-                  if (columns == 4)
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(
-                          width: itemWidth * 3 + gap * 2,
-                          height: chartAndActionsHeight,
-                          child: const TrendChart(),
-                        ),
-                        SizedBox(width: gap),
-                        SizedBox(
-                          width: itemWidth,
-                          height: chartAndActionsHeight,
-                          child: const QuickActions(),
-                        ),
-                      ],
-                    )
-                  else
-                    Column(
-                      children: [
-                        const TrendChart(),
-                        const SizedBox(height: 24),
-                        const QuickActions(),
-                      ],
-                    ),
+                  // Chart
+                  SizedBox(
+                    height: chartAndActionsHeight,
+                    child: const TrendChart(),
+                  ),
                 ],
               ),
             );
@@ -215,25 +179,25 @@ class DashboardPage extends ConsumerWidget {
     String value,
     String? subtext,
     IconData icon,
-    Color color,
-    double? trend, {
+    Color color, {
     required bool compact,
   }) {
-    // Aspect ratio 1.6 approx, but let content drive height or fixed height?
-    // Vue uses fixed padding/height. Let's give it a min-height or let it be flexible but constrained width.
+    final cardHeight = compact ? 120.0 : 150.0;
+
     return SizedBox(
       width: width,
-      // Fixed height to ensure alignment, similar to GridView aspect ratio approach
-      // but 'StatCard' is flexible. Let's fix height to match the look.
-      height: compact ? 170 : 220,
-      child: StatCard(
-        title: title,
-        value: value,
-        subtext: compact ? null : subtext,
-        icon: icon,
-        color: color,
-        trend: trend,
-        compact: compact,
+      height: cardHeight,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(compact ? 16 : 20),
+        child: StatCard(
+          title: title,
+          value: value,
+          subtext: compact ? null : subtext,
+          icon: icon,
+          color: color,
+          trend: null,
+          compact: compact,
+        ),
       ),
     );
   }

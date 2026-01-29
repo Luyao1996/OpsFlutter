@@ -32,10 +32,13 @@ class _ExeSearchHit {
 
 class ExePickerDialog extends StatefulWidget {
   final List<ExeZoneOption> visibleZones;
+  /// 是否只显示 .exe 文件，false 时显示所有文件
+  final bool exeOnly;
 
   const ExePickerDialog({
     super.key,
     required this.visibleZones,
+    this.exeOnly = true,
   });
 
   @override
@@ -53,6 +56,9 @@ class _ExePickerDialogState extends State<ExePickerDialog> {
   final Map<String, List<res.Resource>> _childrenCache = {};
   final Set<String> _loadingKeys = {};
   final Set<String> _expandedKeys = {};
+
+  // 存储每个资源的完整路径 (资源ID -> 完整路径)
+  final Map<int, String> _fullPathCache = {};
 
   @override
   void initState() {
@@ -85,8 +91,10 @@ class _ExePickerDialogState extends State<ExePickerDialog> {
     });
   }
 
-  bool _isExe(res.Resource r) {
-    return !r.isDirectory && r.name.toLowerCase().endsWith('.exe');
+  bool _matchFile(res.Resource r) {
+    if (r.isDirectory) return false;
+    if (widget.exeOnly) return r.name.toLowerCase().endsWith('.exe');
+    return true;
   }
 
   String _cacheKey(String zone, int? netbarId, int? parentId) {
@@ -119,9 +127,9 @@ class _ExePickerDialogState extends State<ExePickerDialog> {
   List<res.Resource> _filterAndSort(List<res.Resource> items) {
     final dirs = items.where((e) => e.isDirectory).toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    final exes = items.where(_isExe).toList()
+    final files = items.where(_matchFile).toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    return [...dirs, ...exes];
+    return [...dirs, ...files];
   }
 
   Future<void> _performSearch(String keyword) async {
@@ -143,7 +151,7 @@ class _ExePickerDialogState extends State<ExePickerDialog> {
       for (final entry in entries) {
         final option = entry.key;
         for (final r in entry.value) {
-          if (_isExe(r)) {
+          if (_matchFile(r)) {
             byId.putIfAbsent(
               r.id,
               () => _ExeSearchHit(
@@ -210,7 +218,7 @@ class _ExePickerDialogState extends State<ExePickerDialog> {
     }
     if (_searchResults.isEmpty) {
       return Center(
-        child: Text('未找到可执行文件', style: TextStyle(color: Colors.grey.shade500)),
+        child: Text(widget.exeOnly ? '未找到可执行文件' : '未找到文件', style: TextStyle(color: Colors.grey.shade500)),
       );
     }
     return ListView.separated(
@@ -239,7 +247,36 @@ class _ExePickerDialogState extends State<ExePickerDialog> {
     );
   }
 
-  Widget _buildExeTile(ExeZoneOption option, res.Resource exe, int depth) {
+  /// 构建文件的完整路径
+  String _buildFullPath(String parentPath, String name) {
+    if (parentPath.isEmpty) return name;
+    if (parentPath.endsWith('/')) return '$parentPath$name';
+    return '$parentPath/$name';
+  }
+
+  /// 创建带有完整路径的 Resource 副本
+  res.Resource _resourceWithFullPath(res.Resource r, String fullPath) {
+    return res.Resource(
+      id: r.id,
+      name: r.name,
+      path: fullPath,
+      type: r.type,
+      isDirectory: r.isDirectory,
+      parentId: r.parentId,
+      size: r.size,
+      zone: r.zone,
+      uploader: r.uploader,
+      isGlobal: r.isGlobal,
+      content: r.content,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    );
+  }
+
+  Widget _buildExeTile(ExeZoneOption option, res.Resource exe, int depth, String parentPath) {
+    final fullPath = _buildFullPath(parentPath, exe.name);
+    _fullPathCache[exe.id] = fullPath;
+
     return Padding(
       padding: EdgeInsets.only(left: depth * 12.0 + 40, right: 8),
       child: ListTile(
@@ -247,17 +284,21 @@ class _ExePickerDialogState extends State<ExePickerDialog> {
         contentPadding: EdgeInsets.zero,
         leading: Icon(LucideIcons.file, size: 16, color: AppColors.iosBlue),
         title: Text(exe.name, style: const TextStyle(fontSize: 13)),
-        subtitle: Text(_relativePath(exe), style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-        onTap: () => Navigator.of(context).pop(exe),
+        subtitle: Text(fullPath, style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+        onTap: () => Navigator.of(context).pop(_resourceWithFullPath(exe, fullPath)),
       ),
     );
   }
 
-  Widget _buildFolderTile(ExeZoneOption option, res.Resource folder, int depth) {
+  Widget _buildFolderTile(ExeZoneOption option, res.Resource folder, int depth, String parentPath) {
     final key = _cacheKey(option.zone, option.netbarId, folder.id);
     final isExpanded = _expandedKeys.contains(key);
     final isLoading = _loadingKeys.contains(key);
     final children = _childrenCache[key] ?? const [];
+
+    // 当前文件夹的完整路径
+    final currentPath = _buildFullPath(parentPath, folder.name);
+    _fullPathCache[folder.id] = currentPath;
 
     return Padding(
       padding: EdgeInsets.only(left: depth * 12.0),
@@ -291,13 +332,13 @@ class _ExePickerDialogState extends State<ExePickerDialog> {
           if (!isLoading && children.isEmpty)
             Padding(
               padding: EdgeInsets.only(left: (depth + 1) * 12.0 + 40, top: 4, bottom: 8),
-              child: Text('暂无可执行文件', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+              child: Text(widget.exeOnly ? '暂无可执行文件' : '暂无文件', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
             ),
           for (final child in children)
             if (child.isDirectory)
-              _buildFolderTile(option, child, depth + 1)
+              _buildFolderTile(option, child, depth + 1, currentPath)
             else
-              _buildExeTile(option, child, depth + 1),
+              _buildExeTile(option, child, depth + 1, currentPath),
         ],
       ),
     );
@@ -308,6 +349,9 @@ class _ExePickerDialogState extends State<ExePickerDialog> {
     final isExpanded = _expandedKeys.contains(key);
     final isLoading = _loadingKeys.contains(key);
     final children = _childrenCache[key] ?? const [];
+
+    // zone 作为路径的根，如 /HEADQUARTERS 或 /BRANCH
+    final zonePath = '/${option.zone}';
 
     return ExpansionTile(
       key: PageStorageKey(key),
@@ -339,13 +383,13 @@ class _ExePickerDialogState extends State<ExePickerDialog> {
         if (!isLoading && children.isEmpty)
           Padding(
             padding: const EdgeInsets.only(left: 40, top: 4, bottom: 8),
-            child: Text('暂无可执行文件', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+            child: Text(widget.exeOnly ? '暂无可执行文件' : '暂无文件', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
           ),
         for (final child in children)
           if (child.isDirectory)
-            _buildFolderTile(option, child, 1)
+            _buildFolderTile(option, child, 1, zonePath)
           else
-            _buildExeTile(option, child, 1),
+            _buildExeTile(option, child, 1, zonePath),
       ],
     );
   }
@@ -375,7 +419,7 @@ class _ExePickerDialogState extends State<ExePickerDialog> {
               ),
               child: Row(
                 children: [
-                  const Text('选择执行程序', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                  Text(widget.exeOnly ? '选择执行程序' : '选择文件', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                   const Spacer(),
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),
@@ -396,7 +440,7 @@ class _ExePickerDialogState extends State<ExePickerDialog> {
                 child: TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
-                    hintText: '搜索 exe 文件...',
+                    hintText: widget.exeOnly ? '搜索 exe 文件...' : '搜索文件...',
                     hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
                     prefixIcon: Icon(LucideIcons.search, size: 16, color: Colors.grey.shade400),
                     suffixIcon: isSearchingMode

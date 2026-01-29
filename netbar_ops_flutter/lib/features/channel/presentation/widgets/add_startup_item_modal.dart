@@ -1,47 +1,28 @@
 import 'dart:convert';
-
+import 'dart:typed_data';
+import 'package:charset/charset.dart' as charset;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../data/startup_item_api.dart';
+import '../../data/resource_api.dart' as res;
 import '../../../netbar/data/area_api.dart';
+import 'exe_picker_dialog.dart';
 import 'executable_path_picker_field.dart';
 
-/// 释放文件配置（与 Web ConfigFile 对应）
-class ConfigFile {
-  String path;
-  String content;
-  String mode; // 'edit' | 'upload'
-  String? fileName;
-
-  ConfigFile({
-    this.path = '',
-    this.content = '',
-    this.mode = 'edit',
-    this.fileName,
-  });
-}
-
-/// IP范围（与 Web IpRange 对应）
-class IpRange {
-  String start;
-  String end;
-
-  IpRange({this.start = '', this.end = ''});
-}
-
-/// 新增启动项弹窗 - 与 Web AddStartupItemModal.vue 1:1 对齐
-class AddStartupItemModal extends StatefulWidget {
+/// 新增启动项弹窗 - 与编辑弹窗保持一致的 3 Tab 结构
+class AddStartupItemModal extends ConsumerStatefulWidget {
   final String zone;
   final int? netbarId;
   final int? resourceId;
   final String? defaultPath;
   final String? defaultWorkingDir;
-  final bool isAdmin; // 是否管理员
-  final List<NetbarArea> areas; // 可用区域列表
+  final bool isAdmin;
+  final List<NetbarArea> areas;
   final VoidCallback onSuccess;
   final bool fullscreenSheet;
 
@@ -59,115 +40,212 @@ class AddStartupItemModal extends StatefulWidget {
   });
 
   @override
-  State<AddStartupItemModal> createState() => _AddStartupItemModalState();
+  ConsumerState<AddStartupItemModal> createState() => _AddStartupItemModalState();
 }
 
-class _AddStartupItemModalState extends State<AddStartupItemModal> {
+class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
+    with SingleTickerProviderStateMixin {
   final StartupItemApi _api = StartupItemApi();
   final _formKey = GlobalKey<FormState>();
 
-  // 基础字段
-  final _displayNameController = TextEditingController(); // 启动项名称
-  final _nameController = TextEditingController(); // 执行程序路径
-  final _workingDirController = TextEditingController();
-  final _argsController = TextEditingController();
+  // --- 启动项字段 ---
+  final _pathController = TextEditingController();
+  final _parameterController = TextEditingController();
   final _delayController = TextEditingController(text: '0');
   int? _selectedExeResourceId;
+  bool _isRandomName = false;
+  bool _isForcedOn = false;
+  String _strategyMode = '0';
+  final _strategyNameController = TextEditingController();
+  late List<_PeriodInput> _periods;
 
-  // 基础设置（与 Web config 对应）
-  bool _enabled = true;
-  bool _forceRun = false;
+  // --- 区域字段 ---
+  final _areaInputController = TextEditingController();
+  final List<_AreaEntry> _areaList = [];
 
-  // 生效范围（与 Web 对应）
-  final List<String> _targetOs = []; // win7, win10, win11, win12
-  final List<String> _targetAreas = [];
+  // --- 本地化字段 ---
+  final List<_LocaleFileEntry> _localeFiles = [];
+  int _activeLocaleIndex = 0;
 
-  // 高级策略（与 Web 对应）
-  bool _randomProcessName = false;
-  bool _runAsService = false;
-  String _crashAction = 'none'; // none, restart, reboot_os
-
-  // 释放文件（与 Web releaseFiles 对应）
-  final List<ConfigFile> _releaseFiles = [];
+  // --- Tab ---
+  late TabController _tabController;
 
   bool _saving = false;
   String? _error;
-
-  // Windows 版本选项（与 Web WINDOWS_VERSIONS 对应）
-  static const List<String> _windowsVersions = [
-    'win7',
-    'win10',
-    'win11',
-    'win12',
-  ];
 
   @override
   void initState() {
     super.initState();
     _selectedExeResourceId = widget.resourceId;
     if (widget.defaultPath != null) {
-      _nameController.text = widget.defaultPath!;
+      _pathController.text = widget.defaultPath!;
     }
-    if (widget.defaultWorkingDir != null) {
-      _workingDirController.text = widget.defaultWorkingDir!;
-    }
+    _periods = [_PeriodInput()];
+    _localeFiles.add(_LocaleFileEntry(
+      pathController: TextEditingController(),
+      contentController: TextEditingController(),
+    ));
+    _tabController = TabController(length: 3, vsync: this);
   }
 
   @override
   void dispose() {
-    _displayNameController.dispose();
-    _nameController.dispose();
-    _workingDirController.dispose();
-    _argsController.dispose();
+    _pathController.dispose();
+    _parameterController.dispose();
     _delayController.dispose();
+    _strategyNameController.dispose();
+    _areaInputController.dispose();
+    for (final f in _localeFiles) {
+      f.pathController.dispose();
+      f.contentController.dispose();
+    }
+    _tabController.dispose();
     super.dispose();
   }
 
+  String _buildTimeStr(TimeOfDay? t) {
+    if (t == null) return '';
+    final hh = t.hour.toString().padLeft(2, '0');
+    final mm = t.minute.toString().padLeft(2, '0');
+    return '$hh:$mm:00';
+  }
+
+  // --- 时段操作 ---
+  void _addPeriod() => setState(() => _periods.add(_PeriodInput()));
+
+  void _removePeriod(int index) => setState(() => _periods.removeAt(index));
+
+  Future<void> _pickTime(bool isStart, int index) async {
+    final period = _periods[index];
+    final initial = isStart
+        ? (period.start ?? const TimeOfDay(hour: 0, minute: 0))
+        : (period.end ?? const TimeOfDay(hour: 23, minute: 59));
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: initial,
+      builder: (context, child) {
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() {
+        if (isStart) {
+          period.start = picked;
+        } else {
+          period.end = picked;
+        }
+      });
+    }
+  }
+
+  // --- 区域操作 ---
+  void _addArea() {
+    final input = _areaInputController.text.trim();
+    if (input.isEmpty) return;
+    setState(() {
+      _areaList.add(_AreaEntry(range: input, enabled: true));
+      _areaInputController.clear();
+    });
+  }
+
+  void _removeArea(int index) => setState(() => _areaList.removeAt(index));
+
+  // --- 本地化文件操作 ---
+  void _addLocaleTab() {
+    setState(() {
+      _localeFiles.add(_LocaleFileEntry(
+        pathController: TextEditingController(),
+        contentController: TextEditingController(),
+      ));
+      _activeLocaleIndex = _localeFiles.length - 1;
+    });
+  }
+
+  void _removeLocaleTab(int index) {
+    setState(() {
+      _localeFiles[index].pathController.dispose();
+      _localeFiles[index].contentController.dispose();
+      _localeFiles.removeAt(index);
+      if (_activeLocaleIndex >= _localeFiles.length) {
+        _activeLocaleIndex =
+            _localeFiles.isEmpty ? 0 : _localeFiles.length - 1;
+      }
+    });
+  }
+
+  // --- 保存 ---
   Future<void> _handleSave() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_nameController.text.trim().isEmpty) return;
+    if (_pathController.text.trim().isEmpty) {
+      showTopNotice(context, '请选择执行文件', level: NoticeLevel.error);
+      return;
+    }
+
+    // 优先使用传入的 netbarId，否则使用当前选中的网吧
+    final currentNetbar = ref.read(currentNetbarProvider);
+    final netbarId = widget.netbarId ?? currentNetbar.id;
+
+    if (netbarId == null) {
+      showTopNotice(context, '请先选择网吧', level: NoticeLevel.error);
+      return;
+    }
 
     setState(() {
       _saving = true;
       _error = null;
     });
     try {
-      // 清理释放文件（移除 UI 状态字段）
-      final cleanFiles = _releaseFiles
-          .where((f) => f.path.isNotEmpty)
-          .map((f) => {'path': f.path, 'content': f.content})
+      final periods = _periods
+          .where((p) => p.start != null && p.end != null)
+          .map((p) => StartupPeriod(
+                start: _buildTimeStr(p.start),
+                end: _buildTimeStr(p.end),
+              ))
           .toList();
 
-      await _api.create(
-        resourceId: _selectedExeResourceId ?? widget.resourceId,
-        netbarId: widget.netbarId,
-        name: _nameController.text.trim(),
-        displayName: _displayNameController.text.trim().isEmpty
+      // 构建 locales
+      final locales = _localeFiles
+          .where((f) =>
+              f.pathController.text.isNotEmpty ||
+              f.contentController.text.isNotEmpty ||
+              f.fileBytes != null)
+          .map((f) => LocaleSubmitData(
+                groupFileId: f.groupFileId,
+                path: f.pathController.text,
+                content: f.mode == 'text' ? f.contentController.text : null,
+                fileBytes: f.mode == 'upload' ? f.fileBytes : null,
+                fileName: f.mode == 'upload' ? f.fileName : null,
+              ))
+          .toList();
+
+      // 构建 area
+      final area =
+          _areaList.where((a) => a.enabled).map((a) => a.range).toList();
+
+      await _api.createTactic(
+        groupFileId: _selectedExeResourceId ?? widget.resourceId,
+        path: _pathController.text.trim(),
+        parameter: _parameterController.text.isEmpty
             ? null
-            : _displayNameController.text.trim(),
-        path: _nameController.text.trim(), // 与 Web 一致：name 即为路径
-        zone: widget.zone,
-        enabled: _enabled,
-        args: _argsController.text.isEmpty ? null : _argsController.text,
+            : _parameterController.text,
         delay: int.tryParse(_delayController.text) ?? 0,
-        forceRun: _forceRun,
-        workingDir: _workingDirController.text.isEmpty
-            ? null
-            : _workingDirController.text,
-        targetOs: _targetOs.isEmpty ? null : _targetOs.join(','),
-        targetAreas: _targetAreas.isEmpty ? null : _targetAreas.join(','),
-        crashAction: _crashAction,
-        runAsService: _runAsService,
-        randomProcessName: _randomProcessName,
-        releaseFiles: cleanFiles.isEmpty ? null : cleanFiles,
+        isRandomName: _isRandomName,
+        isForcedOn: _isForcedOn,
+        strategy: StartupStrategy(
+          mode: _strategyMode,
+          name: _strategyNameController.text,
+        ),
+        period: periods.isEmpty ? null : periods,
+        locales: locales.isEmpty ? null : locales,
+        merchantIds: [netbarId],
+        area: area.isEmpty ? null : area,
       );
       widget.onSuccess();
       if (mounted) {
-        showTopNotice(
-          context,
-          '创建成功: ${_displayNameController.text.trim().isNotEmpty ? _displayNameController.text.trim() : _nameController.text.trim()}',
-          level: NoticeLevel.success,
-        );
+        showTopNotice(context, '创建成功', level: NoticeLevel.success);
         Navigator.of(context).pop();
       }
     } catch (e) {
@@ -180,72 +258,49 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
     }
   }
 
-  void _handleOsChange(String os) {
-    setState(() {
-      if (_targetOs.contains(os)) {
-        _targetOs.remove(os);
-      } else {
-        _targetOs.add(os);
-      }
-    });
-  }
-
-  void _handleAreaChange(String areaName) {
-    setState(() {
-      if (_targetAreas.contains(areaName)) {
-        _targetAreas.remove(areaName);
-      } else {
-        _targetAreas.add(areaName);
-      }
-    });
-  }
-
-  void _addFile() {
-    setState(() {
-      _releaseFiles.add(ConfigFile());
-    });
-  }
-
-  void _removeFile(int index) {
-    setState(() {
-      _releaseFiles.removeAt(index);
-    });
-  }
-
-  Future<void> _pickReleaseFile(int index) async {
-    final result = await FilePicker.platform.pickFiles(
-      allowMultiple: false,
-      withData: true,
-      type: FileType.any,
-    );
-    final picked = result?.files.single;
-    if (picked == null) return;
-    final bytes = picked.bytes;
-    if (bytes == null) {
-      if (!mounted) return;
-      showTopNotice(context, '无法读取文件内容，请重试', level: NoticeLevel.error);
-      return;
-    }
-    final content = utf8.decode(bytes, allowMalformed: true);
-    setState(() {
-      final file = _releaseFiles[index];
-      file.fileName = picked.name;
-      file.content = content;
-      if (file.path.isEmpty) file.path = picked.name;
-      file.mode = 'upload';
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
-    final isSheet = widget.fullscreenSheet || context.isPhone;
+    final isSheet = widget.fullscreenSheet;
     final sheetHeight = MediaQuery.sizeOf(context).height * 0.92;
     final content = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         _buildHeader(isSheet: isSheet),
+        // Tab 栏
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
+          ),
+          child: TabBar(
+            controller: _tabController,
+            labelColor: AppColors.iosBlue,
+            unselectedLabelColor: Colors.grey.shade600,
+            indicatorColor: AppColors.iosBlue,
+            indicatorSize: TabBarIndicatorSize.label,
+            labelStyle:
+                const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            unselectedLabelStyle: const TextStyle(fontSize: 13),
+            tabs: const [
+              Tab(text: '启动项'),
+              Tab(text: '区域配置'),
+              Tab(text: '本地化'),
+            ],
+          ),
+        ),
         Flexible(
-          child: SingleChildScrollView(child: _buildForm(isSheet: isSheet)),
+          child: Form(
+            key: _formKey,
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                SingleChildScrollView(
+                    child: _buildStartupForm(isSheet: isSheet)),
+                SingleChildScrollView(child: _buildAreaForm(isSheet: isSheet)),
+                _buildLocaleForm(isSheet: isSheet),
+              ],
+            ),
+          ),
         ),
         _buildFooter(isSheet: isSheet),
       ],
@@ -275,7 +330,7 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
     return Dialog(
       backgroundColor: Colors.transparent,
       child: Container(
-        width: 700,
+        width: 560,
         constraints: BoxConstraints(
           maxHeight: MediaQuery.of(context).size.height * 0.9,
         ),
@@ -289,6 +344,7 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
     );
   }
 
+  // ==================== Header ====================
   Widget _buildHeader({required bool isSheet}) {
     return Container(
       padding: EdgeInsets.fromLTRB(24, isSheet ? 12 : 16, 16, 16),
@@ -301,13 +357,13 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: AppColors.iosBlue.withValues(alpha: 0.1),
+              color: const Color(0xFF22C55E).withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
             child: const Icon(
-              LucideIcons.zap,
+              LucideIcons.plus,
               size: 20,
-              color: AppColors.iosBlue,
+              color: Color(0xFF22C55E),
             ),
           ),
           const SizedBox(width: 12),
@@ -337,572 +393,228 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
     );
   }
 
-  Widget _buildForm({required bool isSheet}) {
+  // ==================== 启动项 Tab ====================
+  Widget _buildStartupForm({required bool isSheet}) {
     return Padding(
       padding: EdgeInsets.all(isSheet ? 16 : 24),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 启动项名称和执行程序路径
-            _buildSection(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildLabel('启动项名称 (可选)'),
-                  const SizedBox(height: 8),
-                  TextFormField(
-                    controller: _displayNameController,
-                    decoration: _inputDecoration('例如: Steam游戏平台'),
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    autofocus: true,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '用于显示的名称，不填则使用程序路径',
-                    style: TextStyle(fontSize: 10, color: Colors.grey.shade400),
-                  ),
-                  const SizedBox(height: 16),
-                  _buildLabel('执行程序路径/文件名', required: true),
-                  const SizedBox(height: 8),
-                  ExecutablePathPickerField(
-                    controller: _nameController,
-                    validator: (v) =>
-                        v == null || v.isEmpty ? '请选择执行程序路径' : null,
-                    decoration: _inputDecoration('请选择 exe 文件'),
-                    onSelected: (r) =>
-                        setState(() => _selectedExeResourceId = r.id),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '从资源管理中选择可执行文件',
-                    style: TextStyle(fontSize: 10, color: Colors.grey.shade400),
-                  ),
-                  const SizedBox(height: 16),
-                  _buildLabel('程序运行目录 (可选)'),
-                  const SizedBox(height: 8),
-                  TextFormField(
-                    controller: _workingDirController,
-                    decoration: _inputDecoration('例如: C:\\Games\\Pubg'),
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-              highlighted: true,
-            ),
-            const SizedBox(height: 24),
-
-            // 释放文件配置
-            _buildReleaseFilesSection(),
-            const SizedBox(height: 24),
-
-            // 基础设置
-            _buildBasicSettingsSection(),
-            const SizedBox(height: 24),
-
-            // 生效范围
-            _buildTargetRangeSection(),
-            const SizedBox(height: 24),
-
-            // 高级策略
-            _buildAdvancedSettingsSection(),
-
-            if (_error != null) ...[
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.red.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red.shade200),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      LucideIcons.alertCircle,
-                      size: 16,
-                      color: Colors.red.shade600,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _error!,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.red.shade600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildReleaseFilesSection() {
-    return _buildSection(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    LucideIcons.fileText,
-                    size: 14,
-                    color: Colors.grey.shade600,
-                  ),
-                  const SizedBox(width: 8),
-                  _buildLabel('释放文件 (可选)'),
-                ],
-              ),
-              TextButton.icon(
-                onPressed: _addFile,
-                icon: const Icon(LucideIcons.plus, size: 12),
-                label: const Text('添加文件', style: TextStyle(fontSize: 12)),
-                style: TextButton.styleFrom(
-                  foregroundColor: AppColors.iosBlue,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (_releaseFiles.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade50,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: Colors.grey.shade200,
-                  style: BorderStyle.solid,
-                ),
-              ),
-              child: Center(
-                child: Text(
-                  '暂无需要释放的配置文件或脚本',
-                  style: TextStyle(fontSize: 13, color: Colors.grey.shade400),
-                ),
-              ),
-            )
-          else
-            ...List.generate(
-              _releaseFiles.length,
-              (index) => _buildFileItem(index),
+          // 执行文件
+          _buildFormItem(
+            label: '执行文件',
+            required: true,
+            child: ExecutablePathPickerField(
+              controller: _pathController,
+              validator: (v) =>
+                  v == null || v.isEmpty ? '请选择执行程序路径' : null,
+              decoration: _inputDecoration('请选择 exe 文件'),
+              onSelected: (r) =>
+                  setState(() => _selectedExeResourceId = r.id),
             ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFileItem(int index) {
-    final file = _releaseFiles[index];
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '目标路径 (相对或绝对)',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey.shade500,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    TextFormField(
-                      initialValue: file.path,
-                      onChanged: (v) => file.path = v,
-                      decoration:
-                          _inputDecoration(
-                            '例如: config.ini 或 C:\\Config\\settings.cfg',
-                          ).copyWith(
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 6,
-                            ),
-                          ),
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                onPressed: () => _removeFile(index),
-                icon: Icon(
-                  LucideIcons.trash2,
-                  size: 14,
-                  color: Colors.red.shade400,
-                ),
-                splashRadius: 16,
-              ),
-            ],
           ),
-          const SizedBox(height: 12),
-          // 模式选择
-          Row(
-            children: [
-              _buildRadioOption(
-                '直接编辑内容',
-                file.mode == 'edit',
-                () => setState(() => file.mode = 'edit'),
-              ),
-              const SizedBox(width: 16),
-              _buildRadioOption(
-                '上传文件',
-                file.mode == 'upload',
-                () => setState(() => file.mode = 'upload'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (file.mode == 'edit')
-            TextFormField(
-              initialValue: file.content,
-              onChanged: (v) => file.content = v,
-              maxLines: 3,
-              decoration: _inputDecoration(
-                '在此输入文件内容...',
-              ).copyWith(contentPadding: const EdgeInsets.all(8)),
-              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-            )
-          else
-            InkWell(
-              onTap: () => _pickReleaseFile(index),
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: Colors.grey.shade300,
-                    style: BorderStyle.solid,
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      LucideIcons.upload,
-                      size: 14,
-                      color: Colors.grey.shade400,
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        file.fileName ?? '点击选择文件',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey.shade600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRadioOption(String label, bool selected, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 16,
-            height: 16,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: selected ? AppColors.iosBlue : Colors.grey.shade400,
-                width: 2,
-              ),
-            ),
-            child: selected
-                ? Center(
-                    child: Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: AppColors.iosBlue,
-                      ),
-                    ),
-                  )
-                : null,
-          ),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBasicSettingsSection() {
-    return _buildSection(
-      color: Colors.grey.shade50,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildLabel('基础设置'),
           const SizedBox(height: 16),
-          // 开机自动运行
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                '开机自动运行',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-              ),
-              Switch(
-                value: _enabled,
-                onChanged: (v) => setState(() => _enabled = v),
-                activeThumbColor: const Color(0xFF22C55E),
-              ),
-            ],
+
+          // 执行参数
+          _buildFormItem(
+            label: '执行参数',
+            child: TextFormField(
+              controller: _parameterController,
+              decoration: _inputDecoration('-silent -minimized'),
+              style: const TextStyle(fontSize: 13),
+            ),
           ),
-          // 强制下级执行（仅管理员可见）
-          if (widget.isAdmin) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: Checkbox(
-                    value: _forceRun,
-                    onChanged: (v) => setState(() => _forceRun = v ?? false),
-                    activeColor: AppColors.iosBlue,
-                  ),
+          const SizedBox(height: 16),
+
+          // 延时启动
+          _buildFormItem(
+            label: '延时启动',
+            child: SizedBox(
+              width: 180,
+              child: TextFormField(
+                controller: _delayController,
+                keyboardType: TextInputType.number,
+                decoration: _inputDecoration('0').copyWith(
+                  suffixText: '秒',
+                  suffixStyle:
+                      TextStyle(fontSize: 13, color: Colors.grey.shade500),
                 ),
-                const SizedBox(width: 8),
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // 随机进程名
+          _buildFormItem(
+            label: '随机进程名',
+            child: Row(
+              children: [
+                Switch(
+                  value: _isRandomName,
+                  onChanged: (v) => setState(() => _isRandomName = v),
+                  activeColor: AppColors.iosBlue,
+                ),
+                const SizedBox(width: 4),
                 Text(
-                  '强制下级执行 (分公司不可禁用)',
+                  _isRandomName ? '是' : '否',
                   style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
                 ),
               ],
             ),
-          ],
-          const SizedBox(height: 16),
-          // 启动参数和延时
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '启动参数',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.grey.shade500,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    TextFormField(
-                      controller: _argsController,
-                      decoration: _inputDecoration('-silent -minimized'),
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '延时启动 (秒)',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.grey.shade500,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    TextFormField(
-                      controller: _delayController,
-                      keyboardType: TextInputType.number,
-                      decoration: _inputDecoration('0'),
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                  ],
-                ),
-              ),
-            ],
           ),
+          const SizedBox(height: 16),
+
+          // 生效时段
+          _buildPeriodSection(),
+          const SizedBox(height: 16),
+
+          // 执行策略
+          _buildStrategySection(),
+          const SizedBox(height: 16),
+
+          // 强制开启
+          _buildFormItem(
+            label: '强制开启',
+            child: Switch(
+              value: _isForcedOn,
+              onChanged: widget.isAdmin
+                  ? (v) => setState(() => _isForcedOn = v)
+                  : null,
+              activeColor: AppColors.iosBlue,
+            ),
+          ),
+
+          if (_error != null) ...[
+            const SizedBox(height: 16),
+            _buildErrorBanner(),
+          ],
         ],
       ),
     );
   }
 
-  Widget _buildTargetRangeSection() {
-    return _buildSection(
+  // ==================== 区域配置 Tab ====================
+  Widget _buildAreaForm({required bool isSheet}) {
+    return Padding(
+      padding: EdgeInsets.all(isSheet ? 16 : 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Text(
+            '生效区域',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '留空代表全场生效。支持范围格式如 001-009,020',
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+          ),
+          const SizedBox(height: 16),
+
+          // 输入行
           Row(
             children: [
-              Icon(LucideIcons.target, size: 14, color: Colors.grey.shade600),
-              const SizedBox(width: 8),
-              _buildLabel('生效范围'),
+              Expanded(
+                child: TextFormField(
+                  controller: _areaInputController,
+                  decoration: _inputDecoration('区域机号: 001-009,020'),
+                  style: const TextStyle(fontSize: 13),
+                  onFieldSubmitted: (_) => _addArea(),
+                ),
+              ),
+              const SizedBox(width: 12),
+              ElevatedButton(
+                onPressed: _addArea,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.iosBlue,
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text('添加', style: TextStyle(fontSize: 13)),
+              ),
             ],
           ),
           const SizedBox(height: 16),
-          // 指定操作系统
-          Text(
-            '指定操作系统',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: Colors.grey.shade800,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _windowsVersions.map((os) {
-              final isSelected = _targetOs.contains(os);
-              return GestureDetector(
-                onTap: () => _handleOsChange(os),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: Checkbox(
-                        value: isSelected,
-                        onChanged: (_) => _handleOsChange(os),
-                        activeColor: AppColors.iosBlue,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      os.toUpperCase(),
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                  ],
+
+          // 区域列表
+          if (_areaList.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Center(
+                child: Text(
+                  '未添加区域，将全场生效',
+                  style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
                 ),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 16),
-          // 指定网吧区域
-          Text(
-            '指定网吧区域',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: Colors.grey.shade800,
-            ),
-          ),
-          const SizedBox(height: 8),
-          if (widget.areas.isNotEmpty)
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: widget.areas.map((area) {
-                final isSelected = _targetAreas.contains(area.name);
-                return GestureDetector(
-                  onTap: () => _handleAreaChange(area.name),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? Colors.purple.shade50
-                          : Colors.grey.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: isSelected
-                            ? Colors.purple
-                            : Colors.grey.shade200,
-                      ),
-                    ),
+              ),
+            )
+          else
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade200),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: _areaList.length,
+                separatorBuilder: (_, __) =>
+                    Divider(height: 1, color: Colors.grey.shade100),
+                itemBuilder: (context, index) {
+                  final area = _areaList[index];
+                  return Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     child: Row(
-                      mainAxisSize: MainAxisSize.min,
                       children: [
                         SizedBox(
-                          width: 16,
-                          height: 16,
+                          width: 24,
+                          height: 24,
                           child: Checkbox(
-                            value: isSelected,
-                            onChanged: (_) => _handleAreaChange(area.name),
-                            activeColor: Colors.purple,
+                            value: area.enabled,
+                            onChanged: (v) =>
+                                setState(() => area.enabled = v ?? true),
+                            activeColor: AppColors.iosBlue,
                           ),
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          area.name,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey.shade700,
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            area.range,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: area.enabled
+                                  ? Colors.grey.shade800
+                                  : Colors.grey.shade400,
+                            ),
+                          ),
+                        ),
+                        InkWell(
+                          onTap: () => _removeArea(index),
+                          borderRadius: BorderRadius.circular(4),
+                          child: Padding(
+                            padding: const EdgeInsets.all(4),
+                            child: Icon(LucideIcons.x,
+                                size: 16, color: Colors.red.shade400),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                );
-              }).toList(),
-            )
-          else
-            Text(
-              '当前网吧未配置区域',
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.grey.shade400,
-                fontStyle: FontStyle.italic,
+                  );
+                },
               ),
             ),
         ],
@@ -910,187 +622,886 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
     );
   }
 
-  Widget _buildAdvancedSettingsSection() {
-    return _buildSection(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+  // ==================== 本地化 Tab ====================
+  Widget _buildLocaleForm({required bool isSheet}) {
+    return Column(
+      children: [
+        // 文件标签栏
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
+          ),
+          child: Row(
             children: [
-              Icon(LucideIcons.cpu, size: 14, color: Colors.grey.shade600),
-              const SizedBox(width: 8),
-              _buildLabel('高级策略'),
-            ],
-          ),
-          const SizedBox(height: 16),
-          // 随机进程名
-          _buildAdvancedRow(
-            icon: LucideIcons.shuffle,
-            iconColor: Colors.purple,
-            title: '随机进程名',
-            subtitle: '启动时随机重命名 EXE 文件',
-            value: _randomProcessName,
-            onChanged: (v) => setState(() => _randomProcessName = v),
-          ),
-          Divider(color: Colors.grey.shade100, height: 24),
-          // 作为系统服务运行
-          _buildAdvancedRow(
-            icon: LucideIcons.activity,
-            iconColor: AppColors.iosBlue,
-            title: '作为系统服务运行',
-            subtitle: '以 SYSTEM 权限在后台静默运行',
-            value: _runAsService,
-            onChanged: (v) => setState(() => _runAsService = v),
-          ),
-          Divider(color: Colors.grey.shade100, height: 24),
-          // 进程崩溃动作
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '进程崩溃动作',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.grey.shade500,
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      ...List.generate(_localeFiles.length, (i) {
+                        final isActive = i == _activeLocaleIndex;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 4),
+                          child: InkWell(
+                            onTap: () =>
+                                setState(() => _activeLocaleIndex = i),
+                            borderRadius: BorderRadius.circular(6),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: isActive
+                                    ? AppColors.iosBlue.withValues(alpha: 0.1)
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: isActive
+                                      ? AppColors.iosBlue
+                                      : Colors.grey.shade300,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    '文件${i + 1}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: isActive
+                                          ? AppColors.iosBlue
+                                          : Colors.grey.shade600,
+                                      fontWeight: isActive
+                                          ? FontWeight.w600
+                                          : FontWeight.normal,
+                                    ),
+                                  ),
+                                  if (_localeFiles.length > 1) ...[
+                                    const SizedBox(width: 4),
+                                    InkWell(
+                                      onTap: () => _removeLocaleTab(i),
+                                      child: Icon(
+                                        LucideIcons.x,
+                                        size: 12,
+                                        color: isActive
+                                            ? AppColors.iosBlue
+                                            : Colors.grey.shade400,
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(width: 8),
+              InkWell(
+                onTap: _addLocaleTab,
+                borderRadius: BorderRadius.circular(6),
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Icon(LucideIcons.plus,
+                      size: 14, color: Colors.grey.shade600),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // 当前文件编辑
+        if (_localeFiles.isNotEmpty && _activeLocaleIndex < _localeFiles.length)
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.all(isSheet ? 16 : 24),
+              child: _buildLocaleEditor(_localeFiles[_activeLocaleIndex]),
+            ),
+          ),
+      ],
+    );
+  }
+
+  List<ExeZoneOption> _buildVisibleZones() {
+    final auth = ref.read(authNotifierProvider);
+    final user = auth.user;
+    final isTopManager = user?.isTopManager == true;
+    final groupId = user?.groupId ?? 0;
+
+    return <ExeZoneOption>[
+      const ExeZoneOption(label: '总公司资源', zone: 'HEADQUARTERS', netbarId: 0),
+      // 非总部管理员（分部管理员或普通用户）显示分公司资源
+      if (!isTopManager && groupId > 0)
+        ExeZoneOption(label: '分公司资源', zone: 'BRANCH', netbarId: groupId),
+      const ExeZoneOption(label: '共享区资源', zone: 'SHARED', netbarId: null),
+    ];
+  }
+
+  static const int _maxEditableSize = 50 * 1024; // 最大可编辑文件大小 50KB
+  static const int _previewSize = 5 * 1024; // 预览大小 5KB
+
+  // 图片文件扩展名
+  static const Set<String> _imageExtensions = {
+    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.ico', '.svg', '.tiff', '.tif', '.heic', '.heif'
+  };
+
+  bool _isImageFile(String path) {
+    final lower = path.toLowerCase();
+    return _imageExtensions.any((ext) => lower.endsWith(ext));
+  }
+
+  // 支持的编码列表
+  static const List<MapEntry<String, String>> _supportedEncodings = [
+    MapEntry('utf-8', 'UTF-8'),
+    MapEntry('gbk', 'GBK (简体中文)'),
+    MapEntry('shift-jis', 'Shift-JIS (日文)'),
+    MapEntry('euc-jp', 'EUC-JP (日文)'),
+    MapEntry('euc-kr', 'EUC-KR (韩文)'),
+    MapEntry('latin1', 'ISO-8859-1 (Latin1)'),
+    MapEntry('ascii', 'ASCII'),
+  ];
+
+  String _decodeContent(Uint8List bytes, String encoding) {
+    try {
+      switch (encoding) {
+        case 'utf-8':
+          return utf8.decode(bytes, allowMalformed: true);
+        case 'latin1':
+          return latin1.decode(bytes);
+        case 'ascii':
+          return ascii.decode(bytes);
+        case 'gbk':
+          return charset.gbk.decode(bytes);
+        case 'shift-jis':
+          return charset.shiftJis.decode(bytes);
+        case 'euc-jp':
+          return charset.eucJp.decode(bytes);
+        case 'euc-kr':
+          return charset.eucKr.decode(bytes);
+        default:
+          return utf8.decode(bytes, allowMalformed: true);
+      }
+    } catch (e) {
+      // 解码失败，尝试 UTF-8 允许畸形
+      return utf8.decode(bytes, allowMalformed: true);
+    }
+  }
+
+  Future<void> _loadFileContent(_LocaleFileEntry file, {bool forceLoad = false}) async {
+    if (file.groupFileId == null) return;
+
+    // 如果已有完整字节且是强制加载，直接解码显示
+    if (forceLoad && file.fullBytes != null) {
+      setState(() {
+        file.rawBytes = file.fullBytes;
+        file.isFullyLoaded = true;
+        file.contentController.text = _decodeContent(file.rawBytes!, file.encoding);
+      });
+      return;
+    }
+
+    setState(() {
+      file.isLoading = true;
+      file.loadError = null;
+    });
+
+    try {
+      final resourceApi = res.ResourceApi();
+
+      // 使用流式下载，可以在接收过程中检查大小
+      final downloadedBytes = await resourceApi.downloadBytes(
+        file.groupFileId!,
+        onReceiveProgress: (received, total) {
+          if (total > 0) {
+            file.totalSize = total;
+          }
+        },
+      );
+
+      final bytes = Uint8List.fromList(downloadedBytes);
+      file.totalSize = bytes.length;
+      file.fullBytes = bytes;
+
+      // 如果文件太大，不加载内容，只显示提示
+      if (bytes.length > _maxEditableSize && !forceLoad) {
+        if (mounted) {
+          setState(() {
+            file.rawBytes = null;
+            file.isFullyLoaded = false;
+            file.isLoading = false;
+            file.contentController.text = '[文件较大] 文件大小 ${_formatFileSize(bytes.length)}，超过可编辑限制 (${_formatFileSize(_maxEditableSize)})。\n\n点击下方"加载内容"按钮可强制加载（可能导致卡顿）。\n保存时将使用原文件内容。';
+          });
+        }
+        return;
+      }
+
+      // 文件大小在限制内，正常显示
+      file.rawBytes = bytes;
+      file.isFullyLoaded = true;
+      final content = _decodeContent(bytes, file.encoding);
+
+      if (mounted) {
+        setState(() {
+          file.contentController.text = content;
+          file.mode = 'text';
+          file.isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          file.loadError = '加载失败: $e';
+          file.isLoading = false;
+        });
+      }
+    }
+  }
+
+  void _onEncodingChanged(_LocaleFileEntry file, String newEncoding) {
+    final bytesToDecode = file.isFullyLoaded ? file.fullBytes : file.rawBytes;
+    if (bytesToDecode == null) return;
+    setState(() {
+      file.encoding = newEncoding;
+      file.contentController.text = _decodeContent(bytesToDecode, newEncoding);
+    });
+  }
+
+  Future<void> _pickLocalePath(_LocaleFileEntry file) async {
+    final visibleZones = _buildVisibleZones();
+    final selected = await showDialog<res.Resource>(
+      context: context,
+      builder: (context) => ExePickerDialog(visibleZones: visibleZones, exeOnly: false),
+    );
+    if (!mounted || selected == null) return;
+
+    // ExePickerDialog 现在返回带有完整路径的 Resource
+    final filePath = selected.path.isNotEmpty ? selected.path : selected.name;
+    setState(() {
+      file.pathController.text = filePath;
+      file.groupFileId = selected.id;
+    });
+
+    // 如果是图片文件，显示提示而不加载内容
+    if (_isImageFile(filePath)) {
+      setState(() {
+        file.mode = 'text';
+        file.contentController.text = '[图片文件] 不支持预览图片内容，保存时将使用原文件。';
+        file.rawBytes = null;
+        file.fullBytes = null;
+        file.isFullyLoaded = true;
+      });
+      return;
+    }
+
+    // 自动加载文件内容
+    await _loadFileContent(file);
+  }
+
+  Future<void> _pickLocaleFile(_LocaleFileEntry file) async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: false,
+      withData: true,
+      type: FileType.any,
+    );
+    final picked = result?.files.single;
+    if (picked == null || picked.bytes == null) return;
+    setState(() {
+      file.fileBytes = picked.bytes;
+      file.fileName = picked.name;
+    });
+  }
+
+  void _clearLocaleFile(_LocaleFileEntry file) {
+    setState(() {
+      file.fileBytes = null;
+      file.fileName = null;
+    });
+  }
+
+  Widget _buildLocaleEditor(_LocaleFileEntry file) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 文件路径
+        _buildFormItem(
+          label: '文件路径',
+          child: TextFormField(
+            controller: file.pathController,
+            decoration: _inputDecoration('../开机文件/config.ini').copyWith(
+              suffixIcon: IconButton(
+                onPressed: () => _pickLocalePath(file),
+                icon: Icon(LucideIcons.folderOpen, size: 16, color: Colors.grey.shade500),
+                tooltip: '从资源中选择',
+              ),
+            ),
+            style: const TextStyle(fontSize: 13),
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // 模式切换 + 编码选择
+        Row(
+          children: [
+            _buildModeChip('文本内容', file.mode == 'text', () {
+              setState(() => file.mode = 'text');
+            }),
+            const SizedBox(width: 8),
+            _buildModeChip('上传文件', file.mode == 'upload', () {
+              setState(() => file.mode = 'upload');
+            }),
+            const Spacer(),
+            // 编码选择
+            if (file.mode == 'text') ...[
+              Text('编码:', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+              const SizedBox(width: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey.shade200),
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.grey.shade300),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<String>(
-                    value: _crashAction,
-                    isExpanded: true,
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'none',
-                        child: Text('无动作', style: TextStyle(fontSize: 13)),
-                      ),
-                      DropdownMenuItem(
-                        value: 'restart',
-                        child: Text('自动重启进程', style: TextStyle(fontSize: 13)),
-                      ),
-                      DropdownMenuItem(
-                        value: 'reboot_os',
-                        child: Text('重启操作系统', style: TextStyle(fontSize: 13)),
-                      ),
-                    ],
-                    onChanged: (v) =>
-                        setState(() => _crashAction = v ?? 'none'),
+                    value: file.encoding,
+                    isDense: true,
+                    menuMaxHeight: 300,
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                    items: _supportedEncodings
+                        .map((e) => DropdownMenuItem(
+                              value: e.key,
+                              child: Text(e.value, style: const TextStyle(fontSize: 12)),
+                            ))
+                        .toList(),
+                    onChanged: (v) {
+                      if (v != null) _onEncodingChanged(file, v);
+                    },
                   ),
                 ),
               ),
             ],
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        // 加载错误提示
+        if (file.loadError != null) ...[
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.red.shade50,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: Colors.red.shade200),
+            ),
+            child: Row(
+              children: [
+                Icon(LucideIcons.alertCircle, size: 14, color: Colors.red.shade600),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    file.loadError!,
+                    style: TextStyle(fontSize: 12, color: Colors.red.shade600),
+                  ),
+                ),
+              ],
+            ),
           ),
+          const SizedBox(height: 8),
+        ],
+
+        // 内容区
+        Expanded(
+          child: file.isLoading
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(),
+                      const SizedBox(height: 12),
+                      Text('正在加载文件内容...', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                    ],
+                  ),
+                )
+              : file.mode == 'text'
+                  ? _buildTextEditorWithLoadMore(file)
+                  : _buildUploadArea(file),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTextEditorWithLoadMore(_LocaleFileEntry file) {
+    // 大文件未加载内容的情况
+    final isLargeFileNotLoaded = !file.isFullyLoaded && file.rawBytes == null && file.fullBytes != null;
+
+    return Column(
+      children: [
+        Expanded(child: _buildTextEditor(file)),
+        // 大文件未加载内容时显示"加载内容"按钮
+        if (isLargeFileNotLoaded) ...[
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.orange.shade50,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: Colors.orange.shade200),
+            ),
+            child: Row(
+              children: [
+                Icon(LucideIcons.alertTriangle, size: 14, color: Colors.orange.shade700),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '文件较大 (${_formatFileSize(file.totalSize)})，加载可能导致卡顿',
+                    style: TextStyle(fontSize: 12, color: Colors.orange.shade700),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: file.isLoading ? null : () => _loadFileContent(file, forceLoad: true),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text('强制加载', style: TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+  }
+
+  Widget _buildModeChip(String label, bool selected, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppColors.iosBlue.withValues(alpha: 0.1)
+              : Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: selected ? AppColors.iosBlue : Colors.grey.shade300,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: selected ? AppColors.iosBlue : Colors.grey.shade600,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTextEditor(_LocaleFileEntry file) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: TextFormField(
+        controller: file.contentController,
+        maxLines: null,
+        expands: true,
+        textAlignVertical: TextAlignVertical.top,
+        decoration: InputDecoration(
+          hintText: '输入文件内容...',
+          hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide.none,
+          ),
+          contentPadding: const EdgeInsets.all(12),
+        ),
+        style: const TextStyle(
+          fontSize: 12,
+          fontFamily: 'monospace',
+          height: 1.5,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUploadArea(_LocaleFileEntry file) {
+    if (file.fileBytes != null && file.fileName != null) {
+      // 已选择文件
+      final sizeKB = (file.fileBytes!.length / 1024).toStringAsFixed(1);
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Icon(LucideIcons.file, size: 36, color: AppColors.iosBlue),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    file.fileName!,
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w500),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '$sizeKB KB',
+                    style:
+                        TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: () => _pickLocaleFile(file),
+              child: const Text('更换', style: TextStyle(fontSize: 12)),
+            ),
+            TextButton(
+              onPressed: () => _clearLocaleFile(file),
+              style:
+                  TextButton.styleFrom(foregroundColor: Colors.red.shade400),
+              child: const Text('删除', style: TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 未选择文件 - 上传占位
+    return InkWell(
+      onTap: () => _pickLocaleFile(file),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(8),
+          border:
+              Border.all(color: Colors.grey.shade300, style: BorderStyle.solid),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(LucideIcons.uploadCloud,
+                  size: 36, color: Colors.grey.shade400),
+              const SizedBox(height: 12),
+              Text(
+                '点击选择文件',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '支持任意文件类型',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ==================== 公共组件 ====================
+  Widget _buildFormItem({
+    required String label,
+    required Widget child,
+    bool required = false,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        SizedBox(
+          width: 90,
+          child: Row(
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+              if (required)
+                Text(
+                  ' *',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.red.shade500,
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Expanded(child: child),
+      ],
+    );
+  }
+
+  Widget _buildPeriodSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 90,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  '生效时段',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              child: Column(
+                children: [
+                  ...List.generate(_periods.length, (i) => _buildPeriodRow(i)),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _addPeriod,
+                      icon: const Icon(LucideIcons.plus, size: 14),
+                      label:
+                          const Text('新增时段', style: TextStyle(fontSize: 12)),
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.iosBlue,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPeriodRow(int index) {
+    final period = _periods[index];
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildTimeButton(
+              time: period.start,
+              placeholder: '开始',
+              onTap: () => _pickTime(true, index),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text('—', style: TextStyle(color: Colors.grey.shade400)),
+          ),
+          Expanded(
+            child: _buildTimeButton(
+              time: period.end,
+              placeholder: '结束',
+              onTap: () => _pickTime(false, index),
+            ),
+          ),
+          if (_periods.length > 1)
+            Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: TextButton(
+                onPressed: () => _removePeriod(index),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.red.shade400,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text('删除', style: TextStyle(fontSize: 12)),
+              ),
+            ),
         ],
       ),
     );
   }
 
-  Widget _buildAdvancedRow({
-    required IconData icon,
-    required Color iconColor,
-    required String title,
-    required String subtitle,
-    required bool value,
-    required ValueChanged<bool> onChanged,
+  Widget _buildTimeButton({
+    TimeOfDay? time,
+    required String placeholder,
+    required VoidCallback onTap,
   }) {
+    final text = time != null
+        ? '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}:00'
+        : placeholder;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Row(
+          children: [
+            Icon(LucideIcons.clock, size: 14, color: Colors.grey.shade400),
+            const SizedBox(width: 8),
+            Text(
+              text,
+              style: TextStyle(
+                fontSize: 13,
+                color:
+                    time != null ? Colors.grey.shade800 : Colors.grey.shade400,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStrategySection() {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        SizedBox(
+          width: 90,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(
+              '执行策略',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: Colors.grey.shade700,
+              ),
+            ),
+          ),
+        ),
         Expanded(
-          child: Row(
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Icon(icon, size: 14, color: iconColor),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
+              SizedBox(
+                width: 180,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _strategyMode,
+                      isExpanded: true,
+                      style:
+                          TextStyle(fontSize: 13, color: Colors.grey.shade800),
+                      items: const [
+                        DropdownMenuItem(
+                          value: '0',
+                          child:
+                              Text('不限制', style: TextStyle(fontSize: 13)),
+                        ),
+                        DropdownMenuItem(
+                          value: '1',
+                          child: Text('进程存在时启动',
+                              style: TextStyle(fontSize: 13)),
+                        ),
+                        DropdownMenuItem(
+                          value: '2',
+                          child: Text('进程不存在时启动',
+                              style: TextStyle(fontSize: 13)),
+                        ),
+                      ],
+                      onChanged: (v) =>
+                          setState(() => _strategyMode = v ?? '0'),
                     ),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade500,
-                      ),
-                    ),
-                  ],
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 180,
+                child: TextFormField(
+                  controller: _strategyNameController,
+                  decoration: _inputDecoration('策略名称/进程名'),
+                  style: const TextStyle(fontSize: 13),
                 ),
               ),
             ],
           ),
         ),
-        Checkbox(
-          value: value,
-          onChanged: (v) => onChanged(v ?? false),
-          activeColor: iconColor,
-        ),
       ],
     );
   }
 
-  Widget _buildSection({
-    required Widget child,
-    Color? color,
-    bool highlighted = false,
-  }) {
+  Widget _buildErrorBanner() {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: color ?? Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: highlighted ? Colors.grey.shade200 : Colors.grey.shade100,
-        ),
-        boxShadow: highlighted
-            ? [
-                BoxShadow(
-                  color: Colors.grey.shade100,
-                  blurRadius: 8,
-                  spreadRadius: 2,
-                ),
-              ]
-            : null,
+        color: Colors.red.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.red.shade200),
       ),
-      child: child,
-    );
-  }
-
-  Widget _buildLabel(String text, {bool required = false}) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          text.toUpperCase(),
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-            color: Colors.grey.shade500,
-            letterSpacing: 0.5,
+      child: Row(
+        children: [
+          Icon(
+            LucideIcons.alertCircle,
+            size: 16,
+            color: Colors.red.shade600,
           ),
-        ),
-        if (required)
-          Text(
-            ' *',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: Colors.red.shade500,
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _error!,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.red.shade600,
+              ),
             ),
           ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1116,6 +1527,7 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
     );
   }
 
+  // ==================== Footer ====================
   Widget _buildFooter({required bool isSheet}) {
     return Container(
       padding: EdgeInsets.fromLTRB(24, 12, 24, isSheet ? 24 : 16),
@@ -1133,7 +1545,7 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: _saving ? null : () => Navigator.of(context).pop(),
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               shape: RoundedRectangleBorder(
@@ -1151,11 +1563,9 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
           ),
           const SizedBox(width: 12),
           ElevatedButton(
-            onPressed: _saving || _nameController.text.isEmpty
-                ? null
-                : _handleSave,
+            onPressed: _saving ? null : _handleSave,
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.iosBlue,
+              backgroundColor: const Color(0xFF22C55E),
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
               shape: RoundedRectangleBorder(
@@ -1173,7 +1583,7 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
                     ),
                   )
                 : const Text(
-                    '添加启动项',
+                    '创建',
                     style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
                   ),
           ),
@@ -1181,4 +1591,54 @@ class _AddStartupItemModalState extends State<AddStartupItemModal> {
       ),
     );
   }
+}
+
+/// 时段输入辅助类
+class _PeriodInput {
+  TimeOfDay? start;
+  TimeOfDay? end;
+
+  _PeriodInput({this.start, this.end});
+}
+
+/// 区域条目辅助类
+class _AreaEntry {
+  final String range;
+  bool enabled;
+
+  _AreaEntry({required this.range, this.enabled = true});
+}
+
+/// 本地化文件条目辅助类
+class _LocaleFileEntry {
+  int? groupFileId;
+  final TextEditingController pathController;
+  final TextEditingController contentController;
+  String mode; // 'text' | 'upload'
+  Uint8List? fileBytes;
+  String? fileName;
+  // 编码相关
+  String encoding; // 'utf-8' | 'latin1' | 'ascii'
+  Uint8List? rawBytes; // 当前显示的字节（可能是截断的）
+  Uint8List? fullBytes; // 完整文件字节（用于"加载更多"）
+  bool isLoading;
+  String? loadError;
+  int totalSize; // 文件总大小
+  bool isFullyLoaded; // 是否已完全加载
+
+  _LocaleFileEntry({
+    this.groupFileId,
+    required this.pathController,
+    required this.contentController,
+    this.mode = 'text',
+    this.fileBytes,
+    this.fileName,
+    this.encoding = 'utf-8',
+    this.rawBytes,
+    this.fullBytes,
+    this.isLoading = false,
+    this.loadError,
+    this.totalSize = 0,
+    this.isFullyLoaded = true,
+  });
 }

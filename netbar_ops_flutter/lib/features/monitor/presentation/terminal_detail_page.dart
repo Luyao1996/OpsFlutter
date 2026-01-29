@@ -26,7 +26,8 @@ import 'widgets/chat_window_tab.dart';
 
 final terminalDetailProvider = FutureProvider.family<Terminal, int>((ref, terminalId) async {
   final api = ref.read(terminalApiProvider);
-  return api.getById(terminalId);
+  final domain = ref.watch(currentNetbarProvider).subdomainFull;
+  return api.getById(terminalId, domain: domain);
 });
 
 class TerminalDetailPage extends ConsumerStatefulWidget {
@@ -701,9 +702,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         ),
       );
     } else if (_selectedTab == '文件管理') {
-      return FileManagerTab(terminalId: terminal.id);
+      return FileManagerTab(terminalId: terminal.id, seatId: terminal.seatId);
     } else if (_selectedTab == '进程管理') {
-      return ProcessManagerTab(terminalId: terminal.id);
+      return ProcessManagerTab(terminalId: terminal.id, seatId: terminal.seatId);
     } else if (_selectedTab == '终端命令') {
       return ConsoleManagerTab(terminalId: terminal.id);
     } else if (_selectedTab == '硬件配置') {
@@ -733,7 +734,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     setState(() => _refreshing = true);
     try {
       final api = ref.read(terminalApiProvider);
-      final hb = await api.getHeartbeat(terminalId);
+      final domain = ref.read(currentNetbarProvider).subdomainFull;
+      final hb = await api.getHeartbeat(terminalId, domain: domain);
       setState(() {
         _liveTerminal = hb;
       });
@@ -753,13 +755,13 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     if (!isNarrow) {
       return Row(
         children: [
-          Expanded(child: _buildPowerCard('关机', LucideIcons.power, () => _remoteAction(terminal.id, 'shutdown'))),
+          Expanded(child: _buildPowerCard('关机', LucideIcons.power, () => _remoteAction(terminal.seatId, 'shutdown'))),
           const SizedBox(width: 12),
-          Expanded(child: _buildPowerCard('重启', LucideIcons.refreshCw, () => _remoteAction(terminal.id, 'restart'))),
+          Expanded(child: _buildPowerCard('重启', LucideIcons.refreshCw, () => _remoteAction(terminal.seatId, 'restart'))),
           const SizedBox(width: 12),
-          Expanded(child: _buildPowerCard('注销', LucideIcons.logOut, () => _remoteAction(terminal.id, 'logout'))), // placeholder
+          Expanded(child: _buildPowerCard('注销', LucideIcons.logOut, () => _remoteAction(terminal.seatId, 'logout'))), // placeholder
           const SizedBox(width: 12),
-          Expanded(child: _buildPowerCard('锁定', LucideIcons.lock, () => _remoteAction(terminal.id, 'lock'))), // placeholder
+          Expanded(child: _buildPowerCard('锁定', LucideIcons.lock, () => _remoteAction(terminal.seatId, 'lock'))), // placeholder
         ],
       );
     }
@@ -768,17 +770,17 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       children: [
         Row(
           children: [
-            Expanded(child: _buildPowerCard('关机', LucideIcons.power, () => _remoteAction(terminal.id, 'shutdown'), compact: true)),
+            Expanded(child: _buildPowerCard('关机', LucideIcons.power, () => _remoteAction(terminal.seatId, 'shutdown'), compact: true)),
             const SizedBox(width: 12),
-            Expanded(child: _buildPowerCard('重启', LucideIcons.refreshCw, () => _remoteAction(terminal.id, 'restart'), compact: true)),
+            Expanded(child: _buildPowerCard('重启', LucideIcons.refreshCw, () => _remoteAction(terminal.seatId, 'restart'), compact: true)),
           ],
         ),
         const SizedBox(height: 10),
         Row(
           children: [
-            Expanded(child: _buildPowerCard('注销', LucideIcons.logOut, () => _remoteAction(terminal.id, 'logout'), compact: true)),
+            Expanded(child: _buildPowerCard('注销', LucideIcons.logOut, () => _remoteAction(terminal.seatId, 'logout'), compact: true)),
             const SizedBox(width: 12),
-            Expanded(child: _buildPowerCard('锁定', LucideIcons.lock, () => _remoteAction(terminal.id, 'lock'), compact: true)),
+            Expanded(child: _buildPowerCard('锁定', LucideIcons.lock, () => _remoteAction(terminal.seatId, 'lock'), compact: true)),
           ],
         ),
       ],
@@ -847,7 +849,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
               LucideIcons.monitor,
               AppColors.iosBlue,
               Colors.white,
-              () => _remoteAction(terminal.id, 'vnc'),
+              () => _remoteAction(terminal.seatId, 'vnc'),
             ),
           ),
           const SizedBox(width: 12),
@@ -859,7 +861,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
               LucideIcons.settings,
               Colors.white,
               Colors.black87,
-              () => _remoteAction(terminal.id, 'rustdesk'),
+              () => _remoteAction(terminal.seatId, 'rustdesk'),
             ),
           ),
           const SizedBox(width: 12),
@@ -871,7 +873,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
               LucideIcons.moreHorizontal,
               Colors.white,
               Colors.black87,
-              () => _remoteAction(terminal.id, 'screenshot'),
+              () => _remoteAction(terminal.seatId, 'screenshot'),
             ),
           ),
         ],
@@ -895,7 +897,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           LucideIcons.monitor,
           AppColors.iosBlue,
           Colors.white,
-          () => _remoteAction(terminal.id, 'vnc'),
+          () => _remoteAction(terminal.seatId, 'vnc'),
         ),
         const SizedBox(height: 12),
         _buildBigActionButton(
@@ -904,7 +906,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           LucideIcons.settings,
           Colors.white,
           Colors.black87,
-          () => _remoteAction(terminal.id, 'rustdesk'),
+          () => _remoteAction(terminal.seatId, 'rustdesk'),
         ),
         const SizedBox(height: 12),
         _buildBigActionButton(
@@ -913,7 +915,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           LucideIcons.moreHorizontal,
           Colors.white,
           Colors.black87,
-          () => _remoteAction(terminal.id, 'screenshot'),
+          () => _remoteAction(terminal.seatId, 'screenshot'),
         ),
       ],
     );
@@ -1025,10 +1027,15 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     );
   }
 
-  Future<void> _remoteAction(int terminalId, String action) async {
+  Future<void> _remoteAction(String seatId, String action) async {
     try {
       final api = ref.read(terminalApiProvider);
-      await api.remote(terminalId, action);
+      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
+      if (action == 'wakeup') {
+        await api.wakeOnLan(seatId, domain: domain);
+      } else {
+        await api.remote(seatId, action, domain: domain);
+      }
       if (mounted) {
         showTopNotice(context, '指令 [$action] 已发送', level: NoticeLevel.success);
       }

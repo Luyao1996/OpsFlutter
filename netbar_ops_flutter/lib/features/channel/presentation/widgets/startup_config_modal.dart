@@ -1,11 +1,49 @@
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:charset/charset.dart' as charset;
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../data/startup_item_api.dart';
+import '../../data/resource_api.dart' as res;
+import 'exe_picker_dialog.dart';
+
+/// 后台解码函数（必须是顶级函数才能在 compute 中使用）
+String _decodeInBackground(Map<String, dynamic> params) {
+  final bytes = params['bytes'] as Uint8List;
+  final encoding = params['encoding'] as String;
+
+  try {
+    switch (encoding) {
+      case 'utf-8':
+        return utf8.decode(bytes, allowMalformed: true);
+      case 'latin1':
+        return latin1.decode(bytes);
+      case 'ascii':
+        return ascii.decode(bytes);
+      case 'gbk':
+        return charset.gbk.decode(bytes);
+      case 'shift-jis':
+        return charset.shiftJis.decode(bytes);
+      case 'euc-jp':
+        return charset.eucJp.decode(bytes);
+      case 'euc-kr':
+        return charset.eucKr.decode(bytes);
+      default:
+        return utf8.decode(bytes, allowMalformed: true);
+    }
+  } catch (e) {
+    return utf8.decode(bytes, allowMalformed: true);
+  }
+}
 
 /// 启动项配置弹窗 - 适配 tactic 接口，包含启动项、区域、本地化编辑
-class StartupConfigModal extends StatefulWidget {
+class StartupConfigModal extends ConsumerStatefulWidget {
   final TacticItem item;
   final bool isAdmin;
   final VoidCallback onSuccess;
@@ -21,10 +59,10 @@ class StartupConfigModal extends StatefulWidget {
   });
 
   @override
-  State<StartupConfigModal> createState() => _StartupConfigModalState();
+  ConsumerState<StartupConfigModal> createState() => _StartupConfigModalState();
 }
 
-class _StartupConfigModalState extends State<StartupConfigModal>
+class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
     with SingleTickerProviderStateMixin {
   final StartupItemApi _api = StartupItemApi();
   final _formKey = GlobalKey<FormState>();
@@ -232,12 +270,15 @@ class _StartupConfigModalState extends State<StartupConfigModal>
       final locales = _localeFiles
           .where((f) =>
               f.pathController.text.isNotEmpty ||
-              f.contentController.text.isNotEmpty)
-          .map((f) => LocaleItem(
+              f.contentController.text.isNotEmpty ||
+              f.fileBytes != null)
+          .map((f) => LocaleSubmitData(
                 id: f.id,
                 groupFileId: f.groupFileId,
                 path: f.pathController.text,
-                content: f.contentController.text,
+                content: f.mode == 'text' ? f.contentController.text : null,
+                fileBytes: f.mode == 'upload' ? f.fileBytes : null,
+                fileName: f.mode == 'upload' ? f.fileName : null,
               ))
           .toList();
 
@@ -797,6 +838,191 @@ class _StartupConfigModalState extends State<StartupConfigModal>
     );
   }
 
+  List<ExeZoneOption> _buildVisibleZones() {
+    final auth = ref.read(authNotifierProvider);
+    final user = auth.user;
+    final isTopManager = user?.isTopManager == true;
+    final groupId = user?.groupId ?? 0;
+
+    return <ExeZoneOption>[
+      const ExeZoneOption(label: '总公司资源', zone: 'HEADQUARTERS', netbarId: 0),
+      // 非总部管理员（分部管理员或普通用户）显示分公司资源
+      if (!isTopManager && groupId > 0)
+        ExeZoneOption(label: '分公司资源', zone: 'BRANCH', netbarId: groupId),
+      const ExeZoneOption(label: '共享区资源', zone: 'SHARED', netbarId: null),
+    ];
+  }
+
+  static const int _maxEditableSize = 50 * 1024; // 最大可编辑文件大小 50KB
+  static const int _previewSize = 5 * 1024; // 预览大小 5KB
+
+  // 图片文件扩展名
+  static const Set<String> _imageExtensions = {
+    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.ico', '.svg', '.tiff', '.tif', '.heic', '.heif'
+  };
+
+  bool _isImageFile(String path) {
+    final lower = path.toLowerCase();
+    return _imageExtensions.any((ext) => lower.endsWith(ext));
+  }
+
+  // 支持的编码列表
+  static const List<MapEntry<String, String>> _supportedEncodings = [
+    MapEntry('utf-8', 'UTF-8'),
+    MapEntry('gbk', 'GBK (简体中文)'),
+    MapEntry('shift-jis', 'Shift-JIS (日文)'),
+    MapEntry('euc-jp', 'EUC-JP (日文)'),
+    MapEntry('euc-kr', 'EUC-KR (韩文)'),
+    MapEntry('latin1', 'ISO-8859-1 (Latin1)'),
+    MapEntry('ascii', 'ASCII'),
+  ];
+
+  /// 异步解码（在后台线程执行）
+  Future<String> _decodeContentAsync(Uint8List bytes, String encoding) async {
+    return compute(_decodeInBackground, {'bytes': bytes, 'encoding': encoding});
+  }
+
+  /// 同步解码（用于编码切换等小操作）
+  String _decodeContent(Uint8List bytes, String encoding) {
+    return _decodeInBackground({'bytes': bytes, 'encoding': encoding});
+  }
+
+  Future<void> _loadFileContent(_LocaleFileEntry file, {bool forceLoad = false}) async {
+    if (file.groupFileId == null) return;
+
+    // 如果已有完整字节且是强制加载，直接解码显示
+    if (forceLoad && file.fullBytes != null) {
+      setState(() {
+        file.rawBytes = file.fullBytes;
+        file.isFullyLoaded = true;
+        file.contentController.text = _decodeContent(file.rawBytes!, file.encoding);
+      });
+      return;
+    }
+
+    setState(() {
+      file.isLoading = true;
+      file.loadError = null;
+    });
+
+    try {
+      final resourceApi = res.ResourceApi();
+      int receivedBytes = 0;
+      bool cancelled = false;
+      final List<int> bytesBuffer = [];
+
+      // 使用流式下载，可以在接收过程中检查大小
+      final downloadedBytes = await resourceApi.downloadBytes(
+        file.groupFileId!,
+        onReceiveProgress: (received, total) {
+          receivedBytes = received;
+          // 如果文件超过最大可编辑大小且不是强制加载，记录但继续（需要知道总大小）
+          if (total > 0) {
+            file.totalSize = total;
+          }
+        },
+      );
+
+      final bytes = Uint8List.fromList(downloadedBytes);
+      file.totalSize = bytes.length;
+      file.fullBytes = bytes;
+
+      // 如果文件太大，不加载内容，只显示提示
+      if (bytes.length > _maxEditableSize && !forceLoad) {
+        if (mounted) {
+          setState(() {
+            file.rawBytes = null;
+            file.isFullyLoaded = false;
+            file.isLoading = false;
+            file.contentController.text = '[文件较大] 文件大小 ${_formatFileSize(bytes.length)}，超过可编辑限制 (${_formatFileSize(_maxEditableSize)})。\n\n点击下方"加载内容"按钮可强制加载（可能导致卡顿）。\n保存时将使用原文件内容。';
+          });
+        }
+        return;
+      }
+
+      // 文件大小在限制内，正常显示
+      file.rawBytes = bytes;
+      file.isFullyLoaded = true;
+      final content = _decodeContent(bytes, file.encoding);
+
+      if (mounted) {
+        setState(() {
+          file.contentController.text = content;
+          file.mode = 'text';
+          file.isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          file.loadError = '加载失败: $e';
+          file.isLoading = false;
+        });
+      }
+    }
+  }
+
+  void _onEncodingChanged(_LocaleFileEntry file, String newEncoding) {
+    final bytesToDecode = file.isFullyLoaded ? file.fullBytes : file.rawBytes;
+    if (bytesToDecode == null) return;
+    setState(() {
+      file.encoding = newEncoding;
+      file.contentController.text = _decodeContent(bytesToDecode, newEncoding);
+    });
+  }
+
+  Future<void> _pickLocalePath(_LocaleFileEntry file) async {
+    final visibleZones = _buildVisibleZones();
+    final selected = await showDialog<res.Resource>(
+      context: context,
+      builder: (context) => ExePickerDialog(visibleZones: visibleZones, exeOnly: false),
+    );
+    if (!mounted || selected == null) return;
+
+    // ExePickerDialog 现在返回带有完整路径的 Resource
+    final filePath = selected.path.isNotEmpty ? selected.path : selected.name;
+    setState(() {
+      file.pathController.text = filePath;
+      file.groupFileId = selected.id;
+    });
+
+    // 如果是图片文件，显示提示而不加载内容
+    if (_isImageFile(filePath)) {
+      setState(() {
+        file.mode = 'text';
+        file.contentController.text = '[图片文件] 不支持预览图片内容，保存时将使用原文件。';
+        file.rawBytes = null;
+        file.fullBytes = null;
+        file.isFullyLoaded = true;
+      });
+      return;
+    }
+
+    // 自动加载文件内容
+    await _loadFileContent(file);
+  }
+
+  Future<void> _pickLocaleFile(_LocaleFileEntry file) async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: false,
+      withData: true,
+      type: FileType.any,
+    );
+    final picked = result?.files.single;
+    if (picked == null || picked.bytes == null) return;
+    setState(() {
+      file.fileBytes = picked.bytes;
+      file.fileName = picked.name;
+    });
+  }
+
+  void _clearLocaleFile(_LocaleFileEntry file) {
+    setState(() {
+      file.fileBytes = null;
+      file.fileName = null;
+    });
+  }
+
   Widget _buildLocaleEditor(_LocaleFileEntry file) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -806,54 +1032,303 @@ class _StartupConfigModalState extends State<StartupConfigModal>
           label: '文件路径',
           child: TextFormField(
             controller: file.pathController,
-            decoration: _inputDecoration('../开机文件/config.ini'),
+            decoration: _inputDecoration('../开机文件/config.ini').copyWith(
+              suffixIcon: IconButton(
+                onPressed: () => _pickLocalePath(file),
+                icon: Icon(LucideIcons.folderOpen, size: 16, color: Colors.grey.shade500),
+                tooltip: '从资源中选择',
+              ),
+            ),
             style: const TextStyle(fontSize: 13),
           ),
         ),
         const SizedBox(height: 16),
 
-        // 文件内容
-        Text(
-          '文件内容',
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
-            color: Colors.grey.shade700,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: Container(
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey.shade200),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: TextFormField(
-              controller: file.contentController,
-              maxLines: null,
-              expands: true,
-              textAlignVertical: TextAlignVertical.top,
-              decoration: InputDecoration(
-                hintText: '输入文件内容...',
-                hintStyle:
-                    TextStyle(fontSize: 13, color: Colors.grey.shade400),
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide.none,
+        // 模式切换 + 编码选择
+        Row(
+          children: [
+            _buildModeChip('文本内容', file.mode == 'text', () {
+              setState(() => file.mode = 'text');
+            }),
+            const SizedBox(width: 8),
+            _buildModeChip('上传文件', file.mode == 'upload', () {
+              setState(() => file.mode = 'upload');
+            }),
+            const Spacer(),
+            // 编码选择
+            if (file.mode == 'text') ...[
+              Text('编码:', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.grey.shade300),
                 ),
-                contentPadding: const EdgeInsets.all(12),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: file.encoding,
+                    isDense: true,
+                    menuMaxHeight: 300,
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                    items: _supportedEncodings
+                        .map((e) => DropdownMenuItem(
+                              value: e.key,
+                              child: Text(e.value, style: const TextStyle(fontSize: 12)),
+                            ))
+                        .toList(),
+                    onChanged: (v) {
+                      if (v != null) _onEncodingChanged(file, v);
+                    },
+                  ),
+                ),
               ),
-              style: const TextStyle(
-                fontSize: 12,
-                fontFamily: 'monospace',
-                height: 1.5,
-              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        // 加载错误提示
+        if (file.loadError != null) ...[
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.red.shade50,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: Colors.red.shade200),
+            ),
+            child: Row(
+              children: [
+                Icon(LucideIcons.alertCircle, size: 14, color: Colors.red.shade600),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    file.loadError!,
+                    style: TextStyle(fontSize: 12, color: Colors.red.shade600),
+                  ),
+                ),
+              ],
             ),
           ),
+          const SizedBox(height: 8),
+        ],
+
+        // 内容区
+        Expanded(
+          child: file.isLoading
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(),
+                      const SizedBox(height: 12),
+                      Text('正在加载文件内容...', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                    ],
+                  ),
+                )
+              : file.mode == 'text'
+                  ? _buildTextEditorWithLoadMore(file)
+                  : _buildUploadArea(file),
         ),
       ],
+    );
+  }
+
+  Widget _buildTextEditorWithLoadMore(_LocaleFileEntry file) {
+    // 大文件未加载内容的情况
+    final isLargeFileNotLoaded = !file.isFullyLoaded && file.rawBytes == null && file.fullBytes != null;
+
+    return Column(
+      children: [
+        Expanded(child: _buildTextEditor(file)),
+        // 大文件未加载内容时显示"加载内容"按钮
+        if (isLargeFileNotLoaded) ...[
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.orange.shade50,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: Colors.orange.shade200),
+            ),
+            child: Row(
+              children: [
+                Icon(LucideIcons.alertTriangle, size: 14, color: Colors.orange.shade700),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '文件较大 (${_formatFileSize(file.totalSize)})，加载可能导致卡顿',
+                    style: TextStyle(fontSize: 12, color: Colors.orange.shade700),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: file.isLoading ? null : () => _loadFileContent(file, forceLoad: true),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text('强制加载', style: TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+  }
+
+  Widget _buildModeChip(String label, bool selected, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppColors.iosBlue.withValues(alpha: 0.1)
+              : Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: selected ? AppColors.iosBlue : Colors.grey.shade300,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: selected ? AppColors.iosBlue : Colors.grey.shade600,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTextEditor(_LocaleFileEntry file) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: TextFormField(
+        controller: file.contentController,
+        maxLines: null,
+        expands: true,
+        textAlignVertical: TextAlignVertical.top,
+        decoration: InputDecoration(
+          hintText: '输入文件内容...',
+          hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide.none,
+          ),
+          contentPadding: const EdgeInsets.all(12),
+        ),
+        style: const TextStyle(
+          fontSize: 12,
+          fontFamily: 'monospace',
+          height: 1.5,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUploadArea(_LocaleFileEntry file) {
+    if (file.fileBytes != null && file.fileName != null) {
+      // 已选择文件
+      final sizeKB = (file.fileBytes!.length / 1024).toStringAsFixed(1);
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Icon(LucideIcons.file, size: 36, color: AppColors.iosBlue),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    file.fileName!,
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w500),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '$sizeKB KB',
+                    style: TextStyle(
+                        fontSize: 12, color: Colors.grey.shade500),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: () => _pickLocaleFile(file),
+              child: const Text('更换', style: TextStyle(fontSize: 12)),
+            ),
+            TextButton(
+              onPressed: () => _clearLocaleFile(file),
+              style: TextButton.styleFrom(
+                  foregroundColor: Colors.red.shade400),
+              child: const Text('删除', style: TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 未选择文件 - 上传占位
+    return InkWell(
+      onTap: () => _pickLocaleFile(file),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+              color: Colors.grey.shade300, style: BorderStyle.solid),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(LucideIcons.uploadCloud,
+                  size: 36, color: Colors.grey.shade400),
+              const SizedBox(height: 12),
+              Text(
+                '点击选择文件',
+                style:
+                    TextStyle(fontSize: 13, color: Colors.grey.shade500),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '支持任意文件类型',
+                style:
+                    TextStyle(fontSize: 11, color: Colors.grey.shade400),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -1242,14 +1717,35 @@ class _AreaEntry {
 /// 本地化文件条目辅助类
 class _LocaleFileEntry {
   final int? id;
-  final int? groupFileId;
+  int? groupFileId;
   final TextEditingController pathController;
   final TextEditingController contentController;
+  String mode; // 'text' | 'upload'
+  Uint8List? fileBytes;
+  String? fileName;
+  // 编码相关
+  String encoding; // 'utf-8' | 'latin1' | 'ascii'
+  Uint8List? rawBytes; // 当前显示的字节（可能是截断的）
+  Uint8List? fullBytes; // 完整文件字节（用于"加载更多"）
+  bool isLoading;
+  String? loadError;
+  int totalSize; // 文件总大小
+  bool isFullyLoaded; // 是否已完全加载
 
   _LocaleFileEntry({
     this.id,
     this.groupFileId,
     required this.pathController,
     required this.contentController,
+    this.mode = 'text',
+    this.fileBytes,
+    this.fileName,
+    this.encoding = 'utf-8',
+    this.rawBytes,
+    this.fullBytes,
+    this.isLoading = false,
+    this.loadError,
+    this.totalSize = 0,
+    this.isFullyLoaded = true,
   });
 }

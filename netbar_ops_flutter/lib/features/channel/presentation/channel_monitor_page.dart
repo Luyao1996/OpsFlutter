@@ -53,7 +53,8 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
     });
     try {
       final netbar = ref.read(currentNetbarProvider);
-      final list = await _api.getMonitor(netbarId: netbar.id);
+      // 使用网吧名称作为 keyword 搜索
+      final list = await _api.getMonitor(keyword: netbar.name);
       setState(() {
         _data = list;
         _loading = false;
@@ -454,6 +455,7 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
   Widget _buildList() {
     final data = _filteredData;
     final isNarrow = MediaQuery.sizeOf(context).width < 900;
+    final netbar = ref.read(currentNetbarProvider);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
@@ -473,17 +475,42 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
               ),
               child: Column(
                 children: [
-                  Icon(
-                    LucideIcons.monitor,
-                    size: 48,
-                    color: Colors.grey.shade300,
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      LucideIcons.monitorOff,
+                      size: 32,
+                      color: Colors.blue.shade300,
+                    ),
                   ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    '未找到匹配的网吧',
-                    style: TextStyle(
-                      color: Colors.grey,
+                  const SizedBox(height: 16),
+                  Text(
+                    netbar.name ?? '当前网吧',
+                    style: const TextStyle(
+                      fontSize: 16,
                       fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '暂无通道启动项配置',
+                    style: TextStyle(
+                      color: Colors.grey.shade500,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextButton.icon(
+                    onPressed: () => context.go('/channel-management?tab=startup'),
+                    icon: const Icon(LucideIcons.plus, size: 16),
+                    label: const Text('前往配置启动项'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.iosBlue,
                     ),
                   ),
                 ],

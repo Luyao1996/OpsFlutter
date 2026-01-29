@@ -1,9 +1,10 @@
 /// 应用配置
 class AppConfig {
   // API 基础URL，可通过 --dart-define BASE_URL=... 覆盖
+  // 后端实际路径前缀为 /api（非 /api/v1）
   static const String baseUrl = String.fromEnvironment(
     'BASE_URL',
-    defaultValue: 'http://10.0.0.77:8080/api/v1',
+    defaultValue: 'http://net.hudd.cc:888/api',
   );
 
   // 应用名称

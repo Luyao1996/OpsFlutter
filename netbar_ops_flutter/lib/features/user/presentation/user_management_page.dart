@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -7,7 +9,6 @@ import '../../../../core/responsive/responsive.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/utils/top_notice.dart';
-import '../data/user_mock_data.dart';
 import '../data/user_api.dart';
 import 'widgets/group_sidebar.dart';
 import 'widgets/user_grid.dart';
@@ -25,31 +26,19 @@ class UserManagementPage extends ConsumerStatefulWidget {
 class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   // State
   List<UserGroup> _groups = [];
-  List<User> _users = [];
   int? _selectedGroupId;
   String _searchQuery = '';
   String _groupSearchQuery = '';
   bool _isLoading = true;
-  ProviderSubscription<CurrentNetbar>? _netbarSub;
 
   @override
   void initState() {
     super.initState();
     _loadData();
-    _netbarSub = ref.listenManual(currentNetbarProvider, (prev, next) {
-      if (prev?.id != next.id) {
-        setState(() {
-          _selectedGroupId = 0;
-          _groupSearchQuery = '';
-        });
-        _loadData();
-      }
-    });
   }
 
   @override
   void dispose() {
-    _netbarSub?.close();
     super.dispose();
   }
 
@@ -58,29 +47,16 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
       setState(() => _isLoading = false);
       return;
     }
-    final netbarId = ref.read(currentNetbarProvider).id;
-    if (netbarId == null) {
-      setState(() {
-        _groups = [];
-        _users = [];
-        _selectedGroupId = 0;
-        _isLoading = false;
-      });
-      return;
-    }
     setState(() => _isLoading = true);
     try {
-      final groupApi = ref.read(netbarUserGroupApiProvider);
-
-      final groups = await groupApi.getAll(netbarId);
-      final users = await groupApi.getNetbarUsers(
-        netbarId,
-        search: _searchQuery.isNotEmpty ? _searchQuery : null,
+      // 使用 /api/group 接口获取分组列表（包含用户）
+      final groupApi = ref.read(groupApiProvider);
+      final groups = await groupApi.getList(
+        keyword: _searchQuery.isNotEmpty ? _searchQuery : null,
       );
 
       setState(() {
         _groups = groups;
-        _users = users;
         // Default to '0' (All Members) if not set
         _selectedGroupId ??= 0;
         _isLoading = false;
@@ -93,15 +69,56 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
 
   // Computed
   List<User> get _filteredUsers {
-    List<User> result = _users;
-    // Filter by group only if not '0' (All Members)
+    List<User> result = [];
+
+    // 如果选择了特定分组，只显示该分组的用户
     if (_selectedGroupId != null && _selectedGroupId != 0) {
-      final groupId = _selectedGroupId!;
-      result = result.where((u) => u.netbarGroupIds.contains(groupId)).toList();
+      final group = _groups.firstWhere(
+        (g) => g.id == _selectedGroupId,
+        orElse: () => UserGroup(id: 0, name: ''),
+      );
+      result = group.users.map((u) => User(
+        id: u.id,
+        username: u.username,
+        nickname: u.nickname,
+        roleRaw: u.roleRaw,
+        roles: u.roles,
+        groupId: _selectedGroupId,
+        phoneNumber: u.phoneNumber,
+        isManager: u.isManager,
+        tokenRefreshTtl: u.tokenRefreshTtl,
+        isBindWx: u.isBindWx,
+        isBind2fa: u.isBind2fa,
+        is2FABound: u.is2FABound,
+      )).toList();
+    } else {
+      // 显示所有分组的用户
+      for (final group in _groups) {
+        for (final u in group.users) {
+          result.add(User(
+            id: u.id,
+            username: u.username,
+            nickname: u.nickname,
+            roleRaw: u.roleRaw,
+            roles: u.roles,
+            groupId: group.id,
+            phoneNumber: u.phoneNumber,
+            isManager: u.isManager,
+            tokenRefreshTtl: u.tokenRefreshTtl,
+            isBindWx: u.isBindWx,
+            isBind2fa: u.isBind2fa,
+            is2FABound: u.is2FABound,
+          ));
+        }
+      }
     }
+
+    // 搜索过滤
     if (_searchQuery.isNotEmpty) {
       final q = _searchQuery.toLowerCase();
-      result = result.where((u) => u.nickname.toLowerCase().contains(q) || u.username.toLowerCase().contains(q)).toList();
+      result = result.where((u) =>
+          u.nickname.toLowerCase().contains(q) ||
+          u.username.toLowerCase().contains(q)).toList();
     }
     return result;
   }
@@ -114,21 +131,20 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
 
   bool get _isAdmin {
     final user = ref.read(authNotifierProvider).user;
-    final role = (user?.role ?? '').toLowerCase();
-    return role == 'admin' || role == 'super_admin';
+    // 使用与后端一致的管理员判断逻辑
+    return user?.hasAdminAccess == true;
   }
 
   bool get _isSuperAdmin {
     final user = ref.read(authNotifierProvider).user;
-    final role = (user?.role ?? '').toLowerCase();
-    return role == 'super_admin' || (user?.username == 'admin');
+    // 总部管理员
+    return user?.isTopManager == true;
   }
 
   // Actions
   void _handleAddGroup() async {
-    final netbarId = ref.read(currentNetbarProvider).id;
-    if (netbarId == null) {
-      _showError('请先选择网吧');
+    if (!_isSuperAdmin) {
+      _showError('仅总部管理员可创建分组');
       return;
     }
     String? newName;
@@ -159,8 +175,10 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
 
     if (newName != null && newName!.isNotEmpty) {
       try {
-        final groupApi = ref.read(netbarUserGroupApiProvider);
-        await groupApi.create(netbarId, name: newName!);
+        final groupApi = ref.read(groupApiProvider);
+        await groupApi.create(name: newName!);
+        if (!mounted) return;
+        showTopNotice(context, '分组创建成功', level: NoticeLevel.success);
         _loadData();
       } catch (e) {
         _showApiError('创建分组', e);
@@ -169,15 +187,9 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   }
 
   void _handleAddUser() async {
-    final netbarId = ref.read(currentNetbarProvider).id;
-    if (netbarId == null) {
-      _showError('请先选择网吧');
-      return;
-    }
     final changed = await showDialog<bool>(
       context: context,
       builder: (context) => AddMemberDialog(
-        netbarId: netbarId,
         groups: _groups,
         initialGroupId: _selectedGroupId == 0 ? null : _selectedGroupId,
       ),
@@ -188,9 +200,8 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   }
 
   Future<void> _handleDeleteGroup(UserGroup group) async {
-    final netbarId = ref.read(currentNetbarProvider).id;
-    if (netbarId == null) {
-      _showError('请先选择网吧');
+    if (!_isSuperAdmin) {
+      _showError('仅总部管理员可删除分组');
       return;
     }
 
@@ -213,8 +224,8 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
     if (confirmed != true) return;
 
     try {
-      final groupApi = ref.read(netbarUserGroupApiProvider);
-      await groupApi.delete(netbarId, group.id);
+      final groupApi = ref.read(groupApiProvider);
+      await groupApi.delete(group.id);
       if (!mounted) return;
       if (_selectedGroupId == group.id) {
         setState(() => _selectedGroupId = 0);
@@ -227,13 +238,11 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   }
 
   void _handleEditUser(User user) async {
-    final netbarId = ref.read(currentNetbarProvider).id;
     final changed = await showDialog<bool>(
       context: context,
       builder: (context) => EditUserDialog(
         user: user,
-        netbarId: netbarId,
-        groupId: (_selectedGroupId != null && _selectedGroupId! > 0) ? _selectedGroupId : null,
+        groups: _groups,
       ),
     );
     if (changed == true) {
@@ -248,17 +257,74 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
     );
 
     if (confirmed == true) {
-      // Update user 2FA status
-      final userApi = ref.read(userApiProvider);
-      await userApi.update(user.id, {'is_2fa_bound': true});
       _loadData();
       if (mounted) {
         showTopNotice(context, '2FA 绑定成功: ${user.nickname}', level: NoticeLevel.success);
       }
-    } else if (confirmed == false) {
-      // no-op
-    } else {
-      _showError('2FA 绑定失败');
+    }
+  }
+
+  void _handleBindMiniProgram(User user) async {
+    try {
+      final api = ref.read(userApiProvider);
+      final response = await api.bindMiniProgram(user.id);
+
+      if (!mounted) return;
+
+      if (!mounted) return;
+
+      // 显示二维码弹窗
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => _MiniProgramQrDialog(
+          userId: user.id,
+          initialQrCode: response.qrCode,
+          userApi: ref.read(userApiProvider),
+          onClose: () {
+            Navigator.of(context).pop();
+            _loadData(); // 刷新列表
+          },
+        ),
+      );
+    } catch (e) {
+      _showApiError('绑定小程序', e);
+    }
+  }
+
+  void _handleUnbindMiniProgram(User user) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('解绑小程序'),
+        content: Text('确定要解绑用户 "${user.nickname}" 的小程序吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('解绑'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final api = ref.read(userApiProvider);
+      await api.unbindMiniProgram(user.id);
+      if (!mounted) return;
+      showTopNotice(context, '解绑成功', level: NoticeLevel.success);
+      _loadData();
+    } catch (e) {
+      _showApiError('解绑小程序', e);
     }
   }
 
@@ -320,31 +386,6 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
       );
     }
 
-    final currentNetbar = ref.watch(currentNetbarProvider);
-    if (currentNetbar.id == null) {
-      return Scaffold(
-        backgroundColor: const Color(0xFFF3F4F6),
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(LucideIcons.store, size: 48, color: Colors.grey.shade400),
-              const SizedBox(height: 12),
-              const Text(
-                '需先选择网吧',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                '请选择一个网吧后再管理该网吧下的账号分组与成员',
-                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F6),
       body: LayoutBuilder(
@@ -370,6 +411,8 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
                   users: _filteredUsers,
                   onEditUser: _handleEditUser,
                   onBind2FA: _handleBind2FA,
+                  onBindMiniProgram: _handleBindMiniProgram,
+                  onUnbindMiniProgram: _handleUnbindMiniProgram,
                 ),
               ),
             ],
@@ -535,6 +578,220 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
               Navigator.pop(context);
               await _handleDeleteGroup(group);
             },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 小程序绑定二维码弹窗
+class _MiniProgramQrDialog extends StatefulWidget {
+  final int userId;
+  final String initialQrCode;
+  final UserApi userApi;
+  final VoidCallback onClose;
+
+  const _MiniProgramQrDialog({
+    required this.userId,
+    required this.initialQrCode,
+    required this.userApi,
+    required this.onClose,
+  });
+
+  @override
+  State<_MiniProgramQrDialog> createState() => _MiniProgramQrDialogState();
+}
+
+class _MiniProgramQrDialogState extends State<_MiniProgramQrDialog> {
+  static const int _maxCountdown = 30;
+
+  late String _qrCode;
+  late Uint8List _qrImageBytes; // 缓存解码后的图片数据
+  int _countdown = _maxCountdown;
+  bool _isRefreshing = false;
+  Stream<int>? _timerStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _qrCode = widget.initialQrCode;
+    _qrImageBytes = _decodeQrCode(_qrCode);
+    _startCountdown();
+  }
+
+  /// 解码二维码数据
+  Uint8List _decodeQrCode(String qrCode) {
+    String base64Data = qrCode;
+    if (base64Data.contains(',')) {
+      base64Data = base64Data.split(',').last;
+    }
+    return base64Decode(base64Data);
+  }
+
+  void _startCountdown() {
+    _timerStream = Stream.periodic(const Duration(seconds: 1), (i) => _maxCountdown - 1 - i)
+        .take(_maxCountdown);
+    _timerStream!.listen((sec) {
+      if (mounted) {
+        setState(() => _countdown = sec);
+        if (sec <= 0) {
+          _refreshQrCode();
+        }
+      }
+    });
+  }
+
+  Future<void> _refreshQrCode() async {
+    if (_isRefreshing) return;
+
+    setState(() => _isRefreshing = true);
+
+    try {
+      final response = await widget.userApi.bindMiniProgram(widget.userId);
+      if (mounted) {
+        setState(() {
+          _qrCode = response.qrCode;
+          _qrImageBytes = _decodeQrCode(_qrCode); // 更新缓存的图片数据
+          _countdown = _maxCountdown;
+          _isRefreshing = false;
+        });
+        _startCountdown();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isRefreshing = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 340),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 标题
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const SizedBox(width: 32),
+                  const Text(
+                    '扫码验证',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(
+                    width: 32,
+                    height: 32,
+                    child: IconButton(
+                      onPressed: widget.onClose,
+                      icon: Icon(LucideIcons.x, size: 18, color: Colors.grey.shade500),
+                      padding: EdgeInsets.zero,
+                      splashRadius: 16,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '请使用网维小程序扫码验证',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+              ),
+              const SizedBox(height: 24),
+              // 二维码（可点击刷新）
+              GestureDetector(
+                onTap: _isRefreshing ? null : _refreshQrCode,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Container(
+                      width: 180,
+                      height: 180,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade100),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 10,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      padding: const EdgeInsets.all(8),
+                      child: Image.memory(
+                        _qrImageBytes,
+                        fit: BoxFit.contain,
+                        gaplessPlayback: true, // 防止图片切换时闪烁
+                        errorBuilder: (context, error, stackTrace) {
+                          return Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(LucideIcons.alertCircle, size: 32, color: Colors.grey.shade400),
+                                const SizedBox(height: 8),
+                                Text('加载失败', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    // 刷新遮罩
+                    if (_isRefreshing)
+                      Container(
+                        width: 180,
+                        height: 180,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.9),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Center(
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              // 点击刷新提示
+              Text(
+                '点击二维码可刷新',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
+              ),
+              const SizedBox(height: 8),
+              // 倒计时
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _countdown <= 10 ? Colors.orange.shade50 : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(
+                  '有效期 $_countdown 秒',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _countdown <= 10 ? Colors.orange.shade700 : Colors.grey.shade600,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              // 关闭按钮
+              TextButton(
+                onPressed: widget.onClose,
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.grey.shade600,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                ),
+                child: const Text('关闭'),
+              ),
+            ],
           ),
         ),
       ),

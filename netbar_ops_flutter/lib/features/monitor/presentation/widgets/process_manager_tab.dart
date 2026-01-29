@@ -11,7 +11,8 @@ enum _ProcessSortKey { name, pid, cpu, mem, user }
 
 class ProcessManagerTab extends ConsumerStatefulWidget {
   final int terminalId;
-  const ProcessManagerTab({super.key, required this.terminalId});
+  final String seatId;
+  const ProcessManagerTab({super.key, required this.terminalId, required this.seatId});
 
   @override
   ConsumerState<ProcessManagerTab> createState() => _ProcessManagerTabState();
@@ -39,7 +40,8 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
     });
     try {
       final api = ref.read(terminalApiProvider);
-      final list = await api.getProcesses(widget.terminalId);
+      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
+      final list = await api.getProcesses(widget.seatId, domain: domain);
       if (mounted) {
         setState(() {
           _processes = list;
@@ -59,7 +61,8 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
   Future<void> _killProcess(int pid) async {
     try {
       final api = ref.read(terminalApiProvider);
-      await api.killProcess(widget.terminalId, pid);
+      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
+      await api.killProcess(widget.seatId, pid, domain: domain);
       if (mounted) {
         showTopNotice(context, '已发送结束进程指令', level: NoticeLevel.success);
         _loadProcesses();

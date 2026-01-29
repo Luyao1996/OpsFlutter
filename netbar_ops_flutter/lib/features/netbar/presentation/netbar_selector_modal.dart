@@ -17,7 +17,7 @@ final netbarListProvider = FutureProvider.autoDispose<List<Netbar>>((ref) async 
 /// 网吧选择弹窗 - 对应 Vue 的 NetbarSelectorModal.vue
 class NetbarSelectorModal extends ConsumerStatefulWidget {
   final int? selectedId;
-  final Function(int id, String name, String status)? onSelect;
+  final Function(int id, String name, String status, {String? subdomainFull})? onSelect;
   final bool isMobile;
 
   const NetbarSelectorModal({
@@ -59,7 +59,7 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
   }
 
   void _handleSelect(Netbar netbar) {
-    widget.onSelect?.call(netbar.id, netbar.name, netbar.status);
+    widget.onSelect?.call(netbar.id, netbar.name, netbar.status, subdomainFull: netbar.subdomainFull);
     Navigator.of(context).pop();
   }
 

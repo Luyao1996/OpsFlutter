@@ -8,6 +8,8 @@ import '../providers/app_providers.dart';
 import '../providers/netbar_tabs_provider.dart';
 import '../../features/netbar/presentation/netbar_selector_modal.dart';
 import '../../features/netbar/data/netbar_api.dart';
+import '../../features/dashboard/presentation/dashboard_page.dart';
+import '../../features/dashboard/data/dashboard_api.dart';
 import 'netbar_tab_bar.dart';
 import 'upload_queue_overlay.dart';
 import '../../features/user/presentation/user_profile_dialog.dart';
@@ -97,7 +99,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           ref
               .read(currentNetbarProvider.notifier)
-              .setNetbar(activeTab.id, activeTab.name, activeTab.status);
+              .setNetbar(activeTab.id, activeTab.name, activeTab.status, subdomainFull: activeTab.subdomainFull);
         });
       }
     }
@@ -134,8 +136,8 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
       if (keptTabs.isEmpty) {
         // 无可用历史标签：打开第一个可访问网吧
         final target = netbars.first;
-        await tabsNotifier.openTab(target.id, target.name, target.status);
-        await currentNotifier.setNetbar(target.id, target.name, target.status);
+        await tabsNotifier.openTab(target.id, target.name, target.status, subdomainFull: target.subdomainFull);
+        await currentNotifier.setNetbar(target.id, target.name, target.status, subdomainFull: target.subdomainFull);
         return;
       }
 
@@ -145,12 +147,13 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                 id: t.id,
                 name: byId[t.id]!.name,
                 status: byId[t.id]!.status,
+                subdomainFull: byId[t.id]!.subdomainFull,
                 openedAt: t.openedAt,
               ))
           .toList();
       await tabsNotifier.replaceAll(NetbarTabsState(tabs: syncedTabs, activeTabId: activeId));
       final activeNetbar = byId[activeId]!;
-      await currentNotifier.setNetbar(activeNetbar.id, activeNetbar.name, activeNetbar.status);
+      await currentNotifier.setNetbar(activeNetbar.id, activeNetbar.name, activeNetbar.status, subdomainFull: activeNetbar.subdomainFull);
     } catch (_) {
       // 网络或数据错误时保持现状，避免阻塞 UI
     }
@@ -236,11 +239,11 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         insetPadding: EdgeInsets.all(isMobile ? 12 : 32),
         child: NetbarSelectorModal(
           selectedId: current.id,
-          onSelect: (id, name, status) {
-            tabsNotifier.openTab(id, name, status);
+          onSelect: (id, name, status, {subdomainFull}) {
+            tabsNotifier.openTab(id, name, status, subdomainFull: subdomainFull);
             ref
                 .read(currentNetbarProvider.notifier)
-                .setNetbar(id, name, status);
+                .setNetbar(id, name, status, subdomainFull: subdomainFull);
           },
           isMobile: isMobile,
         ),
@@ -248,7 +251,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     );
   }
 
-  Widget _buildHeader(AuthState authState, bool isNarrow, AsyncValue stats) {
+  Widget _buildHeader(AuthState authState, bool isNarrow, AsyncValue<DashboardStats> stats) {
     if (isNarrow) {
       return Container(
         height: 56,
@@ -362,7 +365,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
             ),
             _buildMenuItem(
               '网吧管理',
-              '/monitor',
+              '/netbar-list',
               LucideIcons.network,
               Colors.indigo,
             ),
@@ -372,8 +375,8 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
               LucideIcons.database,
               Colors.orange,
             ),
-            if (const {'admin', 'super_admin'}.contains((authState.user?.role ?? 'user').toLowerCase()) ||
-                (authState.user?.username == 'admin'))
+            // 总部管理员或分部管理员可以访问用户账户
+            if (authState.user?.hasAdminAccess == true)
               _buildMenuItem(
                 '用户账户',
                 '/user-management',
@@ -420,7 +423,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     );
   }
 
-  Widget _buildStatusPills(AsyncValue stats) {
+  Widget _buildStatusPills(AsyncValue<DashboardStats> stats) {
     return stats.when(
       loading: () => const SizedBox.shrink(),
       error: (_, __) => const SizedBox.shrink(),
@@ -436,13 +439,13 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         child: Row(
           children: [
             _buildPill(
-              '客户机',
-              data.onlineDesktops.toString(),
+              '终端',
+              data.terminalTotal.toString(),
               AppColors.iosBlue,
               true,
             ),
-            _buildPill('运行', '${data.serverUptime}天', null, false),
-            _buildPill('VIP', '${data.vipDays}天', null, false),
+            _buildPill('网吧', '${data.merchantTotal}', null, false),
+            _buildPill('离线', '${data.merchantOffline}', Colors.red.shade400, false),
           ],
         ),
       ),

@@ -4,7 +4,6 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../data/user_api.dart';
-import '../../data/user_mock_data.dart';
 
 class AddUserDialog extends ConsumerStatefulWidget {
   final User? initialUser;

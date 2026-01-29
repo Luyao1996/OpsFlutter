@@ -42,7 +42,47 @@ class ApiClient {
           }
           return handler.next(options);
         },
-        onResponse: (response, handler) {
+        onResponse: (response, handler) async {
+          // 后端返回 {code, message, data} 格式，需要解包
+          if (response.data is Map<String, dynamic>) {
+            final map = response.data as Map<String, dynamic>;
+            final code = map['code'];
+            final message = map['message'];
+            final data = map['data'];
+
+            // 处理响应体中的 401 未授权
+            if (code == 401) {
+              final ignoreUnauthorized = response.requestOptions.extra['ignoreUnauthorized'] == true;
+              if (!ignoreUnauthorized) {
+                await TokenStore.clearAuth();
+                onUnauthorized?.call();
+              }
+              return handler.reject(
+                DioException(
+                  requestOptions: response.requestOptions,
+                  response: response,
+                  error: ApiError(code: code, message: message ?? '未授权，请重新登录', raw: map),
+                  type: DioExceptionType.badResponse,
+                ),
+              );
+            }
+
+            if (code == 0) {
+              // 成功时，将response.data替换为实际data
+              response.data = data;
+              return handler.next(response);
+            } else {
+              // 失败时抛出ApiError
+              return handler.reject(
+                DioException(
+                  requestOptions: response.requestOptions,
+                  response: response,
+                  error: ApiError(code: code, message: message ?? '请求失败', raw: map),
+                  type: DioExceptionType.badResponse,
+                ),
+              );
+            }
+          }
           return handler.next(response);
         },
         onError: (error, handler) async {

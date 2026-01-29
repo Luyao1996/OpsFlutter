@@ -96,15 +96,15 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
 
   @override
   Widget build(BuildContext context) {
-    // 模拟 Vue 中的 User 数据
+    // 用户数据
     final user = ref.watch(authNotifierProvider).user;
     final userName = user?.name ?? 'Administrator';
-    final role = (user?.role ?? '').toLowerCase();
-    final userRole = switch (role) {
-      'super_admin' => '超级管理员',
-      'admin' => '管理员',
-      _ => '操作员',
-    };
+    // 根据后端逻辑显示角色
+    final userRole = user?.isTopManager == true
+        ? '总部管理员'
+        : user?.isSubManager == true
+            ? '分部管理员'
+            : '操作员';
     final userAccount = user?.username ?? 'N/A';
 
     final isNarrow = context.isNarrow || context.isPhone;
@@ -718,52 +718,52 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // TODO: 修改密码功能暂时屏蔽，后续可能重新启用
         // Change Password
-        const Row(
-          children: [
-            Icon(LucideIcons.lock, size: 16, color: Color(0xFF6B7280)),
-            SizedBox(width: 8),
-            Text(
-              '修改密码',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF111827)),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        _buildInput('当前密码', controller: _currentPasswordController),
-        const SizedBox(height: 12),
-        _buildInput('新密码', controller: _newPasswordController),
-        const SizedBox(height: 12),
-        _buildInput('确认新密码', controller: _confirmPasswordController),
-        const SizedBox(height: 12),
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: _changingPassword ? null : _handleChangePassword,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: const Color(0xFF374151), // gray-700
-              elevation: 0,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: const BorderSide(color: Color(0xFFE5E7EB)),
-              ),
-            ),
-            child: _changingPassword
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('更新密码', style: TextStyle(fontWeight: FontWeight.w500)),
-          ),
-        ),
-        
-        const SizedBox(height: 24),
-        const Divider(height: 1, color: Color(0xFFF3F4F6)),
-        const SizedBox(height: 24),
-        
+        // const Row(
+        //   children: [
+        //     Icon(LucideIcons.lock, size: 16, color: Color(0xFF6B7280)),
+        //     SizedBox(width: 8),
+        //     Text(
+        //       '修改密码',
+        //       style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF111827)),
+        //     ),
+        //   ],
+        // ),
+        // const SizedBox(height: 16),
+        // _buildInput('当前密码', controller: _currentPasswordController),
+        // const SizedBox(height: 12),
+        // _buildInput('新密码', controller: _newPasswordController),
+        // const SizedBox(height: 12),
+        // _buildInput('确认新密码', controller: _confirmPasswordController),
+        // const SizedBox(height: 12),
+        // SizedBox(
+        //   width: double.infinity,
+        //   child: ElevatedButton(
+        //     onPressed: _changingPassword ? null : _handleChangePassword,
+        //     style: ElevatedButton.styleFrom(
+        //       backgroundColor: Colors.white,
+        //       foregroundColor: const Color(0xFF374151), // gray-700
+        //       elevation: 0,
+        //       padding: const EdgeInsets.symmetric(vertical: 16),
+        //       shape: RoundedRectangleBorder(
+        //         borderRadius: BorderRadius.circular(12),
+        //         side: const BorderSide(color: Color(0xFFE5E7EB)),
+        //       ),
+        //     ),
+        //     child: _changingPassword
+        //         ? const SizedBox(
+        //             width: 18,
+        //             height: 18,
+        //             child: CircularProgressIndicator(strokeWidth: 2),
+        //           )
+        //         : const Text('更新密码', style: TextStyle(fontWeight: FontWeight.w500)),
+        //   ),
+        // ),
+        // const SizedBox(height: 24),
+        // const Divider(height: 1, color: Color(0xFFF3F4F6)),
+        // const SizedBox(height: 24),
+
         // 2FA
         const Row(
           children: [

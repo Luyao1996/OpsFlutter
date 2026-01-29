@@ -8,7 +8,8 @@ import '../../data/terminal_api.dart';
 
 class FileManagerTab extends ConsumerStatefulWidget {
   final int terminalId;
-  const FileManagerTab({super.key, required this.terminalId});
+  final String seatId;
+  const FileManagerTab({super.key, required this.terminalId, required this.seatId});
 
   @override
   ConsumerState<FileManagerTab> createState() => _FileManagerTabState();
@@ -56,7 +57,8 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
     });
     try {
       final api = ref.read(terminalApiProvider);
-      final list = await api.getFiles(widget.terminalId, path);
+      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
+      final list = await api.getFiles(widget.seatId, path, domain: domain);
       if (mounted) {
         setState(() {
           _files = list;
@@ -161,7 +163,8 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
     _treeLoading.add(p);
     try {
       final api = ref.read(terminalApiProvider);
-      final items = await api.getFiles(widget.terminalId, p);
+      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
+      final items = await api.getFiles(widget.seatId, p, domain: domain);
       final dirs = items.where((f) => f.isDirectory).toList();
       final children = dirs
           .map(

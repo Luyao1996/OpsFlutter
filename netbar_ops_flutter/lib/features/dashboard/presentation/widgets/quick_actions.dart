@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
-import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/utils/top_notice.dart';
+import '../../data/dashboard_api.dart';
 
 class QuickActions extends ConsumerStatefulWidget {
   const QuickActions({super.key});

@@ -2,12 +2,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
 import '../../core/storage/token_store.dart';
 import '../../features/auth/data/auth_api.dart';
-import '../../features/dashboard/data/dashboard_api.dart';
 import '../../features/monitor/data/terminal_api.dart';
 
 // API 实例
 final authApiProvider = Provider((ref) => AuthApi());
-final dashboardApiProvider = Provider((ref) => DashboardApi());
 final terminalApiProvider = Provider((ref) => TerminalApi());
 
 /// 认证状态
@@ -25,13 +23,53 @@ class AuthState {
   }
 }
 
+/// 扫码登录状态
+enum QRLoginState {
+  idle,       // 空闲
+  loading,    // 加载中
+  waiting,    // 等待扫码
+  scanned,    // 已扫码
+  confirmed,  // 已确认
+  expired,    // 已过期
+  error,      // 错误
+}
+
+/// 扫码登录会话
+class QRLoginSessionState {
+  final QRLoginState state;
+  final String? pwd;
+  final String? qrCode; // base64图片
+  final String? errorMessage;
+
+  QRLoginSessionState({
+    this.state = QRLoginState.idle,
+    this.pwd,
+    this.qrCode,
+    this.errorMessage,
+  });
+
+  QRLoginSessionState copyWith({
+    QRLoginState? state,
+    String? pwd,
+    String? qrCode,
+    String? errorMessage,
+  }) {
+    return QRLoginSessionState(
+      state: state ?? this.state,
+      pwd: pwd ?? this.pwd,
+      qrCode: qrCode ?? this.qrCode,
+      errorMessage: errorMessage ?? this.errorMessage,
+    );
+  }
+}
+
 /// 认证状态管理
 class AuthNotifier extends StateNotifier<AuthState> {
   final AuthApi _authApi;
 
   AuthNotifier(this._authApi) : super(AuthState(isLoggedIn: TokenStore.isLoggedIn()));
 
-  /// 登录
+  /// 传统登录（后端不支持，会报错）
   Future<void> login(String username, String password) async {
     final response = await _authApi.login(
       LoginRequest(username: username, password: password),
@@ -39,6 +77,15 @@ class AuthNotifier extends StateNotifier<AuthState> {
     await TokenStore.setToken(response.token);
     await TokenStore.setUser(response.user.toJson());
     state = AuthState(isLoggedIn: true, user: response.user);
+  }
+
+  /// 使用Token登录（扫码登录第二步）
+  Future<void> loginWithToken(String token) async {
+    await TokenStore.setToken(token);
+    // 获取用户信息
+    final user = await _authApi.getCurrentUser();
+    await TokenStore.setUser(user.toJson());
+    state = AuthState(isLoggedIn: true, user: user);
   }
 
   /// 登出
@@ -76,20 +123,99 @@ final authNotifierProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref
   return AuthNotifier(ref.read(authApiProvider));
 });
 
+/// 扫码登录管理
+class QRLoginNotifier extends StateNotifier<QRLoginSessionState> {
+  final AuthApi _authApi;
+  Timer? _pollTimer;
+
+  QRLoginNotifier(this._authApi) : super(QRLoginSessionState());
+
+  /// 创建扫码登录会话
+  Future<void> createSession() async {
+    state = QRLoginSessionState(state: QRLoginState.loading);
+    try {
+      final response = await _authApi.preLogin();
+      state = QRLoginSessionState(
+        state: QRLoginState.waiting,
+        pwd: response.pwd,
+        qrCode: response.qrCode,
+      );
+    } catch (e) {
+      state = QRLoginSessionState(
+        state: QRLoginState.error,
+        errorMessage: e.toString(),
+      );
+    }
+  }
+
+  /// 开始轮询检查登录状态
+  void startPolling(Function(String token) onSuccess) {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
+      if (state.pwd == null) {
+        timer.cancel();
+        return;
+      }
+      try {
+        final response = await _authApi.getToken(state.pwd!);
+        if (response.isValid) {
+          timer.cancel();
+          state = state.copyWith(state: QRLoginState.confirmed);
+          onSuccess(response.accessToken);
+        }
+      } catch (e) {
+        // 继续轮询，直到超时
+        // 可以在这里检查是否过期
+      }
+    });
+
+    // 5分钟后自动停止轮询
+    Future.delayed(const Duration(minutes: 5), () {
+      if (state.state == QRLoginState.waiting) {
+        _pollTimer?.cancel();
+        state = state.copyWith(state: QRLoginState.expired);
+      }
+    });
+  }
+
+  /// 停止轮询
+  void stopPolling() {
+    _pollTimer?.cancel();
+  }
+
+  /// 重置状态
+  void reset() {
+    _pollTimer?.cancel();
+    state = QRLoginSessionState();
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+}
+
+final qrLoginProvider = StateNotifierProvider<QRLoginNotifier, QRLoginSessionState>((ref) {
+  return QRLoginNotifier(ref.read(authApiProvider));
+});
+
 /// 当前网吧状态
 class CurrentNetbar {
   final int? id;
   final String? name;
   final String? status;
+  final String? subdomainFull; // 网吧完整域名，用于终端API请求
   final int version; // 用于触发刷新
 
-  CurrentNetbar({this.id, this.name, this.status, this.version = 0});
+  CurrentNetbar({this.id, this.name, this.status, this.subdomainFull, this.version = 0});
 
-  CurrentNetbar copyWith({int? id, String? name, String? status, int? version}) {
+  CurrentNetbar copyWith({int? id, String? name, String? status, String? subdomainFull, int? version}) {
     return CurrentNetbar(
       id: id ?? this.id,
       name: name ?? this.name,
       status: status ?? this.status,
+      subdomainFull: subdomainFull ?? this.subdomainFull,
       version: version ?? this.version,
     );
   }
@@ -106,17 +232,24 @@ class CurrentNetbarNotifier extends StateNotifier<CurrentNetbar> {
       id: data['id'],
       name: data['name'],
       status: data['status'],
+      subdomainFull: data['subdomain_full'],
     );
   }
 
   /// 设置当前网吧
-  Future<void> setNetbar(int id, String name, String status) async {
-    final netbar = {'id': id, 'name': name, 'status': status};
+  Future<void> setNetbar(int id, String name, String status, {String? subdomainFull}) async {
+    final netbar = {
+      'id': id,
+      'name': name,
+      'status': status,
+      if (subdomainFull != null) 'subdomain_full': subdomainFull,
+    };
     await TokenStore.setCurrentNetbar(netbar);
     state = CurrentNetbar(
       id: id,
       name: name,
       status: status,
+      subdomainFull: subdomainFull,
       version: state.version + 1,
     );
   }
@@ -130,11 +263,4 @@ class CurrentNetbarNotifier extends StateNotifier<CurrentNetbar> {
 
 final currentNetbarProvider = StateNotifierProvider<CurrentNetbarNotifier, CurrentNetbar>((ref) {
   return CurrentNetbarNotifier();
-});
-
-/// Dashboard 统计
-final dashboardStatsProvider = FutureProvider.autoDispose<DashboardStats>((ref) async {
-  final netbar = ref.watch(currentNetbarProvider);
-  final api = ref.read(dashboardApiProvider);
-  return api.getStats(netbarId: netbar.id);
 });

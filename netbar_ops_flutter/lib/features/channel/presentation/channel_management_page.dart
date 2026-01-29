@@ -113,8 +113,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
 
   bool get _isAdmin {
     final auth = ref.watch(authNotifierProvider);
-    final role = auth.user?.role.toLowerCase() ?? '';
-    return role.contains('admin');
+    return auth.user?.hasAdminAccess == true;
   }
 
   bool get _canEdit {
@@ -307,7 +306,8 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     final id = _pendingEditStartupItemId!;
     TacticItem? match;
     for (final item in items) {
-      if (item.id == id) {
+      // 使用 startupId 匹配，因为从监控页面传递的是 startup 表的 ID
+      if (item.startupId == id) {
         match = item;
         break;
       }

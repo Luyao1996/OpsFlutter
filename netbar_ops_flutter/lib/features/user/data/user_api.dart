@@ -1,126 +1,226 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/network/api_client.dart';
 import 'user_mock_data.dart';
 
-final userApiProvider = Provider((ref) => UserApi());
-final netbarUserGroupApiProvider = Provider((ref) => NetbarUserGroupApi());
+// 重新导出 User 和 UserGroup，确保其他文件只需导入 user_api.dart
+export 'user_mock_data.dart' show User, UserGroup, UserRole, RoleObject, roleLabels;
 
-class NetbarUserGroupApi {
+final userApiProvider = Provider((ref) => UserApi());
+final groupApiProvider = Provider((ref) => GroupApi());
+
+/// 角色模型
+class Role {
+  final int id;
+  final String name;
+
+  Role({required this.id, required this.name});
+
+  factory Role.fromJson(Map<String, dynamic> json) {
+    return Role(
+      id: json['id'] ?? 0,
+      name: json['name'] ?? '',
+    );
+  }
+}
+
+/// 双因素认证响应
+class TwoFactorAuthResponse {
+  final String secret;
+  final String qrCode;
+
+  TwoFactorAuthResponse({required this.secret, required this.qrCode});
+
+  factory TwoFactorAuthResponse.fromJson(Map<String, dynamic> json) {
+    return TwoFactorAuthResponse(
+      secret: json['secret'] ?? '',
+      qrCode: json['qrCode'] ?? '',
+    );
+  }
+}
+
+/// 小程序绑定响应
+class MiniProgramBindResponse {
+  final String pwd;
+  final String qrCode;
+
+  MiniProgramBindResponse({required this.pwd, required this.qrCode});
+
+  factory MiniProgramBindResponse.fromJson(Map<String, dynamic> json) {
+    return MiniProgramBindResponse(
+      pwd: json['pwd'] ?? '',
+      qrCode: json['qrCode'] ?? '',
+    );
+  }
+}
+
+/// 分组 API - 适配后端 /api/group
+class GroupApi {
   final ApiClient _client = ApiClient.instance;
 
-  Future<List<UserGroup>> getAll(int netbarId, {String? search}) async {
-    final response = await _client.get('/netbars/$netbarId/groups', queryParameters: {
-      if (search != null && search.isNotEmpty) 'search': search,
-    });
-    final list = response.data as List? ?? [];
-    return list.map((e) => UserGroup.fromJson(e)).toList();
+  /// 获取分组列表（包含用户）
+  Future<List<UserGroup>> getList({String? keyword}) async {
+    final params = <String, dynamic>{};
+    if (keyword != null && keyword.isNotEmpty) params['keyword'] = keyword;
+
+    final response = await _client.get('/group', queryParameters: params);
+    final data = response.data;
+
+    if (data is Map<String, dynamic> && data.containsKey('groups')) {
+      return (data['groups'] as List)
+          .map((e) => UserGroup.fromJson(e as Map<String, dynamic>))
+          .toList();
+    }
+    return [];
   }
 
-  Future<UserGroup> create(int netbarId, {required String name, int? parentId}) async {
-    final response = await _client.post('/netbars/$netbarId/groups', data: {
-      'name': name,
-      if (parentId != null) 'parent_id': parentId,
-    });
-    return UserGroup.fromJson(response.data);
+  /// 获取分组详情
+  Future<UserGroup> getById(int id) async {
+    final response = await _client.get('/group/$id');
+    final data = response.data;
+    if (data is Map<String, dynamic> && data.containsKey('group')) {
+      return UserGroup.fromJson(data['group']);
+    }
+    return UserGroup.fromJson(data ?? {});
   }
 
-  Future<UserGroup> update(int netbarId, int id, {String? name, int? parentId}) async {
-    final response = await _client.put('/netbars/$netbarId/groups/$id', data: {
-      if (name != null) 'name': name,
-      if (parentId != null) 'parent_id': parentId,
-    });
-    return UserGroup.fromJson(response.data);
+  /// 创建分组
+  Future<void> create({required String name}) async {
+    final formData = FormData.fromMap({'name': name});
+    await _client.post('/group', data: formData);
   }
 
-  Future<void> delete(int netbarId, int id) async {
-    await _client.delete('/netbars/$netbarId/groups/$id');
+  /// 更新分组
+  Future<void> update(int id, {required String name}) async {
+    final formData = FormData.fromMap({'name': name});
+    await _client.post('/group/$id', data: formData);
   }
 
-  Future<List<User>> getGroupUsers(int netbarId, int groupId) async {
-    final response = await _client.get('/netbars/$netbarId/groups/$groupId/users');
-    final list = response.data as List? ?? [];
-    return list.map((e) => User.fromJson(e)).toList();
-  }
-
-  Future<void> addUserToGroup(int netbarId, int groupId, int userId) async {
-    await _client.post('/netbars/$netbarId/groups/$groupId/users', data: {'user_id': userId});
-  }
-
-  Future<void> removeUserFromGroup(int netbarId, int groupId, int userId) async {
-    await _client.delete('/netbars/$netbarId/groups/$groupId/users/$userId');
-  }
-
-  Future<List<User>> getNetbarUsers(int netbarId, {String? search}) async {
-    final response = await _client.get('/netbars/$netbarId/users', queryParameters: {
-      if (search != null && search.isNotEmpty) 'search': search,
-    });
-    final list = response.data as List? ?? [];
-    return list.map((e) => User.fromJson(e)).toList();
+  /// 删除分组
+  Future<void> delete(int id) async {
+    await _client.delete('/group/$id');
   }
 }
 
-class CreateUserResult {
-  final User user;
-  final String initialPassword;
-
-  CreateUserResult({required this.user, required this.initialPassword});
-}
-
+/// 用户 API - 适配后端 /api/user
 class UserApi {
   final ApiClient _client = ApiClient.instance;
 
-  Future<List<User>> getList({String? search, String? role}) async {
-    final params = <String, dynamic>{};
-    if (search != null && search.isNotEmpty) params['search'] = search;
-    if (role != null && role.isNotEmpty) params['role'] = role;
-
-    final response = await _client.get('/users', queryParameters: params);
-    final list = response.data as List? ?? [];
-    return list.map((e) => User.fromJson(e)).toList();
+  /// 获取用户详情
+  Future<User> getById(int id) async {
+    final response = await _client.get('/user/$id');
+    final data = response.data;
+    if (data is Map<String, dynamic> && data.containsKey('user')) {
+      return User.fromJson(data['user']);
+    }
+    return User.fromJson(data ?? {});
   }
 
-  Future<CreateUserResult> create({
+  /// 创建用户
+  Future<void> create({
     required String username,
     required String password,
-    String? name,
-    String? role,
-    String? email,
-    String? phone,
+    required String nickname,
     int? groupId,
-    int? netbarId,
-    int? netbarGroupId,
+    bool isManager = false,
+    List<int>? roleIds,
   }) async {
-    final response = await _client.post('/users', data: {
-      'username': username,
-      'password': password,
-      if (name != null) 'name': name,
-      if (role != null) 'role': role,
-      if (email != null) 'email': email,
-      if (phone != null) 'phone': phone,
-      if (groupId != null) 'group_id': groupId,
-      if (netbarId != null) 'netbar_id': netbarId,
-      if (netbarGroupId != null) 'netbar_group_id': netbarGroupId,
-    });
-    final data = response.data as Map<String, dynamic>? ?? <String, dynamic>{};
-    return CreateUserResult(
-      user: User.fromJson((data['user'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{}),
-      initialPassword: (data['initial_password'] ?? '').toString(),
-    );
+    final formData = FormData();
+    formData.fields.add(MapEntry('username', username));
+    formData.fields.add(MapEntry('password', password));
+    formData.fields.add(MapEntry('nickname', nickname));
+    formData.fields.add(MapEntry('is_manager', isManager ? '1' : '0'));
+    if (groupId != null) {
+      formData.fields.add(MapEntry('group_id', groupId.toString()));
+    }
+    if (roleIds != null) {
+      for (final id in roleIds) {
+        formData.fields.add(MapEntry('role_ids[]', id.toString()));
+      }
+    }
+
+    await _client.post('/user', data: formData);
   }
 
-  Future<User> update(int id, Map<String, dynamic> data) async {
-    final response = await _client.put('/users/$id', data: data);
-    return User.fromJson(response.data);
+  /// 更新用户
+  Future<void> update(
+    int id, {
+    String? username,
+    String? password,
+    String? nickname,
+    int? groupId,
+    bool? isManager,
+    List<int>? roleIds,
+  }) async {
+    final formData = FormData();
+    if (username != null) formData.fields.add(MapEntry('username', username));
+    if (password != null && password.isNotEmpty) {
+      formData.fields.add(MapEntry('password', password));
+    }
+    if (nickname != null) formData.fields.add(MapEntry('nickname', nickname));
+    if (groupId != null) {
+      formData.fields.add(MapEntry('group_id', groupId.toString()));
+    }
+    if (isManager != null) {
+      formData.fields.add(MapEntry('is_manager', isManager ? '1' : '0'));
+    }
+    if (roleIds != null) {
+      for (final id in roleIds) {
+        formData.fields.add(MapEntry('role_ids[]', id.toString()));
+      }
+    }
+
+    await _client.put('/user/$id', data: formData);
   }
 
-  Future<String> resetPassword(int id) async {
-    final response = await _client.post('/users/$id/reset-password');
-    final data = response.data as Map<String, dynamic>? ?? <String, dynamic>{};
-    return (data['new_password'] ?? '').toString();
-  }
-
+  /// 删除用户
   Future<void> delete(int id) async {
-    await _client.delete('/users/$id');
+    await _client.delete('/user/$id');
+  }
+
+  /// 获取角色列表
+  Future<List<Role>> getRoleList() async {
+    final response = await _client.get('/role');
+    final data = response.data;
+    if (data is Map<String, dynamic> && data.containsKey('roles')) {
+      return (data['roles'] as List)
+          .map((e) => Role.fromJson(e as Map<String, dynamic>))
+          .toList();
+    }
+    return [];
+  }
+
+  /// 获取双因素认证密钥
+  Future<TwoFactorAuthResponse> getTwoFactorAuth(int userId) async {
+    final response = await _client.get('/user/twoFactorAuth/$userId');
+    return TwoFactorAuthResponse.fromJson(response.data ?? {});
+  }
+
+  /// 绑定双因素认证
+  Future<void> bindTwoFactorAuth(int userId, {required String code}) async {
+    await _client.post('/user/twoFactorAuthCheck/$userId', data: {
+      'verification': code,
+    });
+  }
+
+  /// 绑定小程序
+  Future<MiniProgramBindResponse> bindMiniProgram(int userId) async {
+    final formData = FormData.fromMap({'user_id': userId});
+    final response = await _client.post('/user/bindAccount', data: formData);
+    return MiniProgramBindResponse.fromJson(response.data ?? {});
+  }
+
+  /// 解绑小程序
+  Future<void> unbindMiniProgram(int userId) async {
+    final formData = FormData.fromMap({'user_id': userId});
+    await _client.post('/user/unbindAccount', data: formData);
+  }
+
+  /// 修改Token有效期
+  Future<void> setTokenRefreshTtl(int userId, {required int ttlSeconds}) async {
+    await _client.post('/user/refreshTtl/$userId', data: {
+      'token_refresh_ttl': ttlSeconds,
+    });
   }
 }

@@ -76,13 +76,13 @@ class _ExecutablePathPickerFieldState extends ConsumerState<ExecutablePathPicker
   List<ExeZoneOption> _buildVisibleZones() {
     final auth = ref.read(authNotifierProvider);
     final user = auth.user;
-    final role = (user?.role ?? '').toLowerCase();
-    final isAdmin = role.contains('admin');
+    final isTopManager = user?.isTopManager == true;
     final groupId = user?.groupId ?? 0;
 
     final zones = <ExeZoneOption>[
       const ExeZoneOption(label: '总公司资源', zone: 'HEADQUARTERS', netbarId: 0),
-      if (!isAdmin && groupId > 0)
+      // 非总部管理员（分部管理员或普通用户）显示分公司资源
+      if (!isTopManager && groupId > 0)
         ExeZoneOption(label: '分公司资源', zone: 'BRANCH', netbarId: groupId),
       const ExeZoneOption(label: '共享区资源', zone: 'SHARED', netbarId: null),
     ];

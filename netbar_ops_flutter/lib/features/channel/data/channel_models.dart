@@ -430,12 +430,31 @@ class TacticItem {
 
   // 便捷 getter - 从嵌套的 startup 中取值
   String get name => merchant?.name ?? '未知';
-  String get effectiveDisplayName => startup?.startupPath ?? name;
+  /// 从路径中提取程序名作为显示名
+  String get effectiveDisplayName {
+    final p = startup?.startupPath ?? '';
+    if (p.isEmpty) return name;
+    // 处理 Windows 和 Unix 风格路径
+    final lastSlash = p.lastIndexOf('\\');
+    final lastForwardSlash = p.lastIndexOf('/');
+    final lastSep = lastSlash > lastForwardSlash ? lastSlash : lastForwardSlash;
+    if (lastSep >= 0 && lastSep < p.length - 1) {
+      return p.substring(lastSep + 1);
+    }
+    return p;
+  }
   String get path => startup?.startupPath ?? '';
   bool get enabled => startup?.enabled ?? true;
   int? get startupId => startup?.id;
   int? get merchantId => merchant?.id;
   EnabledState get enabledState => startup?.enabledState ?? EnabledState(status: true);
+
+  // 兼容旧 StartupItem getter
+  String get zone => startup?.zone ?? 'BRANCH';
+  int? get delay => startup?.startupDelay;
+  String? get args => startup?.parameter;
+  bool get forceRun => startup?.isForcedOn ?? false;
+  String? get targetOs => startup?.targetOs;
 
   TacticItem({
     required this.id,

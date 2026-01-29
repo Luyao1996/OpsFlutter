@@ -1,6 +1,7 @@
 /// 终端模型
 class Terminal {
   final int id;
+  final String seatId; // 座位ID（后端 seatlist 中的 id，可能是字符串）
   final String name;
   final String code;
   final int netbarId;
@@ -20,9 +21,11 @@ class Terminal {
   final String? lastHeartbeat;
   final String? createdAt;
   final String? updatedAt;
+  final List<dynamic>? remote; // 远程连接用户列表
 
   Terminal({
     required this.id,
+    this.seatId = '',
     required this.name,
     required this.code,
     required this.netbarId,
@@ -42,30 +45,48 @@ class Terminal {
     this.lastHeartbeat,
     this.createdAt,
     this.updatedAt,
+    this.remote,
   });
 
+  /// 解析后端 seatlist 返回的在线状态
+  static int _parseOnlineStatus(dynamic online) {
+    if (online == true || online == 1 || online == 'online') return 1;
+    return 0;
+  }
+
   factory Terminal.fromJson(Map<String, dynamic> json) {
+    // 兼容 seatlist 格式：{id: "PC001", name: "1号机", online: true, ip, mac, remote}
+    final rawId = json['id'];
+    final isSeatFormat = rawId is String || json.containsKey('online');
+
+    final int parsedId = rawId is int ? rawId : (int.tryParse(rawId?.toString() ?? '') ?? rawId.hashCode.abs());
+    final String parsedSeatId = rawId?.toString() ?? '';
+
+    final rawName = json['name']?.toString() ?? '';
+
     return Terminal(
-      id: json['id'] ?? 0,
-      name: json['name'] ?? '',
-      code: json['code'] ?? '',
+      id: parsedId,
+      seatId: parsedSeatId,
+      name: rawName.isNotEmpty ? rawName : parsedSeatId,
+      code: json['code'] ?? parsedSeatId,
       netbarId: json['netbar_id'] ?? 0,
       areaId: json['area_id'],
       ip: json['ip'] ?? '',
       mac: json['mac'] ?? '',
       os: json['os'] ?? '',
       type: json['type'] ?? 'client',
-      status: json['status'] ?? 0,
-      cpuUsage: (json['cpu_usage'] ?? 0).toDouble(),
-      ramUsage: (json['ram_usage'] ?? 0).toDouble(),
-      gpuUsage: (json['gpu_usage'] ?? 0).toDouble(),
-      diskUsage: (json['disk_usage'] ?? 0).toDouble(),
+      status: isSeatFormat ? _parseOnlineStatus(json['online']) : (json['status'] ?? 0),
+      cpuUsage: (json['cpu_usage'] ?? json['cpuUsage'] ?? 0).toDouble(),
+      ramUsage: (json['ram_usage'] ?? json['ramUsage'] ?? 0).toDouble(),
+      gpuUsage: (json['gpu_usage'] ?? json['gpuUsage'] ?? 0).toDouble(),
+      diskUsage: (json['disk_usage'] ?? json['diskUsage'] ?? 0).toDouble(),
       uptime: json['uptime'] ?? '0天',
       screenshotUrl: json['screenshot_url'] ?? json['screenshotUrl'],
       lastOnline: json['last_online'],
       lastHeartbeat: json['last_heartbeat'],
       createdAt: json['created_at'],
       updatedAt: json['updated_at'],
+      remote: json['remote'] is List ? json['remote'] : null,
     );
   }
 
