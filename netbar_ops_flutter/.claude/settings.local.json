@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(claude:*)",
+      "Bash(git push:*)",
+      "Bash(GIT_SSL_NO_VERIFY=1 git push:*)",
+      "Bash(flutter pub get:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "WebFetch(domain:pub.dev)",
+      "WebFetch(domain:github.com)",
+      "Bash(xargs cat:*)",
+      "Bash(wc:*)",
+      "Bash(where:*)",
+      "Bash(flutter --version:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(flutter analyze:*)",
+      "Bash(grep:*)",
+      "WebSearch"
+    ]
+  }
+}

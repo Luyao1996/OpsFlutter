@@ -144,6 +144,10 @@ class TerminalProcess {
   final double cpu;
   final double mem; // MB
   final String user;
+  final int threadCount;
+  final String path;
+  final int memoryKB;
+  final List<TerminalProcess> children;
 
   TerminalProcess({
     required this.name,
@@ -151,7 +155,14 @@ class TerminalProcess {
     required this.cpu,
     required this.mem,
     required this.user,
-  });
+    this.threadCount = 0,
+    this.path = '',
+    this.memoryKB = 0,
+    List<TerminalProcess>? children,
+  }) : children = children ?? [];
+
+  /// 是否有子进程
+  bool get hasChildren => children.isNotEmpty;
 
   factory TerminalProcess.fromJson(Map<String, dynamic> json) {
     return TerminalProcess(
@@ -160,6 +171,46 @@ class TerminalProcess {
       cpu: (json['cpu'] ?? 0).toDouble(),
       mem: (json['mem'] ?? 0).toDouble(),
       user: json['user'] ?? '',
+      threadCount: json['threadCount'] ?? json['ThreadCount'] ?? 0,
+      path: json['path'] ?? '',
+      memoryKB: json['memoryKB'] ?? 0,
+    );
+  }
+
+  /// 从后端进程树数据解析（递归）
+  factory TerminalProcess.fromProcessTree(Map<String, dynamic> data, [String? key]) {
+    final pid = data['ProcessId'] ?? data['Pid'] ?? data['pid'] ?? 0;
+    final name = data['name'] ?? data['ProcessName'] ?? key ?? '';
+
+    // 兼容多种字段名格式
+    final memoryUsage = (data['memoryUsage'] ?? data['MemoryUsage'] ?? data['memory_usage'] ?? data['Memory'] ?? 0).toDouble();
+    final cpuUsage = (data['cpuUsage'] ?? data['CpuUsage'] ?? data['cpu_usage'] ?? data['CPU'] ?? data['cpu'] ?? 0).toDouble();
+
+    final memoryKB = memoryUsage > 0 ? (memoryUsage / 1024).round() : 0;
+    final memoryMB = memoryUsage > 0 ? memoryUsage / (1024 * 1024) : 0.0;
+
+    // 解析子进程
+    List<TerminalProcess> children = [];
+    final childrenData = data['children'] ?? data['Children'];
+    if (childrenData is Map<String, dynamic>) {
+      children = childrenData.entries.map((e) {
+        final childData = e.value is Map<String, dynamic> ? e.value as Map<String, dynamic> : <String, dynamic>{};
+        return TerminalProcess.fromProcessTree(childData, e.key);
+      }).toList();
+      // 按 PID 排序
+      children.sort((a, b) => a.pid.compareTo(b.pid));
+    }
+
+    return TerminalProcess(
+      name: name,
+      pid: pid,
+      cpu: cpuUsage,
+      mem: memoryMB,
+      user: data['user'] ?? data['User'] ?? '',
+      threadCount: data['ThreadCount'] ?? data['threadCount'] ?? data['thread_count'] ?? 0,
+      path: data['path'] ?? data['Path'] ?? '',
+      memoryKB: memoryKB,
+      children: children,
     );
   }
 }
@@ -170,6 +221,9 @@ class TerminalFile {
   final bool isDirectory;
   final int size;
   final String updatedAt;
+  final String createdAt;
+  final String version;
+  final bool isDrive; // 是否为磁盘根目录（如 C:, D:）
 
   TerminalFile({
     required this.name,
@@ -177,15 +231,21 @@ class TerminalFile {
     required this.isDirectory,
     required this.size,
     required this.updatedAt,
+    this.createdAt = '',
+    this.version = '',
+    this.isDrive = false,
   });
 
   factory TerminalFile.fromJson(Map<String, dynamic> json) {
     return TerminalFile(
       name: json['name'] ?? '',
       path: json['path'] ?? '',
-      isDirectory: json['is_directory'] ?? false,
+      isDirectory: json['is_directory'] ?? json['isDirectory'] ?? false,
       size: json['size'] ?? 0,
-      updatedAt: json['updated_at'] ?? '',
+      updatedAt: json['updated_at'] ?? json['lwtime'] ?? '',
+      createdAt: json['created_at'] ?? json['ctime'] ?? '',
+      version: json['version'] ?? '',
+      isDrive: json['is_drive'] ?? json['isDrive'] ?? false,
     );
   }
 }

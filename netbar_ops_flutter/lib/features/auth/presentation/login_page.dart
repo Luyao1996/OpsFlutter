@@ -1,14 +1,23 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../dashboard/presentation/dashboard_page.dart';
+import '../../monitor/presentation/monitor_page.dart';
+
+// 小程序配置
+const String _wxMiniAppId = 'wxd10d1fac349fe344';
+const String _wxMiniPath = 'pages/index/index';
 
 /// 保存的用户
 class SavedUser {
@@ -60,9 +69,12 @@ class LoginPage extends ConsumerStatefulWidget {
 
 class _LoginPageState extends ConsumerState<LoginPage>
     with TickerProviderStateMixin {
-  // 视图状态: users, password, qrcode, manual
-  String _viewState = 'manual';
+  // 视图状态: qrcode, wechat_mobile（手机端微信登录）
+  String _viewState = 'qrcode';
   SavedUser? _selectedUser;
+
+  // 是否为移动端
+  bool _isMobile = false;
 
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -77,9 +89,13 @@ class _LoginPageState extends ConsumerState<LoginPage>
   String _qrStatus =
       'loading'; // loading, pending, scanned, confirmed, expired, error
   String _qrData = '';
+  Uint8List? _qrImageBytes; // 缓存解码后的二维码图像数据
   String _qrSessionId = '';
   String? _qrError;
   Timer? _qrPollTimer;
+  Timer? _qrRefreshTimer; // 二维码刷新定时器
+  int _qrCountdown = 30; // 二维码刷新倒计时（秒）
+  static const int _qrRefreshInterval = 30; // 二维码刷新间隔（秒）
 
   List<SavedUser> _savedUsers = [];
 
@@ -111,8 +127,28 @@ class _LoginPageState extends ConsumerState<LoginPage>
       vsync: this,
     )..repeat(reverse: true);
 
-    // 加载保存的用户
-    _loadSavedUsers();
+    // 延迟检测移动端，确保 MediaQuery 可用
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _detectMobileAndInit();
+    });
+  }
+
+  /// 检测是否为移动端并初始化登录方式
+  void _detectMobileAndInit() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    // 屏幕宽度小于 600 认为是移动端
+    _isMobile = screenWidth < 600;
+
+    if (_isMobile) {
+      // 移动端：显示微信登录按钮（初始状态为 idle，显示按钮）
+      setState(() {
+        _viewState = 'wechat_mobile';
+        _qrStatus = 'idle'; // 初始状态，显示登录按钮
+      });
+    } else {
+      // 桌面端：显示二维码
+      _createQRSession();
+    }
   }
 
   Future<void> _loadSavedUsers() async {
@@ -209,6 +245,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
   void dispose() {
     _timer.cancel();
     _qrPollTimer?.cancel();
+    _qrRefreshTimer?.cancel();
     _auroraController1.dispose();
     _auroraController2.dispose();
     _auroraController3.dispose();
@@ -284,27 +321,66 @@ class _LoginPageState extends ConsumerState<LoginPage>
   }
 
   Future<void> _createQRSession() async {
+    // 取消之前的刷新定时器
+    _qrRefreshTimer?.cancel();
+    _qrPollTimer?.cancel();
+
     setState(() {
       _qrStatus = 'loading';
       _qrError = null;
+      _qrCountdown = _qrRefreshInterval;
+      _qrImageBytes = null; // 清空缓存的图像数据
     });
 
     try {
       final api = ref.read(authApiProvider);
       // 调用预登录接口获取二维码
       final response = await api.preLogin();
+
+      // 解码二维码图像数据并缓存
+      String base64Data = response.qrCode;
+      if (base64Data.contains(',')) {
+        base64Data = base64Data.split(',').last;
+      }
+      final imageBytes = base64Decode(base64Data);
+
       setState(() {
         _qrSessionId = response.pwd; // pwd 作为会话ID
         _qrData = response.qrCode; // base64 二维码图片
+        _qrImageBytes = imageBytes; // 缓存解码后的图像数据
         _qrStatus = 'pending';
+        _qrCountdown = _qrRefreshInterval;
       });
       _startQRPolling();
+      _startQRRefreshCountdown();
     } catch (e) {
       setState(() {
         _qrStatus = 'error';
         _qrError = e.toString();
+        _qrImageBytes = null;
       });
     }
+  }
+
+  /// 启动二维码刷新倒计时
+  void _startQRRefreshCountdown() {
+    _qrRefreshTimer?.cancel();
+    _qrRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) {
+        _qrRefreshTimer?.cancel();
+        return;
+      }
+
+      setState(() {
+        _qrCountdown--;
+      });
+
+      if (_qrCountdown <= 0) {
+        _qrRefreshTimer?.cancel();
+        // 自动刷新二维码
+        _createQRSession();
+      }
+    });
   }
 
   void _startQRPolling() {
@@ -314,7 +390,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
 
     _qrPollTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
       pollCount++;
-      if (_qrSessionId.isEmpty || _viewState != 'qrcode') {
+      if (_qrSessionId.isEmpty || (_viewState != 'qrcode' && _viewState != 'wechat_mobile')) {
         _qrPollTimer?.cancel();
         return;
       }
@@ -334,11 +410,17 @@ class _LoginPageState extends ConsumerState<LoginPage>
         if (tokenResponse.isValid) {
           // 登录成功
           _qrPollTimer?.cancel();
+          _qrRefreshTimer?.cancel();
           setState(() => _qrStatus = 'confirmed');
 
           // 使用token登录
           final authNotifier = ref.read(authNotifierProvider.notifier);
           await authNotifier.loginWithToken(tokenResponse.accessToken);
+
+          // 刷新相关的 provider，避免显示旧的错误状态
+          ref.invalidate(dashboardStatsProvider);
+          ref.invalidate(dashboardTrendProvider);
+          ref.invalidate(terminalsProvider);
 
           if (mounted) context.go('/dashboard');
         }
@@ -347,6 +429,43 @@ class _LoginPageState extends ConsumerState<LoginPage>
         // 检查是否是已扫码状态（如果后端支持）
       }
     });
+  }
+
+  /// 手机端微信登录 - 跳转小程序
+  Future<void> _handleWeChatLogin() async {
+    setState(() {
+      _qrStatus = 'loading';
+      _qrError = null;
+    });
+
+    try {
+      final api = ref.read(authApiProvider);
+      // 获取登录会话
+      final response = await api.preLogin();
+      _qrSessionId = response.pwd;
+
+      // 构造小程序 URL Scheme（明文格式）
+      final query = Uri.encodeComponent('pwd=${response.pwd}');
+      final schemeUrl = 'weixin://dl/business/?appid=$_wxMiniAppId&path=$_wxMiniPath&query=$query';
+
+      setState(() => _qrStatus = 'pending');
+
+      // 启动轮询
+      _startQRPolling();
+      _startQRRefreshCountdown();
+
+      // 直接尝试跳转（不使用 canLaunchUrl，因为对自定义 scheme 检测不准确）
+      final uri = Uri.parse(schemeUrl);
+      await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (e) {
+      setState(() {
+        _qrStatus = 'error';
+        _qrError = e.toString();
+      });
+    }
   }
 
   @override
@@ -485,16 +604,274 @@ class _LoginPageState extends ConsumerState<LoginPage>
   }
 
   Widget _buildMainContent() {
-    switch (_viewState) {
-      case 'users':
-        return _buildUserSelection();
-      case 'password':
-        return _buildPasswordInput();
-      case 'qrcode':
-        return _buildQRCodeLogin();
-      default:
-        return _buildManualLogin();
+    if (_viewState == 'wechat_mobile') {
+      return _buildWeChatMobileLogin();
     }
+    // 桌面端：二维码登录
+    return _buildQRCodeLogin();
+  }
+
+  /// 手机端微信登录界面
+  Widget _buildWeChatMobileLogin() {
+    return Container(
+      width: 320,
+      padding: const EdgeInsets.all(32),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 微信图标
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: const Color(0xFF07C160), // 微信绿
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Icon(
+              LucideIcons.messageCircle,
+              size: 40,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            '欢迎登录',
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '使用微信快速登录',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.white.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(height: 32),
+
+          // 根据状态显示不同内容
+          if (_qrStatus == 'loading')
+            _buildWeChatLoading()
+          else if (_qrStatus == 'pending')
+            _buildWeChatPending()
+          else if (_qrStatus == 'error')
+            _buildWeChatError()
+          else if (_qrStatus == 'confirmed')
+            _buildWeChatSuccess()
+          else // idle 或其他状态，显示登录按钮
+            _buildWeChatButton(),
+
+          const SizedBox(height: 24),
+          // 切换到扫码登录（用另一台设备扫）
+          TextButton(
+            onPressed: () {
+              setState(() => _viewState = 'qrcode');
+              _createQRSession();
+            },
+            child: Text(
+              '使用其他设备扫码登录',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.5),
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 微信登录按钮
+  Widget _buildWeChatButton() {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: _handleWeChatLogin,
+        icon: const Icon(LucideIcons.messageCircle, size: 20),
+        label: const Text('通过微信登录', style: TextStyle(fontSize: 16)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF07C160),
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          elevation: 0,
+        ),
+      ),
+    );
+  }
+
+  /// 微信登录 - 加载中
+  Widget _buildWeChatLoading() {
+    return Column(
+      children: [
+        const SizedBox(
+          width: 48,
+          height: 48,
+          child: CircularProgressIndicator(
+            strokeWidth: 3,
+            color: Color(0xFF07C160),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          '正在准备...',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.6),
+            fontSize: 14,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 微信登录 - 等待授权
+  Widget _buildWeChatPending() {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF07C160).withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            children: [
+              const Icon(
+                LucideIcons.smartphone,
+                size: 32,
+                color: Color(0xFF07C160),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '请在微信中完成授权',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.8),
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '授权后将自动登录',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.5),
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        // 倒计时
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              LucideIcons.clock,
+              size: 14,
+              color: Colors.white.withValues(alpha: 0.4),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '$_qrCountdown 秒后需重新操作',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.4),
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        // 重新跳转按钮
+        TextButton.icon(
+          onPressed: _handleWeChatLogin,
+          icon: Icon(
+            LucideIcons.refreshCw,
+            size: 14,
+            color: Colors.white.withValues(alpha: 0.6),
+          ),
+          label: Text(
+            '重新打开微信',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.6),
+              fontSize: 13,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 微信登录 - 错误
+  Widget _buildWeChatError() {
+    return Column(
+      children: [
+        Icon(
+          LucideIcons.alertCircle,
+          size: 48,
+          color: Colors.redAccent.withValues(alpha: 0.8),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          _qrError ?? '登录失败',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.7),
+            fontSize: 14,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 16),
+        _buildWeChatButton(),
+      ],
+    );
+  }
+
+  /// 微信登录 - 成功
+  Widget _buildWeChatSuccess() {
+    return Column(
+      children: [
+        Container(
+          width: 64,
+          height: 64,
+          decoration: BoxDecoration(
+            color: const Color(0xFF07C160),
+            borderRadius: BorderRadius.circular(32),
+          ),
+          child: const Icon(
+            LucideIcons.check,
+            size: 32,
+            color: Colors.white,
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          '登录成功',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '正在跳转...',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.6),
+            fontSize: 14,
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildUserSelection() {
@@ -924,7 +1301,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
           const SizedBox(height: 24),
           _buildQRContent(),
           const SizedBox(height: 16),
-          if (_qrStatus == 'pending')
+          if (_qrStatus == 'pending') ...[
             Text(
               '请使用 网维助手 App 扫一扫',
               style: TextStyle(
@@ -932,16 +1309,53 @@ class _LoginPageState extends ConsumerState<LoginPage>
                 fontSize: 14,
               ),
             ),
-          const SizedBox(height: 16),
-          TextButton(
-            onPressed: () => setState(
-              () => _viewState = _savedUsers.isNotEmpty ? 'users' : 'manual',
+            const SizedBox(height: 8),
+            // 倒计时显示
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  LucideIcons.refreshCw,
+                  size: 14,
+                  color: Colors.white.withValues(alpha: 0.4),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '$_qrCountdown 秒后自动刷新',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.4),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
             ),
-            child: Text(
-              '返回账号登录',
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+          ],
+          // 如果是移动端，显示返回微信登录的按钮
+          if (_isMobile) ...[
+            const SizedBox(height: 16),
+            TextButton.icon(
+              onPressed: () {
+                _qrPollTimer?.cancel();
+                _qrRefreshTimer?.cancel();
+                setState(() {
+                  _viewState = 'wechat_mobile';
+                  _qrStatus = 'idle'; // 返回时显示登录按钮
+                });
+              },
+              icon: Icon(
+                LucideIcons.chevronLeft,
+                size: 16,
+                color: Colors.white.withValues(alpha: 0.5),
+              ),
+              label: Text(
+                '返回微信登录',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.5),
+                  fontSize: 13,
+                ),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -1041,16 +1455,9 @@ class _LoginPageState extends ConsumerState<LoginPage>
         ),
       );
     }
-    // pending - 显示二维码，如果 qrData 为空则显示加载动画
-    if (_qrData.isEmpty) {
+    // pending - 显示二维码，如果图像数据为空则显示加载动画
+    if (_qrImageBytes == null || _qrImageBytes!.isEmpty) {
       return _buildQRLoading('生成二维码...');
-    }
-
-    // 解析 base64 图片数据
-    // 后端返回格式可能是 "data:image/png;base64,xxxxx" 或直接是 base64 字符串
-    String base64Data = _qrData;
-    if (base64Data.contains(',')) {
-      base64Data = base64Data.split(',').last;
     }
 
     return Container(
@@ -1062,8 +1469,9 @@ class _LoginPageState extends ConsumerState<LoginPage>
       ),
       padding: const EdgeInsets.all(8),
       child: Image.memory(
-        base64Decode(base64Data),
+        _qrImageBytes!,
         fit: BoxFit.cover,
+        gaplessPlayback: true, // 防止图像切换时闪烁
         errorBuilder: (context, error, stackTrace) {
           return Center(
             child: Column(
@@ -1129,12 +1537,6 @@ class _LoginPageState extends ConsumerState<LoginPage>
       right: 32,
       child: Row(
         children: [
-          if (_viewState != 'qrcode')
-            _buildCircleButton(LucideIcons.qrCode, '扫码登录', () {
-              setState(() => _viewState = 'qrcode');
-              _createQRSession();
-            }),
-          const SizedBox(width: 16),
           _buildCircleButton(LucideIcons.shield, '需要帮助?', () {}),
           const SizedBox(width: 16),
           Column(

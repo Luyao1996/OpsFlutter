@@ -853,8 +853,7 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
     ];
   }
 
-  static const int _maxEditableSize = 50 * 1024; // 最大可编辑文件大小 50KB
-  static const int _previewSize = 5 * 1024; // 预览大小 5KB
+  static const int _maxEditableSize = 200 * 1024; // 最大可编辑文件大小 200KB（与文件管理预览一致）
 
   // 图片文件扩展名
   static const Set<String> _imageExtensions = {
@@ -895,8 +894,14 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
       setState(() {
         file.rawBytes = file.fullBytes;
         file.isFullyLoaded = true;
-        file.contentController.text = _decodeContent(file.rawBytes!, file.encoding);
       });
+      // 使用异步解码避免阻塞 UI
+      final content = await _decodeContentAsync(file.fullBytes!, file.encoding);
+      if (mounted) {
+        setState(() {
+          file.contentController.text = content;
+        });
+      }
       return;
     }
 
@@ -907,34 +912,27 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
 
     try {
       final resourceApi = res.ResourceApi();
-      int receivedBytes = 0;
-      bool cancelled = false;
-      final List<int> bytesBuffer = [];
 
-      // 使用流式下载，可以在接收过程中检查大小
-      final downloadedBytes = await resourceApi.downloadBytes(
+      // 参考 FileEditorModal：使用限量下载，先获取最多 _maxEditableSize + 1 字节
+      // 如果返回的字节数超过限制，说明文件过大
+      final limitedBytes = await resourceApi.downloadBytesLimited(
         file.groupFileId!,
-        onReceiveProgress: (received, total) {
-          receivedBytes = received;
-          // 如果文件超过最大可编辑大小且不是强制加载，记录但继续（需要知道总大小）
-          if (total > 0) {
-            file.totalSize = total;
-          }
-        },
+        _maxEditableSize + 1,
       );
 
-      final bytes = Uint8List.fromList(downloadedBytes);
-      file.totalSize = bytes.length;
-      file.fullBytes = bytes;
+      final bytes = Uint8List.fromList(limitedBytes);
 
-      // 如果文件太大，不加载内容，只显示提示
+      // 判断文件是否过大
       if (bytes.length > _maxEditableSize && !forceLoad) {
+        // 文件过大，不加载内容
         if (mounted) {
           setState(() {
             file.rawBytes = null;
+            file.fullBytes = null;
+            file.totalSize = bytes.length;
             file.isFullyLoaded = false;
             file.isLoading = false;
-            file.contentController.text = '[文件较大] 文件大小 ${_formatFileSize(bytes.length)}，超过可编辑限制 (${_formatFileSize(_maxEditableSize)})。\n\n点击下方"加载内容"按钮可强制加载（可能导致卡顿）。\n保存时将使用原文件内容。';
+            file.contentController.text = '[文件较大] 文件大小超过可编辑限制 (${_formatFileSize(_maxEditableSize)})。\n\n如需编辑，请下载后使用本地编辑器修改。';
           });
         }
         return;
@@ -942,8 +940,12 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
 
       // 文件大小在限制内，正常显示
       file.rawBytes = bytes;
+      file.fullBytes = bytes;
+      file.totalSize = bytes.length;
       file.isFullyLoaded = true;
-      final content = _decodeContent(bytes, file.encoding);
+
+      // 使用异步解码避免阻塞 UI
+      final content = await _decodeContentAsync(bytes, file.encoding);
 
       if (mounted) {
         setState(() {
@@ -963,11 +965,11 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
   }
 
   void _onEncodingChanged(_LocaleFileEntry file, String newEncoding) {
-    final bytesToDecode = file.isFullyLoaded ? file.fullBytes : file.rawBytes;
-    if (bytesToDecode == null) return;
+    // 只有已加载内容的文件才能切换编码
+    if (file.rawBytes == null) return;
     setState(() {
       file.encoding = newEncoding;
-      file.contentController.text = _decodeContent(bytesToDecode, newEncoding);
+      file.contentController.text = _decodeContent(file.rawBytes!, newEncoding);
     });
   }
 
@@ -994,6 +996,19 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
         file.rawBytes = null;
         file.fullBytes = null;
         file.isFullyLoaded = true;
+      });
+      return;
+    }
+
+    // 参考 FileEditorModal：先检查已知文件大小，超过限制直接显示提示，不下载
+    if (selected.size > _maxEditableSize) {
+      setState(() {
+        file.mode = 'text';
+        file.rawBytes = null;
+        file.fullBytes = null;
+        file.totalSize = selected.size;
+        file.isFullyLoaded = false;
+        file.contentController.text = '[文件较大] 文件大小 ${_formatFileSize(selected.size)}，超过可编辑限制 (${_formatFileSize(_maxEditableSize)})。\n\n如需编辑，请下载后使用本地编辑器修改。';
       });
       return;
     }
@@ -1136,48 +1151,9 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
   }
 
   Widget _buildTextEditorWithLoadMore(_LocaleFileEntry file) {
-    // 大文件未加载内容的情况
-    final isLargeFileNotLoaded = !file.isFullyLoaded && file.rawBytes == null && file.fullBytes != null;
-
-    return Column(
-      children: [
-        Expanded(child: _buildTextEditor(file)),
-        // 大文件未加载内容时显示"加载内容"按钮
-        if (isLargeFileNotLoaded) ...[
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.orange.shade50,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: Colors.orange.shade200),
-            ),
-            child: Row(
-              children: [
-                Icon(LucideIcons.alertTriangle, size: 14, color: Colors.orange.shade700),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '文件较大 (${_formatFileSize(file.totalSize)})，加载可能导致卡顿',
-                    style: TextStyle(fontSize: 12, color: Colors.orange.shade700),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                TextButton(
-                  onPressed: file.isLoading ? null : () => _loadFileContent(file, forceLoad: true),
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: const Text('强制加载', style: TextStyle(fontSize: 12)),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ],
-    );
+    // 参考 FileEditorModal：大文件不支持强制加载，直接显示文本编辑器
+    // 大文件情况下，contentController 中已包含提示信息
+    return _buildTextEditor(file);
   }
 
   String _formatFileSize(int bytes) {

@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../data/terminal_api.dart';
@@ -8,12 +9,14 @@ class TerminalCard extends StatefulWidget {
   final Terminal terminal;
   final VoidCallback? onTap;
   final void Function(TapDownDetails)? onSecondaryTapDown;
+  final Uint8List? screenshotBytes; // 实时截图数据
 
   const TerminalCard({
     super.key,
     required this.terminal,
     this.onTap,
     this.onSecondaryTapDown,
+    this.screenshotBytes,
   });
 
   @override
@@ -96,36 +99,24 @@ class _TerminalCardState extends State<TerminalCard> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // 背景桌面图片
+        // 背景桌面图片：优先使用实时截图
         Container(
           color: const Color(0xFF1F2937), // bg-gray-800 作为占位背景
-          child: Image.network(
-            t.desktopPreviewUrl(width: 400, height: 225),
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) => Container(
-              color: const Color(0xFF1F2937),
-              child: Center(
-                child: Icon(
-                  Icons.desktop_windows_outlined,
-                  size: 32,
-                  color: Colors.grey.shade600,
+          child: widget.screenshotBytes != null
+              ? Image.memory(
+                  widget.screenshotBytes!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
+                )
+              : Image.network(
+                  t.desktopPreviewUrl(width: 400, height: 225),
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
+                  loadingBuilder: (context, child, loadingProgress) {
+                    if (loadingProgress == null) return child;
+                    return _buildPlaceholder();
+                  },
                 ),
-              ),
-            ),
-            loadingBuilder: (context, child, loadingProgress) {
-              if (loadingProgress == null) return child;
-              return Container(
-                color: const Color(0xFF1F2937),
-                child: Center(
-                  child: Icon(
-                    Icons.desktop_windows_outlined,
-                    size: 32,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              );
-            },
-          ),
         ),
         // 右上角: 状态 & 运行时间
         Positioned(
@@ -214,6 +205,20 @@ class _TerminalCardState extends State<TerminalCard> {
           ),
         ),
       ],
+    );
+  }
+
+  /// 占位图
+  Widget _buildPlaceholder() {
+    return Container(
+      color: const Color(0xFF1F2937),
+      child: Center(
+        child: Icon(
+          Icons.desktop_windows_outlined,
+          size: 32,
+          color: Colors.grey.shade600,
+        ),
+      ),
     );
   }
 

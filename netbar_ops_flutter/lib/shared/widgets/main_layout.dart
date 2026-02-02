@@ -365,7 +365,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
             ),
             _buildMenuItem(
               '网吧管理',
-              '/netbar-list',
+              '/monitor',
               LucideIcons.network,
               Colors.indigo,
             ),
@@ -374,6 +374,18 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
               '/resource-management',
               LucideIcons.database,
               Colors.orange,
+            ),
+            _buildMenuItem(
+              '通道管理',
+              '/channel-management',
+              LucideIcons.activity,
+              AppColors.iosBlue,
+            ),
+            _buildMenuItem(
+              '桌面管理',
+              '/desktop-management',
+              LucideIcons.layoutGrid,
+              Colors.teal,
             ),
             // 总部管理员或分部管理员可以访问用户账户
             if (authState.user?.hasAdminAccess == true)
@@ -497,62 +509,6 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
   Widget _buildRightSection(AuthState authState, bool isNarrow) {
     return Row(
       children: [
-        // 运维管理下拉
-        PopupMenuButton<String>(
-          offset: const Offset(0, 48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          onSelected: (path) => context.go(path),
-          child: Container(
-            constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
-            padding: EdgeInsets.symmetric(
-              horizontal: isNarrow ? 8 : 12,
-              vertical: 6,
-            ),
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(8)),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                const Icon(
-                  LucideIcons.wrench,
-                  size: 16,
-                  color: AppColors.iosBlue,
-                ),
-                if (!isNarrow) ...[
-                  const SizedBox(width: 6),
-                  const Text(
-                    '运维管理',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-                  ),
-                  const SizedBox(
-                    width: 4,
-                  ), // Added small spacing before chevron
-                  Icon(
-                    LucideIcons.chevronDown,
-                    size: 14,
-                    color: Colors.grey.shade400,
-                  ),
-                ],
-              ],
-            ),
-          ),
-          itemBuilder: (context) => [
-            _buildMenuItem(
-              '通道管理',
-              '/channel-management',
-              LucideIcons.activity,
-              AppColors.iosBlue,
-            ),
-            _buildMenuItem(
-              '桌面管理',
-              '/desktop-management',
-              LucideIcons.layoutGrid,
-              Colors.orange,
-            ),
-          ],
-        ),
-        const SizedBox(width: 8),
         // 用户菜单（头像触发）
         InkWell(
           onTap: () => _showUserProfile(authState),

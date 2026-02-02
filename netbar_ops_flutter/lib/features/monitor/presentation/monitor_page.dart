@@ -1,56 +1,30 @@
+import 'dart:typed_data';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:intl/intl.dart';
 import '../../../core/responsive/responsive.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
-import '../data/channel_monitor_api.dart';
+import '../../../shared/providers/terminal_dock_provider.dart';
+import '../../../shared/services/terminal_window_bridge.dart';
+import '../../../shared/utils/platform_utils.dart';
+import '../../../shared/utils/top_notice.dart';
+import '../../../shared/utils/open_in_new_tab.dart';
+import '../data/terminal_api.dart';
+import '../../desktop/data/desktop_api.dart';
+import 'widgets/terminal_card.dart';
 
-/// 通道监控数据 Provider
-final channelMonitorProvider = FutureProvider.autoDispose<ChannelMonitorResponse>((ref) async {
+/// 终端列表 Provider - 移除 autoDispose 避免频繁重载
+final terminalsProvider = FutureProvider<List<Terminal>>((ref) async {
   final netbar = ref.watch(currentNetbarProvider);
-  final api = ChannelMonitorApi();
-  // 使用当前网吧名称作为关键词查询
-  return api.getChannelMonitor(
-    page: 1,
-    size: 100,
-    type: 'merchant',
-    keyword: netbar.name,
-  );
+  final api = ref.read(terminalApiProvider);
+  // 使用网吧的 subdomainFull 作为动态域名请求 /api/seatlist
+  return api.getAll(domain: netbar.subdomainFull);
 });
-
-/// 表格行数据模型（展平后的启动项数据）
-class MonitorRowData {
-  final int merchantId;
-  final String merchantName;
-  final int terminalCount;
-  final int terminalAvg;
-  final bool isOnline;
-  final String groupNames;
-  final String startupPath;
-  final int startupTotal;
-  final int startupFail;
-  final int durationLt1;
-  final int durationLt10;
-  final int durationLt20;
-  final int rowSpan; // 用于合并单元格
-
-  MonitorRowData({
-    required this.merchantId,
-    required this.merchantName,
-    required this.terminalCount,
-    required this.terminalAvg,
-    required this.isOnline,
-    required this.groupNames,
-    required this.startupPath,
-    required this.startupTotal,
-    required this.startupFail,
-    required this.durationLt1,
-    required this.durationLt10,
-    required this.durationLt20,
-    this.rowSpan = 1,
-  });
-}
 
 class MonitorPage extends ConsumerStatefulWidget {
   const MonitorPage({super.key});
@@ -60,174 +34,141 @@ class MonitorPage extends ConsumerStatefulWidget {
 }
 
 class _MonitorPageState extends ConsumerState<MonitorPage> {
-  String _statusFilter = ''; // '', '1' 在线, '0' 离线
+  String _searchQuery = '';
+  bool _isListView = false;
+  String _filterStatus = 'all'; // all, busy, online_idle, offline
+  int _sortColumnIndex = 0;
+  bool _sortAscending = true;
+  // 右键菜单状态
+  OverlayEntry? _menuOverlay;
+  Terminal? _selectedTerminal;
+
+  // 截图缓存：seatId -> 截图数据
+  final Map<String, Uint8List> _screenshotCache = {};
+  final ScreenshotApi _screenshotApi = ScreenshotApi();
+  bool _screenshotsLoading = false;
+
+  // 截图重试相关
+  final Map<String, int> _screenshotRetryCount = {}; // seatId -> 重试次数
+  static const int _maxRetryCount = 10; // 最大重试次数
+  static const Duration _retryBaseDelay = Duration(seconds: 3); // 基础重试延迟
+
+  @override
+  void dispose() {
+    _hideContextMenu();
+    super.dispose();
+  }
+
+  /// 批量获取所有在线终端的截图
+  Future<void> _loadScreenshots(List<Terminal> terminals) async {
+    final netbar = ref.read(currentNetbarProvider);
+    final domain = netbar.subdomainFull;
+    if (domain == null || domain.isEmpty) return;
+
+    // 只获取在线终端的截图
+    final onlineTerminals = terminals.where((t) => t.status > 0).toList();
+    if (onlineTerminals.isEmpty) return;
+
+    setState(() => _screenshotsLoading = true);
+
+    // 并行请求所有截图
+    await Future.wait(
+      onlineTerminals.map((t) => _loadSingleScreenshot(t, domain)),
+    );
+
+    if (mounted) {
+      setState(() => _screenshotsLoading = false);
+    }
+  }
+
+  /// 获取单个终端的截图，失败时静默重试
+  Future<void> _loadSingleScreenshot(Terminal terminal, String domain) async {
+    if (!mounted) return;
+
+    // 如果已经有缓存，不再请求
+    if (_screenshotCache.containsKey(terminal.seatId)) return;
+
+    try {
+      final result = await _screenshotApi.requestScreenshot(
+        domain: domain,
+        seatId: terminal.seatId,
+      );
+      if (!mounted) return;
+
+      Uint8List? bytes;
+      if (result.type == ScreenshotResultType.bytes && result.bytes != null) {
+        bytes = result.bytes;
+      } else if (result.type == ScreenshotResultType.base64 && result.base64Data != null) {
+        bytes = base64Decode(result.base64Data!);
+      }
+
+      if (bytes != null) {
+        setState(() {
+          _screenshotCache[terminal.seatId] = bytes!;
+          _screenshotRetryCount.remove(terminal.seatId); // 成功后清除重试计数
+        });
+      } else {
+        // 返回数据为空，也进行重试
+        _scheduleRetry(terminal, domain);
+      }
+    } catch (_) {
+      // 请求失败，安排重试
+      _scheduleRetry(terminal, domain);
+    }
+  }
+
+  /// 安排截图重试
+  void _scheduleRetry(Terminal terminal, String domain) {
+    if (!mounted) return;
+
+    final currentRetry = _screenshotRetryCount[terminal.seatId] ?? 0;
+    if (currentRetry >= _maxRetryCount) {
+      // 达到最大重试次数，停止重试
+      _screenshotRetryCount.remove(terminal.seatId);
+      return;
+    }
+
+    // 更新重试计数
+    _screenshotRetryCount[terminal.seatId] = currentRetry + 1;
+
+    // 计算延迟时间（递增延迟：3s, 6s, 9s, ...）
+    final delay = _retryBaseDelay * (currentRetry + 1);
+
+    Future.delayed(delay, () {
+      if (mounted && !_screenshotCache.containsKey(terminal.seatId)) {
+        _loadSingleScreenshot(terminal, domain);
+      }
+    });
+  }
+
+  void _hideContextMenu() {
+    _menuOverlay?.remove();
+    _menuOverlay = null;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final monitorAsync = ref.watch(channelMonitorProvider);
-    final netbar = ref.watch(currentNetbarProvider);
-    final isPhone = context.isPhone;
+    final terminalsAsync = ref.watch(terminalsProvider);
 
-    return Scaffold(
-      backgroundColor: AppColors.iosBg,
-      body: Column(
-        children: [
-          // 头部
-          _buildHeader(netbar.name ?? '监控中心'),
-          // 工具栏
-          _buildToolbar(),
-          // 内容区
-          Expanded(
-            child: monitorAsync.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (err, _) => _buildErrorView(err.toString()),
-              data: (response) {
-                final rows = _buildTableRows(response.merchants);
-                final filteredRows = _filterRows(rows);
-                if (filteredRows.isEmpty) {
-                  return _buildEmptyView();
-                }
-                return isPhone
-                    ? _buildMobileList(filteredRows)
-                    : _buildDesktopTable(filteredRows);
-              },
-            ),
-          ),
-        ],
+    return GestureDetector(
+      onTap: _hideContextMenu,
+      child: Container(
+        color: AppColors.iosBg,
+        child: terminalsAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (error, _) => _buildErrorView(error.toString()),
+          data: (terminals) {
+            // 终端列表加载完成后，触发批量截图请求
+            if (terminals.isNotEmpty && _screenshotCache.isEmpty && !_screenshotsLoading) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _loadScreenshots(terminals);
+              });
+            }
+            return _buildContent(terminals);
+          },
+        ),
       ),
     );
-  }
-
-  Widget _buildHeader(String title) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
-      ),
-      child: Row(
-        children: [
-          Text(
-            '通道监控',
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF1F2937),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppColors.iosBlue.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              title,
-              style: TextStyle(
-                fontSize: 13,
-                color: AppColors.iosBlue,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-          const Spacer(),
-          IconButton(
-            onPressed: () => ref.invalidate(channelMonitorProvider),
-            icon: const Icon(LucideIcons.refreshCw, size: 18),
-            tooltip: '刷新',
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildToolbar() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
-      ),
-      child: Row(
-        children: [
-          // 状态筛选
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey.shade200),
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                value: _statusFilter,
-                isDense: true,
-                style: const TextStyle(fontSize: 13, color: Colors.black87),
-                icon: Icon(LucideIcons.chevronDown, size: 14, color: Colors.grey.shade500),
-                items: const [
-                  DropdownMenuItem(value: '', child: Text('全部状态')),
-                  DropdownMenuItem(value: '1', child: Text('在线')),
-                  DropdownMenuItem(value: '0', child: Text('离线')),
-                ],
-                onChanged: (v) => setState(() => _statusFilter = v ?? ''),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 构建表格行数据（展平启动项）
-  List<MonitorRowData> _buildTableRows(List<ChannelMerchant> merchants) {
-    final rows = <MonitorRowData>[];
-    for (final m in merchants) {
-      if (m.startups.isEmpty) {
-        rows.add(MonitorRowData(
-          merchantId: m.id,
-          merchantName: m.name,
-          terminalCount: m.terminalCount,
-          terminalAvg: m.terminalAvg,
-          isOnline: m.isOnline,
-          groupNames: m.groupNames,
-          startupPath: '',
-          startupTotal: 0,
-          startupFail: 0,
-          durationLt1: 0,
-          durationLt10: 0,
-          durationLt20: 0,
-          rowSpan: 1,
-        ));
-      } else {
-        for (int i = 0; i < m.startups.length; i++) {
-          final s = m.startups[i];
-          rows.add(MonitorRowData(
-            merchantId: m.id,
-            merchantName: m.name,
-            terminalCount: m.terminalCount,
-            terminalAvg: m.terminalAvg,
-            isOnline: m.isOnline,
-            groupNames: m.groupNames,
-            startupPath: s.path,
-            startupTotal: s.analysis.startupTotal,
-            startupFail: s.analysis.startupFail,
-            durationLt1: s.analysis.durationLt1,
-            durationLt10: s.analysis.durationLt10,
-            durationLt20: s.analysis.durationLt20,
-            rowSpan: i == 0 ? m.startups.length : 0,
-          ));
-        }
-      }
-    }
-    return rows;
-  }
-
-  /// 过滤行
-  List<MonitorRowData> _filterRows(List<MonitorRowData> rows) {
-    if (_statusFilter.isEmpty) return rows;
-    final isOnline = _statusFilter == '1';
-    return rows.where((r) => r.isOnline == isOnline).toList();
   }
 
   Widget _buildErrorView(String error) {
@@ -243,16 +184,41 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(LucideIcons.alertTriangle, size: 48, color: Colors.red.shade400),
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.red.shade100,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                LucideIcons.alertTriangle,
+                color: Colors.red.shade500,
+              ),
+            ),
             const SizedBox(height: 16),
-            Text('加载失败', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.red.shade800)),
+            Text(
+              '加载失败',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.red.shade800,
+              ),
+            ),
             const SizedBox(height: 8),
-            Text(error, style: TextStyle(fontSize: 14, color: Colors.red.shade600)),
+            Text(
+              error,
+              style: TextStyle(fontSize: 14, color: Colors.red.shade600),
+            ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
-              onPressed: () => ref.invalidate(channelMonitorProvider),
+              onPressed: () => ref.invalidate(terminalsProvider),
               icon: const Icon(LucideIcons.refreshCw, size: 16),
               label: const Text('重新加载'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red.shade100,
+                foregroundColor: Colors.red.shade700,
+              ),
             ),
           ],
         ),
@@ -260,360 +226,898 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
     );
   }
 
-  Widget _buildEmptyView() {
+  Widget _buildEmptyState() {
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(LucideIcons.inbox, size: 64, color: Colors.grey.shade300),
-          const SizedBox(height: 16),
-          Text('暂无数据', style: TextStyle(fontSize: 16, color: Colors.grey.shade500)),
-        ],
-      ),
-    );
-  }
-
-  /// 桌面端表格
-  Widget _buildDesktopTable(List<MonitorRowData> rows) {
-    return Container(
-      margin: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: SingleChildScrollView(
-        child: DataTable(
-          headingRowColor: WidgetStateProperty.all(const Color(0xFFF9FAFB)),
-          headingTextStyle: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF374151),
-          ),
-          dataTextStyle: const TextStyle(fontSize: 13, color: Color(0xFF4B5563)),
-          columnSpacing: 16,
-          horizontalMargin: 16,
-          columns: const [
-            DataColumn(label: Text('ID')),
-            DataColumn(label: Text('网络名称')),
-            DataColumn(label: Text('终端数')),
-            DataColumn(label: Text('近7日终端')),
-            DataColumn(label: Text('所属分组')),
-            DataColumn(label: Text('状态')),
-            DataColumn(label: Text('启动项')),
-            DataColumn(label: Text('启动次数')),
-            DataColumn(label: Text('失败次数')),
-            DataColumn(label: Text('<1分钟')),
-            DataColumn(label: Text('<10分钟')),
-            DataColumn(label: Text('<20分钟')),
+      child: Container(
+        margin: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(32),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey.shade200),
+          boxShadow: AppShadows.sm,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                LucideIcons.monitor,
+                size: 32,
+                color: Colors.grey.shade400,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              '暂无终端',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '当前网吧还没有连接任何终端设备',
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey.shade500,
+              ),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: () => ref.invalidate(terminalsProvider),
+              icon: const Icon(LucideIcons.refreshCw, size: 16),
+              label: const Text('刷新'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.iosBlue,
+                foregroundColor: Colors.white,
+              ),
+            ),
           ],
-          rows: rows.map((r) => _buildDataRow(r)).toList(),
         ),
       ),
     );
   }
 
-  DataRow _buildDataRow(MonitorRowData row) {
-    return DataRow(
-      cells: [
-        DataCell(_buildIdBadge(row.merchantId)),
-        DataCell(Text(row.merchantName, style: const TextStyle(fontWeight: FontWeight.w500))),
-        DataCell(_buildTerminalCell(row.terminalCount)),
-        DataCell(Text('${row.terminalAvg}')),
-        DataCell(_buildGroupCell(row.groupNames)),
-        DataCell(_buildStatusTag(row.isOnline)),
-        DataCell(_buildStartupPath(row.startupPath)),
-        DataCell(_buildStatCell(row.startupTotal, Colors.green)),
-        DataCell(_buildFailCell(row.startupFail)),
-        DataCell(_buildDurationTag(row.durationLt1, Colors.red)),
-        DataCell(_buildDurationTag(row.durationLt10, Colors.orange)),
-        DataCell(_buildDurationTag(row.durationLt20, Colors.grey)),
-      ],
-    );
-  }
-
-  Widget _buildIdBadge(int id) {
-    return Container(
-      width: 28,
-      height: 28,
-      decoration: BoxDecoration(
-        color: const Color(0xFFEFF6FF),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      alignment: Alignment.center,
-      child: Text(
-        '$id',
-        style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          color: Color(0xFF3B82F6),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTerminalCell(int count) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(LucideIcons.monitor, size: 14, color: Colors.grey.shade400),
-        const SizedBox(width: 4),
-        Text('$count'),
-      ],
-    );
-  }
-
-  Widget _buildGroupCell(String groupNames) {
-    if (groupNames == '-') return Text(groupNames, style: TextStyle(color: Colors.grey.shade400));
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(LucideIcons.folder, size: 14, color: Colors.grey.shade400),
-        const SizedBox(width: 4),
-        Text(groupNames),
-      ],
-    );
-  }
-
-  Widget _buildStatusTag(bool isOnline) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: isOnline ? Colors.green.shade50 : Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: isOnline ? Colors.green : Colors.grey.shade400,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            isOnline ? '在线' : '离线',
-            style: TextStyle(
-              fontSize: 12,
-              color: isOnline ? Colors.green.shade700 : Colors.grey.shade600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStartupPath(String path) {
-    if (path.isEmpty) return Text('-', style: TextStyle(color: Colors.grey.shade400));
-    return Tooltip(
-      message: path,
-      child: Text(
-        path,
-        style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-        overflow: TextOverflow.ellipsis,
-        maxLines: 1,
-      ),
-    );
-  }
-
-  Widget _buildStatCell(int value, Color color) {
-    return Text(
-      '$value',
-      style: TextStyle(fontWeight: FontWeight.w500, color: value > 0 ? color : Colors.grey.shade400),
-    );
-  }
-
-  Widget _buildFailCell(int value) {
-    if (value == 0) return Text('0', style: TextStyle(color: Colors.grey.shade400));
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(LucideIcons.alertTriangle, size: 12, color: Colors.red.shade400),
-        const SizedBox(width: 2),
-        Text('$value', style: TextStyle(color: Colors.red.shade600, fontWeight: FontWeight.w500)),
-      ],
-    );
-  }
-
-  Widget _buildDurationTag(int value, Color color) {
-    if (value == 0) return Text('-', style: TextStyle(color: Colors.grey.shade300));
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        '$value',
-        style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w500),
-      ),
-    );
-  }
-
-  /// 移动端列表
-  Widget _buildMobileList(List<MonitorRowData> rows) {
-    // 按商户分组
-    final Map<int, List<MonitorRowData>> grouped = {};
-    for (final r in rows) {
-      grouped.putIfAbsent(r.merchantId, () => []).add(r);
+  Widget _buildContent(List<Terminal> terminals) {
+    // 空列表：显示暂无终端提示
+    if (terminals.isEmpty) {
+      return _buildEmptyState();
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: grouped.length,
-      itemBuilder: (context, index) {
-        final merchantId = grouped.keys.elementAt(index);
-        final merchantRows = grouped[merchantId]!;
-        final first = merchantRows.first;
-        return _buildMobileCard(first, merchantRows);
-      },
-    );
-  }
+    // 分离关键设备和普通终端
+    final devices = terminals.where((t) => t.isKeyDevice).toList();
+    final clients = terminals.where((t) => !t.isKeyDevice).toList();
 
-  Widget _buildMobileCard(MonitorRowData merchant, List<MonitorRowData> startupRows) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 头部
-          Row(
-            children: [
-              _buildIdBadge(merchant.merchantId),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  merchant.merchantName,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+    // 过滤
+    var filteredClients = clients.where((t) {
+      // 搜索过滤
+      if (_searchQuery.isNotEmpty &&
+          !t.name.toLowerCase().contains(_searchQuery.toLowerCase())) {
+        return false;
+      }
+      // 状态过滤
+      if (_filterStatus == 'online_idle' && t.status != 1) return false; // 在线空闲
+      if (_filterStatus == 'busy' && t.status != 2) return false; // 使用中
+      if (_filterStatus == 'offline' && t.status != 0) return false; // 离线
+
+      return true;
+    }).toList();
+
+    // 排序
+    filteredClients.sort((a, b) {
+      int cmp = 0;
+      switch (_sortColumnIndex) {
+        case 0: // 终端ID (Name)
+          // Try to parse as int for correct numerical sorting
+          final intA = int.tryParse(a.name) ?? 0;
+          final intB = int.tryParse(b.name) ?? 0;
+          if (intA > 0 && intB > 0) {
+            cmp = intA.compareTo(intB);
+          } else {
+            cmp = a.name.compareTo(b.name);
+          }
+          break;
+        case 1: // 状态
+          cmp = b.status.compareTo(a.status);
+          break;
+        case 2: // IP
+          cmp = a.ip.compareTo(b.ip);
+          break;
+        case 3:
+          cmp = a.mac.compareTo(b.mac);
+          break;
+        case 4:
+          cmp = a.uptime.compareTo(b.uptime);
+          break;
+        case 5:
+          final aTime = _parseToCst(a.updatedAt);
+          final bTime = _parseToCst(b.updatedAt);
+          cmp = (aTime ?? DateTime.fromMillisecondsSinceEpoch(0)).compareTo(
+            bTime ?? DateTime.fromMillisecondsSinceEpoch(0),
+          );
+          break;
+        default:
+          // 默认排序：在线在前
+          if (a.status > 0 && b.status == 0) return -1;
+          if (a.status == 0 && b.status > 0) return 1;
+          return 0;
+      }
+      return _sortAscending ? cmp : -cmp;
+    });
+
+    if (context.isPhone) {
+      return DefaultTabController(
+        length: 2,
+        initialIndex: 0, // 默认“关键设备状态”
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Container(
+                height: 40,
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: AppColors.iosCard,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.iosSeparator),
+                  boxShadow: AppShadows.sm,
+                ),
+                child: TabBar(
+                  indicator: BoxDecoration(
+                    color: AppColors.iosBlue,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  labelColor: Colors.white,
+                  unselectedLabelColor: Colors.grey.shade600,
+                  dividerColor: Colors.transparent,
+                  indicatorSize: TabBarIndicatorSize.tab,
+                  labelStyle: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  unselectedLabelStyle: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  tabs: const [
+                    Tab(text: '关键设备状态'),
+                    Tab(text: '终端列表'),
+                  ],
                 ),
               ),
-              _buildStatusTag(merchant.isOnline),
-            ],
-          ),
-          const SizedBox(height: 12),
-          // 基本信息
-          Row(
-            children: [
-              _buildInfoItem('分组', merchant.groupNames),
-              const SizedBox(width: 24),
-              _buildInfoItem('终端数', '${merchant.terminalCount} (近7日: ${merchant.terminalAvg})'),
-            ],
-          ),
-          // 启动项列表
-          if (startupRows.any((r) => r.startupPath.isNotEmpty)) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade50,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            ),
+            Expanded(
+              child: TabBarView(
                 children: [
-                  const Text(
-                    '启动项监控',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF4B5563)),
+                  // 关键设备状态
+                  CustomScrollView(
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: _buildDevicesSection(
+                          devices,
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                  ...startupRows.where((r) => r.startupPath.isNotEmpty).map((r) => _buildStartupItem(r)),
+                  // 终端列表
+                  CustomScrollView(
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: _buildToolbar(filteredClients.length),
+                      ),
+                      SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                        sliver: _isListView
+                            ? SliverToBoxAdapter(
+                                child: _buildTerminalDataTable(filteredClients),
+                              )
+                            : SliverLayoutBuilder(
+                                builder: (context, constraints) {
+                                  final width = constraints.crossAxisExtent;
+                                  int columns = 2;
+                                  if (width >= 640) columns = 3;
+
+                                  return SliverGrid(
+                                    gridDelegate:
+                                        SliverGridDelegateWithFixedCrossAxisCount(
+                                          crossAxisCount: columns,
+                                          childAspectRatio: 0.9,
+                                          crossAxisSpacing: 12,
+                                          mainAxisSpacing: 12,
+                                        ),
+                                    delegate: SliverChildBuilderDelegate((
+                                      context,
+                                      index,
+                                    ) {
+                                      final terminal = filteredClients[index];
+                                      return TerminalCard(
+                                        terminal: terminal,
+                                        screenshotBytes: _screenshotCache[terminal.seatId],
+                                        onTap: () =>
+                                            _openTerminalDetail(terminal),
+                                        onSecondaryTapDown: (details) =>
+                                            _showContextMenu(details, terminal),
+                                      );
+                                    }, childCount: filteredClients.length),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
           ],
-        ],
-      ),
-    );
-  }
+        ),
+      );
+    }
 
-  Widget _buildInfoItem(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-        const SizedBox(height: 2),
-        Text(value, style: const TextStyle(fontSize: 13)),
+    return CustomScrollView(
+      slivers: [
+        // 关键设备区域
+        SliverToBoxAdapter(child: _buildDevicesSection(devices)),
+        // 工具栏
+        SliverToBoxAdapter(child: _buildToolbar(filteredClients.length)),
+        // 终端列表/网格
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(32, 16, 32, 32),
+          sliver: _isListView
+              ? SliverToBoxAdapter(
+                  child: _buildTerminalDataTable(filteredClients),
+                )
+              : SliverLayoutBuilder(
+                  builder: (context, constraints) {
+                    // 响应式列数: 类似 Vue 的 grid-cols-2 sm:3 md:4 lg:5 xl:6 2xl:8
+                    final width = constraints.crossAxisExtent;
+                    int columns;
+                    if (width >= 1536) {
+                      columns = 8;
+                    } else if (width >= 1280) {
+                      columns = 6;
+                    } else if (width >= 1024) {
+                      columns = 5;
+                    } else if (width >= 768) {
+                      columns = 4;
+                    } else if (width >= 640) {
+                      columns = 3;
+                    } else {
+                      columns = 2;
+                    }
+
+                    return SliverGrid(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: columns,
+                        childAspectRatio: 0.9, // 接近 16:9 图片 + 底部名称栏
+                        crossAxisSpacing: 16,
+                        mainAxisSpacing: 16,
+                      ),
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        final terminal = filteredClients[index];
+                        return TerminalCard(
+                          terminal: terminal,
+                          screenshotBytes: _screenshotCache[terminal.seatId],
+                          onTap: () => _openTerminalDetail(terminal),
+                          onSecondaryTapDown: (details) =>
+                              _showContextMenu(details, terminal),
+                        );
+                      }, childCount: filteredClients.length),
+                    );
+                  },
+                ),
+        ),
       ],
     );
   }
 
-  Widget _buildStartupItem(MonitorRowData r) {
+  Widget _buildTerminalDataTable(List<Terminal> terminals) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
+      width: double.infinity,
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: Colors.grey.shade200),
+        color: AppColors.iosCard,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.iosSeparator),
+        boxShadow: AppShadows.sm,
       ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                child: DataTable(
+                  showCheckboxColumn: false,
+                  sortColumnIndex: _sortColumnIndex,
+                  sortAscending: _sortAscending,
+                  headingRowColor: WidgetStateProperty.all(Colors.grey.shade50),
+                  dataRowMinHeight: 48,
+                  dataRowMaxHeight: 48,
+                  columns: [
+                    _buildDataColumn('终端ID', 0),
+                    _buildDataColumn('状态', 1),
+                    _buildDataColumn('IP地址', 2),
+                    _buildDataColumn('MAC地址', 3),
+                    _buildDataColumn('在线时长', 4),
+                    _buildDataColumn('最后活动时间', 5),
+                  ],
+                  rows: terminals.map((t) {
+                    return DataRow(
+                      cells: [
+                        DataCell(
+                          Text(
+                            t.name,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        DataCell(_buildStatusCell(t.status)),
+                        DataCell(
+                          Text(
+                            t.ip,
+                            style: const TextStyle(fontFamily: 'monospace'),
+                          ),
+                        ),
+                        DataCell(
+                          Text(
+                            t.mac,
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                        DataCell(Text(t.uptime)),
+                        DataCell(Text(_formatUpdatedAt(t.updatedAt))),
+                      ],
+                      onSelectChanged: (selected) {
+                        if (selected == true) _openTerminalDetail(t);
+                      },
+                    );
+                  }).toList(),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  DataColumn _buildDataColumn(String label, int index) {
+    return DataColumn(
+      label: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+      onSort: (colIndex, ascending) {
+        setState(() {
+          _sortColumnIndex = colIndex;
+          _sortAscending = ascending;
+        });
+      },
+    );
+  }
+
+  Widget _buildStatusCell(int status) {
+    Color color;
+    String text;
+    if (status == 0) {
+      color = Colors.grey;
+      text = '离线';
+    } else if (status == 1) {
+      color = Colors.green;
+      text = '在线空闲';
+    } else if (status == 2) {
+      color = Colors.orange;
+      text = '使用中';
+    } else {
+      color = Colors.grey; // Default for unknown status
+      text = '未知';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  /// 打开终端详情
+  void _openTerminalDetail(Terminal terminal) {
+    if (isDesktopPlatform) {
+      final lastTab = ref
+          .read(terminalDockProvider.notifier)
+          .lastTabFor(terminal.id);
+      TerminalWindowBridge.openTerminalWindow(
+        terminalId: terminal.id,
+        initialTab: lastTab,
+        terminalSnapshot: terminal,
+      );
+      return;
+    }
+    final location = '/terminal/${terminal.id}';
+    if (kIsWeb) {
+      openInNewTab(buildWebUrlForLocation(location));
+      return;
+    }
+    context.push(location);
+  }
+
+  /// 转换并格式化为东八区时间
+  String _formatUpdatedAt(String? value) {
+    final dt = _parseToCst(value);
+    if (dt == null) return '-';
+    return DateFormat('yyyy-MM-dd HH:mm:ss').format(dt);
+  }
+
+  DateTime? _parseToCst(String? value) {
+    if (value == null || value.isEmpty) return null;
+    try {
+      final parsed = DateTime.parse(value);
+      return parsed.toUtc().add(const Duration(hours: 8));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 显示右键菜单
+  void _showContextMenu(TapDownDetails details, Terminal terminal) {
+    _hideContextMenu();
+    _selectedTerminal = terminal;
+
+    final overlay = Overlay.of(context);
+    final position = details.globalPosition;
+
+    _menuOverlay = OverlayEntry(
+      builder: (context) => Stack(
+        children: [
+          // 背景遮罩
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: _hideContextMenu,
+              child: Container(color: Colors.transparent),
+            ),
+          ),
+          // 菜单
+          Positioned(
+            left: position.dx,
+            top: position.dy,
+            child: Material(
+              elevation: 8,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: 180,
+                decoration: BoxDecoration(
+                  color: AppColors.iosCard, // 使用 AppColors.iosCard
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppColors.iosSeparator,
+                  ), // 使用 AppColors.iosSeparator
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildContextMenuItem('查看详情', LucideIcons.eye, () {
+                      _hideContextMenu();
+                      _openTerminalDetail(terminal);
+                    }),
+                    _buildMenuDivider(),
+                    _buildContextMenuItem(
+                      '重启',
+                      LucideIcons.refreshCw,
+                      () => _remoteAction('restart'),
+                    ),
+                    _buildContextMenuItem(
+                      '关机',
+                      LucideIcons.power,
+                      () => _remoteAction('shutdown'),
+                    ),
+                    _buildContextMenuItem(
+                      '唤醒',
+                      LucideIcons.sunrise,
+                      () => _remoteAction('wakeup'),
+                    ),
+                    _buildMenuDivider(),
+                    _buildContextMenuItem(
+                      '截图',
+                      LucideIcons.camera,
+                      () => _remoteAction('screenshot'),
+                    ),
+                    _buildContextMenuItem(
+                      '远程桌面',
+                      LucideIcons.monitor,
+                      () => _remoteAction('remote'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    overlay.insert(_menuOverlay!);
+  }
+
+  Widget _buildContextMenuItem(
+    String label,
+    IconData icon,
+    VoidCallback onTap,
+  ) {
+    return InkWell(
+      onTap: onTap,
+      hoverColor: AppColors.iosHover, // 添加悬停效果
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              size: 16,
+              color: AppColors.iosGray,
+            ), // 使用 AppColors.iosGray
+            const SizedBox(width: 12),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 14, color: Color(0xFF333333)),
+            ), // 使用更深的灰色文本
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuDivider() {
+    return Divider(
+      height: 1,
+      color: AppColors.iosSeparator,
+    ); // 使用 AppColors.iosSeparator
+  }
+
+  /// 远程操作
+  Future<void> _remoteAction(String action) async {
+    _hideContextMenu();
+    if (_selectedTerminal == null) return;
+
+    final netbar = ref.read(currentNetbarProvider);
+    final domain = netbar.subdomainFull;
+    if (domain == null || domain.isEmpty) {
+      if (mounted) {
+        showTopNotice(context, '当前网吧未配置域名', level: NoticeLevel.error);
+      }
+      return;
+    }
+
+    try {
+      final api = ref.read(terminalApiProvider);
+      await api.remote(_selectedTerminal!.seatId, action, domain: domain);
+      if (mounted) {
+        showTopNotice(
+          context,
+          '操作 $action 已发送到 ${_selectedTerminal!.name}',
+          level: NoticeLevel.success,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
+      }
+    }
+  }
+
+  Widget _buildDevicesSection(List<Terminal> devices, {EdgeInsets? padding}) {
+    return Padding(
+      padding: padding ?? const EdgeInsets.all(32),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            r.startupPath,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              _buildStatTag('启动', r.startupTotal, Colors.green),
-              const SizedBox(width: 8),
-              _buildStatTag('失败', r.startupFail, Colors.red),
-              const Spacer(),
-              _buildDurationBadge('<1m', r.durationLt1, Colors.red),
-              const SizedBox(width: 4),
-              _buildDurationBadge('<10m', r.durationLt10, Colors.orange),
-              const SizedBox(width: 4),
-              _buildDurationBadge('<20m', r.durationLt20, Colors.grey),
-            ],
+          if (context.isPhone)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '关键设备状态',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '服务器 / 控制台 / 收银机',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                ),
+              ],
+            )
+          else
+            Row(
+              children: [
+                const Text(
+                  '关键设备状态',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '服务器 / 控制台 / 收银机',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                ),
+              ],
+            ),
+          const SizedBox(height: 16),
+          // 使用响应式网格布局
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+              final isPhone = context.isPhone;
+              int columns;
+              if (isPhone) {
+                columns = width >= 320 ? 2 : 1;
+              } else if (width >= 1024) {
+                columns = 4;
+              } else if (width >= 640) {
+                columns = 2;
+              } else {
+                columns = 1;
+              }
+
+              final gap = isPhone ? 12.0 : 16.0;
+              final itemWidth = (width - (columns - 1) * gap) / columns;
+              final itemHeight = isPhone ? 160.0 : 200.0;
+
+              return Wrap(
+                spacing: gap,
+                runSpacing: gap,
+                children: [
+                  // 关键设备卡片 (使用 TerminalCard 样式)
+                  ...devices.map(
+                    (d) => SizedBox(
+                      width: itemWidth,
+                      height: itemHeight, // 固定高度
+                      child: TerminalCard(
+                        terminal: d,
+                        screenshotBytes: _screenshotCache[d.seatId],
+                        onTap: () => _openTerminalDetail(d),
+                        onSecondaryTapDown: (details) =>
+                            _showContextMenu(details, d),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ],
       ),
     );
   }
 
-  Widget _buildStatTag(String label, int value, Color color) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text('$label: ', style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-        Text(
-          '$value',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: value > 0 ? color : Colors.grey.shade400,
+  Widget _buildToolbar(int count) {
+    final isNarrow = MediaQuery.of(context).size.width < 900;
+    if (isNarrow && _isListView) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _isListView = false);
+      });
+    }
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: isNarrow ? 16 : 32),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                '终端列表',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '$count',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              // 搜索框
+              if (!isNarrow) SizedBox(width: 260, child: _buildSearchBox()),
+              if (!isNarrow) const SizedBox(width: 12),
+              // 筛选按钮
+              PopupMenuButton<String>(
+                tooltip: '筛选',
+                offset: const Offset(0, 40),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.iosCard,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.iosSeparator),
+                    boxShadow: AppShadows.sm,
+                  ),
+                  child: Icon(
+                    LucideIcons.filter,
+                    size: 18,
+                    color: _filterStatus != 'all'
+                        ? AppColors.iosBlue
+                        : Colors.grey.shade600,
+                  ),
+                ),
+                onSelected: (val) => setState(() => _filterStatus = val),
+                itemBuilder: (context) => [
+                  const PopupMenuItem(value: 'all', child: Text('全部')),
+                  const PopupMenuItem(value: 'busy', child: Text('使用中')),
+                  const PopupMenuItem(
+                    value: 'online_idle',
+                    child: Text('在线空闲'),
+                  ),
+                  const PopupMenuItem(value: 'offline', child: Text('离线')),
+                ],
+              ),
+              const SizedBox(width: 8),
+              Container(width: 1, height: 24, color: AppColors.iosSeparator),
+              const SizedBox(width: 8),
+              // 视图切换
+              if (!isNarrow)
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.iosCard,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.iosSeparator),
+                    boxShadow: AppShadows.sm,
+                  ),
+                  padding: const EdgeInsets.all(4),
+                  child: Row(
+                    children: [
+                      _buildToolbarSwitchItem(
+                        icon: LucideIcons.layoutGrid,
+                        isSelected: !_isListView,
+                        onTap: () => setState(() => _isListView = false),
+                      ),
+                      _buildToolbarSwitchItem(
+                        icon: LucideIcons.list,
+                        isSelected: _isListView,
+                        onTap: () => setState(() => _isListView = true),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(width: 12),
+              // 刷新按钮
+              _buildToolbarButton(
+                icon: LucideIcons.refreshCw,
+                tooltip: '刷新',
+                onPressed: () => ref.invalidate(terminalsProvider),
+                size: isNarrow ? 40 : 44,
+              ),
+            ],
           ),
-        ),
-      ],
+          if (isNarrow) const SizedBox(height: 12),
+          if (isNarrow) _buildSearchBox(),
+        ],
+      ),
     );
   }
 
-  Widget _buildDurationBadge(String label, int value, Color color) {
-    final hasValue = value > 0;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: hasValue ? color.withOpacity(0.1) : Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        '$label: $value',
-        style: TextStyle(
-          fontSize: 10,
-          color: hasValue ? color : Colors.grey.shade400,
+  /// 构建工具栏按钮
+  Widget _buildToolbarButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+    double size = 44,
+  }) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.iosCard,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.iosSeparator),
+          boxShadow: AppShadows.sm,
         ),
+        child: IconButton(
+          onPressed: onPressed,
+          icon: Icon(icon, size: 18, color: Colors.grey.shade600),
+          tooltip: tooltip,
+          padding: EdgeInsets.zero,
+          constraints: BoxConstraints.tightFor(width: size, height: size),
+          splashRadius: size / 2,
+        ),
+      ),
+    );
+  }
+
+  /// 构建工具栏切换项 (例如, 网格/列表视图切换)
+  Widget _buildToolbarSwitchItem({
+    required IconData icon,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.iosBlue : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            icon,
+            size: 16,
+            color: isSelected ? Colors.white : Colors.grey.shade500,
+          ),
+        ), // AnimatedContainer 结束
+      ), // GestureDetector 结束
+    ); // MouseRegion 结束
+  }
+
+  Widget _buildSearchBox() {
+    return Container(
+      width: double.infinity,
+      height: 40,
+      decoration: BoxDecoration(
+        color: AppColors.iosCard,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.iosSeparator),
+        boxShadow: AppShadows.sm,
+      ),
+      child: Row(
+        children: [
+          const SizedBox(width: 12),
+          Icon(LucideIcons.search, size: 16, color: Colors.grey.shade400),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              onChanged: (v) => setState(() => _searchQuery = v),
+              decoration: InputDecoration(
+                filled: false,
+                hintText: '搜索机号...',
+                hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                disabledBorder: InputBorder.none,
+                errorBorder: InputBorder.none,
+                focusedErrorBorder: InputBorder.none,
+                contentPadding: EdgeInsets.zero,
+                isDense: true,
+              ),
+              style: const TextStyle(fontSize: 14),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -86,6 +86,7 @@ final routerProvider = Provider<GoRouter>((ref) {
               child: channel.ChannelManagementPage(
                 initialModule: state.uri.queryParameters['tab'] == 'startup' ? channel.ModuleTab.startup : null,
                 initialEditStartupItemId: int.tryParse(state.uri.queryParameters['edit_startup_item_id'] ?? ''),
+                initialZone: state.uri.queryParameters['zone'],
               ),
               transitionsBuilder: (context, animation, secondaryAnimation, child) {
                 return FadeTransition(opacity: animation, child: child);

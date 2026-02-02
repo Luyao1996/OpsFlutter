@@ -69,6 +69,8 @@ class Resource {
   final int size;
   final String zone;
   final String? uploader;
+  final int? uploaderId; // 上传者ID
+  final int? groupId; // 分组ID（0=总公司，>0=网吧）
   final bool isGlobal;
   final String? content;
   final DateTime createdAt;
@@ -84,6 +86,8 @@ class Resource {
     required this.size,
     required this.zone,
     this.uploader,
+    this.uploaderId,
+    this.groupId,
     required this.isGlobal,
     this.content,
     required this.createdAt,
@@ -106,6 +110,8 @@ class Resource {
       size: file?['size'] ?? json['size'] ?? 0,
       zone: groupId == 0 ? 'HEADQUARTERS' : (groupId != null ? 'BRANCH' : (json['zone'] ?? 'PUBLIC')),
       uploader: user?['nickname'] ?? json['uploader'],
+      uploaderId: user?['id'] ?? json['user_id'],
+      groupId: groupId,
       isGlobal: groupId == 0 || json['is_global'] == true,
       content: json['content'],
       createdAt: DateTime.tryParse(json['created_at'] ?? '') ?? DateTime.now(),
@@ -125,6 +131,8 @@ class Resource {
       size: file.size,
       zone: file.zone,
       uploader: file.uploader,
+      uploaderId: file.uploaderId,
+      groupId: file.groupId,
       isGlobal: file.isGlobal,
       content: file.content,
       createdAt: DateTime.tryParse(file.createdAt) ?? DateTime.now(),
@@ -240,12 +248,40 @@ class ResourceApi {
   }
 
   /// 限量下载二进制内容（最多 maxBytes 字节）
+  /// 使用流式下载，超过限制时自动停止，避免大文件占用内存
   Future<List<int>> downloadBytesLimited(int id, int maxBytes) async {
-    final bytes = await downloadBytes(id);
-    if (bytes.length > maxBytes) {
-      return bytes.sublist(0, maxBytes);
+    final cancelToken = CancelToken();
+    final List<int> buffer = [];
+
+    try {
+      final response = await _client.dio.get<ResponseBody>(
+        '/file/down',
+        queryParameters: {'group_file_id': id},
+        options: Options(responseType: ResponseType.stream),
+        cancelToken: cancelToken,
+      );
+
+      final stream = response.data?.stream;
+      if (stream == null) return const [];
+
+      await for (final chunk in stream) {
+        buffer.addAll(chunk);
+        // 超过限制时停止下载
+        if (buffer.length > maxBytes) {
+          cancelToken.cancel('文件过大，停止下载');
+          break;
+        }
+      }
+    } on DioException catch (e) {
+      // 如果是我们主动取消的，不抛异常
+      if (e.type == DioExceptionType.cancel) {
+        // 正常返回已下载的部分
+      } else {
+        rethrow;
+      }
     }
-    return bytes;
+
+    return buffer;
   }
 
   /// 下载文件到本地路径 (流式下载)

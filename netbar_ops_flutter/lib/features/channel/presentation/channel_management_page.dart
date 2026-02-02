@@ -47,11 +47,13 @@ class BreadcrumbItem {
 class ChannelManagementPage extends ConsumerStatefulWidget {
   final ModuleTab? initialModule;
   final int? initialEditStartupItemId;
+  final String? initialZone;
 
   const ChannelManagementPage({
     super.key,
     this.initialModule,
     this.initialEditStartupItemId,
+    this.initialZone,
   });
 
   @override
@@ -66,7 +68,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   bool _isMobileFlag = false;
   bool get _isMobile => _isMobileFlag;
 
-  String _currentZone = 'PUBLIC'; // PUBLIC/BRANCH/HEADQUARTERS
+  String _currentZone = 'HEADQUARTERS'; // HEADQUARTERS/BRANCH/SHARED
   ModuleTab _activeModule = ModuleTab.files;
   LayoutMode _layoutMode = LayoutMode.grid;
 
@@ -116,30 +118,37 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     return auth.user?.hasAdminAccess == true;
   }
 
-  bool get _canEdit {
-    final netbarId = ref.read(currentNetbarProvider).id;
-    final perm = ref.read(permissionProvider);
-    return perm.canEditZone(_currentZone, netbarId: netbarId);
+  /// 通道管理中所有文件都只读，不可编辑
+  bool get _canEdit => false;
+
+  /// 通道管理中启动项可以编辑（SuperAdmin 和 Admin）
+  bool get _canEditStartup {
+    if (_currentZone != 'BRANCH') return false; // 仅网吧资源有启动项
+    return _isAdmin; // SuperAdmin 和 Admin 可编辑
   }
+
+  /// 是否显示启动项 Tab（仅网吧资源显示）
+  bool get _showStartupTab => _currentZone == 'BRANCH';
 
   int? _getNetbarId() {
     final netbarId = ref.read(currentNetbarProvider).id;
-    if (_currentZone == 'PUBLIC') return netbarId;
+    if (_currentZone == 'BRANCH') return netbarId;
     return null;
   }
 
   int? _getStartupNetbarId() {
     if (_currentZone == 'HEADQUARTERS') return 0;
-    // BRANCH / PUBLIC: use current netbar id
+    // BRANCH: use current netbar id
     return ref.read(currentNetbarProvider).id;
   }
 
   String _editDeniedReason() {
-    final netbarId = ref.read(currentNetbarProvider).id;
-    if (_currentZone == 'PUBLIC') {
-      return netbarId == null ? '请先选择网吧' : '无写入权限';
-    }
-    return '当前来源仅支持查看/下载';
+    return '通道管理仅支持查看和下载';
+  }
+
+  String _startupEditDeniedReason() {
+    if (_currentZone != 'BRANCH') return '仅网吧资源支持启动项操作';
+    return '无启动项编辑权限';
   }
 
   bool _ensureCanEdit(String actionLabel) {
@@ -148,9 +157,19 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     return false;
   }
 
+  bool _ensureCanEditStartup(String actionLabel) {
+    if (_canEditStartup) return true;
+    showTopNotice(context, '$actionLabel失败：${_startupEditDeniedReason()}', level: NoticeLevel.warning);
+    return false;
+  }
+
   @override
   void initState() {
     super.initState();
+    // 如果指定了初始区域，使用它
+    if (widget.initialZone != null && widget.initialZone!.isNotEmpty) {
+      _currentZone = widget.initialZone!;
+    }
     if (widget.initialModule != null) {
       _activeModule = widget.initialModule!;
     }
@@ -266,29 +285,46 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     });
     try {
       if (_activeModule == ModuleTab.files) {
-        final resources = await _resourceApi.getAll(
-          zone: _currentZone,
-          parentId: _currentFolderId,
-          netbarId: _getNetbarId(),
-        );
+        List<Resource> resources;
+        if (_currentZone == 'SHARED') {
+          // 共享资源：调用 /file/shared
+          resources = await _resourceApi.getSharedFiles(parentId: _currentFolderId);
+        } else {
+          // 总公司资源和网吧资源：调用 /file/view，然后根据 group_id 过滤
+          final response = await _resourceApi.getAllWithMerchants(
+            parentId: _currentFolderId,
+          );
+          if (_currentZone == 'HEADQUARTERS') {
+            // 总公司资源：group_id == 0
+            resources = response.files.where((f) => f.groupId == 0 || f.groupId == null).toList();
+          } else {
+            // 网吧资源：group_id != 0
+            resources = response.files.where((f) => f.groupId != null && f.groupId != 0).toList();
+          }
+        }
         if (mounted) setState(() => _files = resources);
       } else {
-        final startupNetbarId = _getStartupNetbarId();
-        if (startupNetbarId == null) {
-          if (mounted) {
-            setState(() {
-              _startupItems = [];
-              _error = '请先选择网吧';
-            });
+        // 启动项：仅网吧资源时加载
+        if (_currentZone == 'BRANCH') {
+          final currentNetbarId = ref.read(currentNetbarProvider).id;
+          if (currentNetbarId == null) {
+            if (mounted) {
+              setState(() {
+                _startupItems = [];
+                _error = '请先选择网吧';
+              });
+            }
+            return;
           }
-          return;
+          final items = await _startupItemApi.getAll();
+          // 根据当前网吧ID过滤
+          final filteredItems = items.where((item) => item.merchantId == currentNetbarId).toList();
+          if (mounted) setState(() => _startupItems = filteredItems);
+          _maybeOpenStartupEditor(filteredItems);
+        } else {
+          // 总公司和共享资源不显示启动项
+          if (mounted) setState(() => _startupItems = []);
         }
-        final items = await _startupItemApi.getAll(
-          zone: _currentZone,
-          netbarId: startupNetbarId,
-        );
-        if (mounted) setState(() => _startupItems = items);
-        _maybeOpenStartupEditor(items);
       }
     } catch (e) {
       if (mounted) setState(() => _error = '加载失败: $e');
@@ -342,6 +378,10 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       _isSearching = false;
       _searchResults = [];
       _fileSearchController.clear();
+      // 如果不是网吧资源区域，自动切换到文件Tab（因为启动项Tab不显示）
+      if (zone != 'BRANCH' && _activeModule == ModuleTab.startup) {
+        _activeModule = ModuleTab.files;
+      }
     });
     _loadData();
   }
@@ -773,8 +813,44 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     return file.name.toLowerCase().endsWith('.exe');
   }
 
+  /// 获取当前目录路径（基于面包屑导航）
+  String _getCurrentFolderPath() {
+    if (_folderHistory.length <= 1) return '';
+    // 跳过第一个"根目录"，拼接后续文件夹名称
+    return _folderHistory.skip(1).map((b) => b.name).join('/');
+  }
+
+  /// 构建文件的完整路径（当前目录路径 + 文件名）
+  String _buildFullPath(Resource file) {
+    // 如果文件本身有完整路径，优先使用
+    if (file.path.isNotEmpty && file.path.contains('/')) {
+      return file.path;
+    }
+    // 否则用当前目录路径拼接文件名
+    final folderPath = _getCurrentFolderPath();
+    return folderPath.isNotEmpty ? '$folderPath/${file.name}' : file.name;
+  }
+
+  /// 是否可以添加启动项（需要选择了网吧）
+  bool get _canAddStartup {
+    final netbarId = ref.read(currentNetbarProvider).id;
+    return netbarId != null && _isAdmin;
+  }
+
   void _showAddStartupFromFile(Resource file) {
-    if (!_ensureCanEdit('添加启动项')) return;
+    // 检查是否选择了网吧
+    final netbarId = ref.read(currentNetbarProvider).id;
+    if (netbarId == null) {
+      showTopNotice(context, '请先选择网吧', level: NoticeLevel.warning);
+      return;
+    }
+    if (!_isAdmin) {
+      showTopNotice(context, '无启动项编辑权限', level: NoticeLevel.warning);
+      return;
+    }
+
+    final fullPath = _buildFullPath(file);
+
     if (context.isPhone) {
       showModalBottomSheet(
         context: context,
@@ -783,10 +859,10 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
         enableDrag: false,
         builder: (context) => AddStartupItemModal(
           zone: _currentZone,
-          netbarId: _getNetbarId(),
+          netbarId: netbarId,
           resourceId: file.id,
-          defaultPath: file.path.isNotEmpty ? file.path : file.name,
-          defaultWorkingDir: deriveDirectoryFromPath(file.path),
+          defaultPath: fullPath,
+          defaultWorkingDir: deriveDirectoryFromPath(fullPath),
           isAdmin: _isAdmin,
           onSuccess: _loadData,
           fullscreenSheet: true,
@@ -799,10 +875,10 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       context: context,
       builder: (context) => AddStartupItemModal(
         zone: _currentZone,
-        netbarId: _getNetbarId(),
+        netbarId: netbarId,
         resourceId: file.id,
-        defaultPath: file.path.isNotEmpty ? file.path : file.name,
-        defaultWorkingDir: deriveDirectoryFromPath(file.path),
+        defaultPath: fullPath,
+        defaultWorkingDir: deriveDirectoryFromPath(fullPath),
         isAdmin: _isAdmin,
         onSuccess: _loadData,
       ),
@@ -1057,7 +1133,12 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   }
 
   void _showFileContextMenu(Offset position, Resource file) {
-    final isExe = _isExecutableFile(file) && _canEdit;
+    // exe 文件且选择了网吧时，显示"添加到启动项"菜单（总公司资源和网吧资源都支持）
+    final netbarId = ref.read(currentNetbarProvider).id;
+    final auth = ref.read(authNotifierProvider);
+    final isAdmin = auth.user?.hasAdminAccess == true;
+    final canAddStartup = netbarId != null && isAdmin;
+    final isExe = _isExecutableFile(file) && canAddStartup;
     showContextMenu(
       context: context,
       position: position,
@@ -1410,7 +1491,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   // ---- Startup item actions (align with ResourceManagement) ----
 
   Future<void> _handleDeleteStartupItem(TacticItem item) async {
-    if (!_ensureCanEdit('删除启动项')) return;
+    if (!_ensureCanEditStartup('删除启动项')) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -1445,39 +1526,229 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   }
 
   Future<void> _toggleStartupItemEnabled(TacticItem item, bool enable) async {
-    if (!_ensureCanEdit(enable ? '启用启动项' : '禁用启动项')) return;
+    if (!_ensureCanEditStartup(enable ? '启用启动项' : '禁用启动项')) return;
     final startupId = item.startupId;
     if (startupId == null) return;
-    try {
-      if (enable) {
-        await _startupItemApi.enable(startupId);
-      } else {
-        await _startupItemApi.disable(startupId, item.enabledState);
+
+    // 禁用时检查是否被强制开启
+    if (!enable) {
+      // 强制开启的启动项不允许禁用
+      if (item.forceRun) {
+        if (mounted) {
+          showTopNotice(context, '当前启动项被强制开启，不允许禁用', level: NoticeLevel.warning);
+        }
+        return;
       }
+
+      final hours = await _showDisableDurationDialog();
+      if (hours == null) return; // 用户取消
+
+      try {
+        await _startupItemApi.disable(
+          startupId,
+          EnabledState(
+            status: false,
+            duration: hours == 0 ? 'permanent' : hours,
+            strategy: 'global',
+          ),
+        );
+        _loadData();
+        if (mounted) {
+          final durationText = hours == 0 ? '永久' : '$hours 小时后自动恢复';
+          showTopNotice(context, '已禁用启动项（$durationText）', level: NoticeLevel.success);
+        }
+      } catch (e) {
+        if (mounted) {
+          showTopNotice(context, '禁用启动项失败: $e', level: NoticeLevel.error);
+        }
+      }
+      return;
+    }
+
+    // 启用直接执行
+    try {
+      await _startupItemApi.enable(startupId);
       _loadData();
+      if (mounted) {
+        showTopNotice(context, '已启用启动项', level: NoticeLevel.success);
+      }
     } catch (e) {
       if (mounted) {
-        showTopNotice(context, '更新启动项状态失败: $e', level: NoticeLevel.error);
+        showTopNotice(context, '启用启动项失败: $e', level: NoticeLevel.error);
       }
     }
+  }
+
+  /// 显示禁用时长选择对话框
+  /// 返回小时数，0 表示永久，null 表示取消
+  Future<int?> _showDisableDurationDialog() async {
+    int selectedHours = 1;
+    final isManager = _isAdmin;
+
+    return showDialog<int>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('选择禁用时长'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildDurationOption(1, '一小时', selectedHours, (v) => setState(() => selectedHours = v)),
+              _buildDurationOption(2, '两小时', selectedHours, (v) => setState(() => selectedHours = v)),
+              _buildDurationOption(5, '五小时', selectedHours, (v) => setState(() => selectedHours = v)),
+              _buildDurationOption(12, '十二小时', selectedHours, (v) => setState(() => selectedHours = v)),
+              _buildDurationOption(24, '一天', selectedHours, (v) => setState(() => selectedHours = v)),
+              _buildDurationOption(72, '三天', selectedHours, (v) => setState(() => selectedHours = v)),
+              _buildDurationOption(120, '五天', selectedHours, (v) => setState(() => selectedHours = v)),
+              // 管理员可以选择永久禁用
+              if (isManager)
+                _buildDurationOption(0, '永久', selectedHours, (v) => setState(() => selectedHours = v)),
+              if (selectedHours > 0) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(LucideIcons.info, size: 14, color: Colors.blue.shade600),
+                      const SizedBox(width: 8),
+                      Text(
+                        '将在 $selectedHours 小时后自动恢复启用',
+                        style: TextStyle(fontSize: 12, color: Colors.blue.shade700),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, selectedHours),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.iosBlue,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('确定'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDurationOption(int hours, String label, int selectedHours, ValueChanged<int> onChanged) {
+    return RadioListTile<int>(
+      value: hours,
+      groupValue: selectedHours,
+      onChanged: (v) => onChanged(v!),
+      title: Text(label, style: const TextStyle(fontSize: 14)),
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      activeColor: AppColors.iosBlue,
+    );
   }
 
   Future<void> _handleBatchStartupEnable(bool enable) async {
-    if (!_ensureCanEdit(enable ? '启用启动项' : '禁用启动项')) return;
-    for (final item in _selectedStartupItems) {
-      final startupId = item.startupId;
-      if (startupId == null) continue;
-      if (enable) {
-        await _startupItemApi.enable(startupId);
-      } else {
-        await _startupItemApi.disable(startupId, item.enabledState);
+    if (!_ensureCanEditStartup(enable ? '启用启动项' : '禁用启动项')) return;
+
+    final selectedItems = _selectedStartupItems;
+    if (selectedItems.isEmpty) return;
+
+    // 批量启用直接执行
+    if (enable) {
+      try {
+        for (final item in selectedItems) {
+          final startupId = item.startupId;
+          if (startupId == null) continue;
+          await _startupItemApi.enable(startupId);
+        }
+        _loadData();
+        if (mounted) {
+          showTopNotice(context, '已启用 ${selectedItems.length} 个启动项', level: NoticeLevel.success);
+        }
+      } catch (e) {
+        if (mounted) {
+          showTopNotice(context, '批量启用失败: $e', level: NoticeLevel.error);
+        }
+      }
+      return;
+    }
+
+    // 批量禁用：先过滤掉强制开启的启动项
+    final forcedItems = selectedItems.where((item) => item.forceRun).toList();
+    final canDisableItems = selectedItems.where((item) => !item.forceRun).toList();
+    final forcedNames = forcedItems.map((item) => item.effectiveDisplayName).toList();
+
+    // 如果过滤后没有可禁用的启动项，直接提示
+    if (canDisableItems.isEmpty) {
+      if (mounted) {
+        showTopNotice(
+          context,
+          '${forcedNames.join("、")} 被强制开启，不允许禁用',
+          level: NoticeLevel.warning,
+        );
+      }
+      return;
+    }
+
+    // 弹出时长选择对话框
+    final hours = await _showDisableDurationDialog();
+    if (hours == null) return; // 用户取消
+
+    try {
+      for (final item in canDisableItems) {
+        final startupId = item.startupId;
+        if (startupId == null) continue;
+        await _startupItemApi.disable(
+          startupId,
+          EnabledState(
+            status: false,
+            duration: hours == 0 ? 'permanent' : hours,
+            strategy: 'global',
+          ),
+        );
+      }
+      _loadData();
+
+      if (mounted) {
+        final durationText = hours == 0 ? '永久' : '$hours 小时后自动恢复';
+        showTopNotice(
+          context,
+          '已禁用 ${canDisableItems.length} 个启动项（$durationText）',
+          level: NoticeLevel.success,
+        );
+
+        // 如果有被过滤掉的强制开启项，单独提示
+        if (forcedItems.isNotEmpty) {
+          Future.delayed(const Duration(milliseconds: 500), () {
+            if (mounted) {
+              showTopNotice(
+                context,
+                '${forcedNames.join("、")} 被强制开启，不允许禁用',
+                level: NoticeLevel.warning,
+              );
+            }
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        showTopNotice(context, '批量禁用失败: $e', level: NoticeLevel.error);
       }
     }
-    _loadData();
   }
 
   Future<void> _handleBatchStartupDelete() async {
-    if (!_ensureCanEdit('删除启动项')) return;
+    if (!_ensureCanEditStartup('删除启动项')) return;
     for (final item in _selectedStartupItems) {
       await _startupItemApi.delete(item.id);
     }
@@ -1489,13 +1760,13 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       context: context,
       position: position,
       items: [
-        if (_canEdit)
+        if (_canEditStartup)
           ContextMenuItem(
             label: '配置',
             icon: LucideIcons.settings,
             onTap: () => _showStartupConfigModal(item),
           ),
-        if (_canEdit)
+        if (_canEditStartup)
           ContextMenuItem(
             label: '删除',
             icon: LucideIcons.trash2,
@@ -1507,7 +1778,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   }
 
   void _showAddStartupItemModal() {
-    if (!_ensureCanEdit('添加启动项')) return;
+    if (!_ensureCanEditStartup('添加启动项')) return;
     if (context.isPhone) {
       showModalBottomSheet(
         context: context,
@@ -1621,9 +1892,6 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   }
 
   Widget _buildSidebar() {
-    final netbarId = ref.watch(currentNetbarProvider).id;
-    final perm = ref.watch(permissionProvider);
-    final publicCanEdit = perm.canEditZone('PUBLIC', netbarId: netbarId);
     return Container(
       width: 256,
       decoration: BoxDecoration(
@@ -1650,25 +1918,23 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
             child: Column(
               children: [
                 _buildZoneButton(
-                  'PUBLIC',
-                  LucideIcons.globe,
-                  '本网吧资源',
-                  subtitle: netbarId == null
-                      ? '（需选择网吧）'
-                      : (publicCanEdit ? null : '（只读）'),
+                  'HEADQUARTERS',
+                  LucideIcons.shieldAlert,
+                  '总公司资源',
+                  subtitle: '（只读）',
                 ),
                 const SizedBox(height: 4),
                 _buildZoneButton(
                   'BRANCH',
                   LucideIcons.building2,
-                  '分公司资源',
+                  '网吧资源',
                   subtitle: '（只读）',
                 ),
                 const SizedBox(height: 4),
                 _buildZoneButton(
-                  'HEADQUARTERS',
-                  LucideIcons.shieldAlert,
-                  '总部资源',
+                  'SHARED',
+                  LucideIcons.share2,
+                  '共享资源',
                   subtitle: '（只读）',
                 ),
               ],
@@ -1680,21 +1946,18 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   }
 
   Widget _buildMobileZoneSelector() {
-    final netbarId = ref.watch(currentNetbarProvider).id;
-    final perm = ref.watch(permissionProvider);
-    final publicCanEdit = perm.canEditZone('PUBLIC', netbarId: netbarId);
     final pills = <Widget>[
-      _buildZonePill(
-        'PUBLIC',
-        '本网吧',
-        LucideIcons.globe,
-        subtitle: netbarId == null ? '需选择网吧' : (publicCanEdit ? null : '只读'),
-      ),
-      _buildZonePill('BRANCH', '分公司', LucideIcons.building2, subtitle: '只读'),
       _buildZonePill(
         'HEADQUARTERS',
         '总部',
         LucideIcons.shieldAlert,
+        subtitle: '只读',
+      ),
+      _buildZonePill('BRANCH', '网吧', LucideIcons.building2, subtitle: '只读'),
+      _buildZonePill(
+        'SHARED',
+        '共享',
+        LucideIcons.share2,
         subtitle: '只读',
       ),
     ];
@@ -1973,7 +2236,8 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
         }
       }
     } else {
-      if (_canEdit) {
+      // 启动项模块使用 _canEditStartup 权限
+      if (_canEditStartup) {
         if (_selectedStartupItems.isNotEmpty) {
           actions.add(
             Text(
@@ -1988,7 +2252,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
               LucideIcons.toggleRight,
               const Color(0xFF22C55E),
               () => _handleBatchStartupEnable(true),
-              enabled: _canEdit,
+              enabled: _canEditStartup,
             ),
             const SizedBox(width: 8),
             _buildBatchButton(
@@ -1996,7 +2260,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
               LucideIcons.toggleLeft,
               Colors.grey.shade600,
               () => _handleBatchStartupEnable(false),
-              enabled: _canEdit,
+              enabled: _canEditStartup,
             ),
             const SizedBox(width: 8),
             _buildBatchButton(
@@ -2004,7 +2268,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
               LucideIcons.trash2,
               Colors.red,
               _handleBatchStartupDelete,
-              enabled: _canEdit,
+              enabled: _canEditStartup,
             ),
           ]);
           actions.add(const SizedBox(width: 8));
@@ -2030,8 +2294,10 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
                   LucideIcons.folderOpen,
                   '文件管理',
                 ),
-                const SizedBox(width: 12),
-                _buildModuleTab(ModuleTab.startup, LucideIcons.zap, '启动项'),
+                if (_showStartupTab) ...[
+                  const SizedBox(width: 12),
+                  _buildModuleTab(ModuleTab.startup, LucideIcons.zap, '启动项'),
+                ],
               ],
             ),
             const SizedBox(height: 8),
@@ -2058,7 +2324,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
                 ],
               ),
             ] else
-            if (_activeModule == ModuleTab.startup && _canEdit && isPhone)
+            if (_activeModule == ModuleTab.startup && _canEditStartup && isPhone)
               _selectedStartupItems.isEmpty
                   ? Row(
                       children: [
@@ -2131,8 +2397,10 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       child: Row(
         children: [
           _buildModuleTab(ModuleTab.files, LucideIcons.folderOpen, '文件管理'),
-          const SizedBox(width: 12),
-          _buildModuleTab(ModuleTab.startup, LucideIcons.zap, '启动项'),
+          if (_showStartupTab) ...[
+            const SizedBox(width: 12),
+            _buildModuleTab(ModuleTab.startup, LucideIcons.zap, '启动项'),
+          ],
           const Spacer(),
           ...actions,
         ],
@@ -2814,7 +3082,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
               style: TextStyle(fontSize: 16, color: Colors.grey.shade500),
             ),
             const SizedBox(height: 8),
-            if (_canEdit)
+            if (_canEditStartup)
               ElevatedButton.icon(
                 onPressed: _showAddStartupItemModal,
                 icon: const Icon(LucideIcons.plus, size: 16),
@@ -2848,9 +3116,9 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       key: ValueKey('startup-${item.id}'),
       item: item,
       isSelected: isSelected,
-      canEdit: _canEdit,
+      canEdit: _canEditStartup,
       updatedAtText: _formatDate(DateTime.tryParse(item.updatedAt) ?? DateTime.now()),
-      onToggleEnabled: _canEdit
+      onToggleEnabled: _canEditStartup
           ? (val) => _toggleStartupItemEnabled(item, val)
           : null,
       onTap: () {
@@ -2869,7 +3137,7 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
           }
         });
       },
-      onDoubleTap: _canEdit ? () => _showStartupConfigModal(item) : null,
+      onDoubleTap: _canEditStartup ? () => _showStartupConfigModal(item) : null,
       onSecondaryTapDown: (details) {
         if (!isSelected) {
           setState(() {
@@ -2879,8 +3147,8 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
         }
         _showStartupItemContextMenu(details.globalPosition, item);
       },
-      onEdit: () => _showStartupConfigModal(item),
-      onDelete: () => _handleDeleteStartupItem(item),
+      onEdit: _canEditStartup ? () => _showStartupConfigModal(item) : null,
+      onDelete: _canEditStartup ? () => _handleDeleteStartupItem(item) : null,
     );
   }
 
@@ -2899,7 +3167,8 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
   }
 }
 
-class _ResourceStartupCard extends StatelessWidget {
+/// 启动项卡片组件（与资源管理保持一致）
+class _ResourceStartupCard extends StatefulWidget {
   final TacticItem item;
   final bool isSelected;
   final bool canEdit;
@@ -2907,9 +3176,9 @@ class _ResourceStartupCard extends StatelessWidget {
   final ValueChanged<bool>? onToggleEnabled;
   final VoidCallback onTap;
   final VoidCallback? onDoubleTap;
-  final GestureTapDownCallback onSecondaryTapDown;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
+  final Function(TapDownDetails) onSecondaryTapDown;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
 
   const _ResourceStartupCard({
     super.key,
@@ -2917,130 +3186,338 @@ class _ResourceStartupCard extends StatelessWidget {
     required this.isSelected,
     required this.canEdit,
     required this.updatedAtText,
-    required this.onToggleEnabled,
+    this.onToggleEnabled,
     required this.onTap,
-    required this.onDoubleTap,
+    this.onDoubleTap,
     required this.onSecondaryTapDown,
-    required this.onEdit,
-    required this.onDelete,
+    this.onEdit,
+    this.onDelete,
   });
 
   @override
+  State<_ResourceStartupCard> createState() => _ResourceStartupCardState();
+}
+
+class _ResourceStartupCardState extends State<_ResourceStartupCard> {
+  bool _isHovered = false;
+  DateTime? _lastTapTime;
+  Timer? _countdownTimer;
+  String? _remainingTime;
+
+  @override
+  void initState() {
+    super.initState();
+    _startCountdownTimer();
+  }
+
+  @override
+  void didUpdateWidget(_ResourceStartupCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 当 item 变化时重新启动计时器
+    if (oldWidget.item.disableIn != widget.item.disableIn) {
+      _startCountdownTimer();
+    }
+  }
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startCountdownTimer() {
+    _countdownTimer?.cancel();
+    _updateRemainingTime();
+
+    // 如果有倒计时，每秒更新一次
+    if (_hasValidDisableIn()) {
+      _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        _updateRemainingTime();
+      });
+    }
+  }
+
+  bool _hasValidDisableIn() {
+    final disableIn = widget.item.disableIn;
+    if (disableIn == null || disableIn.isEmpty) return false;
+    final targetTime = DateTime.tryParse(disableIn);
+    if (targetTime == null) return false;
+    return targetTime.isAfter(DateTime.now());
+  }
+
+  void _updateRemainingTime() {
+    final disableIn = widget.item.disableIn;
+    if (disableIn == null || disableIn.isEmpty) {
+      if (_remainingTime != null) {
+        setState(() => _remainingTime = null);
+      }
+      return;
+    }
+
+    final targetTime = DateTime.tryParse(disableIn);
+    if (targetTime == null) {
+      if (_remainingTime != null) {
+        setState(() => _remainingTime = null);
+      }
+      return;
+    }
+
+    final now = DateTime.now();
+    final diff = targetTime.difference(now);
+
+    if (diff.isNegative || diff.inSeconds <= 0) {
+      _countdownTimer?.cancel();
+      setState(() => _remainingTime = null);
+      return;
+    }
+
+    final hours = diff.inHours;
+    final minutes = diff.inMinutes % 60;
+    final seconds = diff.inSeconds % 60;
+    final formatted = '${hours.toString().padLeft(2, '0')}:'
+        '${minutes.toString().padLeft(2, '0')}:'
+        '${seconds.toString().padLeft(2, '0')}';
+
+    setState(() => _remainingTime = formatted);
+  }
+
+  void _handleTap() {
+    if (!mounted) return;
+    final now = DateTime.now();
+    if (_lastTapTime != null &&
+        now.difference(_lastTapTime!).inMilliseconds < 300) {
+      _lastTapTime = null;
+      widget.onDoubleTap?.call();
+    } else {
+      _lastTapTime = now;
+      widget.onTap();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Listener(
-      onPointerDown: (event) {
-        if (event.buttons == 1) onTap();
+    return MouseRegion(
+      onEnter: (_) {
+        if (mounted) setState(() => _isHovered = true);
       },
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          onDoubleTap: onDoubleTap,
-          onSecondaryTapDown: onSecondaryTapDown,
-          onLongPressStart: (details) {
-            onSecondaryTapDown(
-              TapDownDetails(
-                globalPosition: details.globalPosition,
-                localPosition: details.localPosition,
-              ),
-            );
-          },
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: isSelected
-                  ? AppColors.iosBlue.withValues(alpha: 0.08)
-                  : Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: isSelected ? AppColors.iosBlue : Colors.grey.shade200,
-                width: isSelected ? 2 : 1,
-              ),
-              boxShadow: AppShadows.sm,
+      onExit: (_) {
+        if (mounted) setState(() => _isHovered = false);
+      },
+      child: GestureDetector(
+        onTapDown: (_) => _handleTap(),
+        onSecondaryTapDown: widget.onSecondaryTapDown,
+        onLongPressStart: (details) {
+          widget.onSecondaryTapDown(
+            TapDownDetails(
+              globalPosition: details.globalPosition,
+              localPosition: details.localPosition,
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        item.effectiveDisplayName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    if (onToggleEnabled != null)
-                      Switch(
-                        value: item.enabled,
-                        onChanged: onToggleEnabled,
-                        activeThumbColor: const Color(0xFF22C55E),
-                      )
-                    else
-                      Text(
-                        item.enabled ? '启用' : '禁用',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: item.enabled
-                              ? const Color(0xFF22C55E)
-                              : Colors.grey.shade500,
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  item.path,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                ),
-                const Spacer(),
-                Row(
-                  children: [
-                    Text(
-                      updatedAtText,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade500,
-                      ),
-                    ),
-                    const Spacer(),
-                    if (canEdit) ...[
-                      _iconButton(LucideIcons.settings, onEdit),
-                      const SizedBox(width: 8),
-                      _iconButton(
-                        LucideIcons.trash2,
-                        onDelete,
-                        color: Colors.red,
-                      ),
-                    ],
-                  ],
-                ),
-              ],
+          );
+        },
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: widget.isSelected
+                  ? AppColors.iosBlue
+                  : Colors.grey.shade200,
+              width: widget.isSelected ? 2 : 1,
             ),
+            boxShadow: widget.isSelected
+                ? null
+                : (_isHovered ? AppShadows.lg : AppShadows.sm),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: widget.item.enabled
+                          ? Colors.green.shade50
+                          : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      LucideIcons.zap,
+                      color: widget.item.enabled ? Colors.green : Colors.grey,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                widget.item.effectiveDisplayName,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (widget.canEdit)
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Switch.adaptive(
+                                    value: widget.item.enabled,
+                                    activeColor: AppColors.iosBlue,
+                                    onChanged: widget.onToggleEnabled,
+                                  ),
+                                  // 显示禁用倒计时
+                                  if (!widget.item.enabled && _remainingTime != null)
+                                    Text(
+                                      '自动开启: $_remainingTime',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: Colors.orange.shade600,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    )
+                                  else if (!widget.item.enabled && widget.item.disableIn == null)
+                                    Text(
+                                      '永久禁用',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: Colors.red.shade400,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                          ],
+                        ),
+                        Text(
+                          formatPathWithZone(
+                            widget.item.path,
+                            detectZoneFromPath(widget.item.path) ??
+                                widget.item.zone,
+                            maxLength: 36,
+                          ),
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: 12,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const Spacer(),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  if ((widget.item.delay ?? 0) > 0)
+                    _buildTag(
+                      LucideIcons.clock,
+                      '${widget.item.delay}s',
+                      Colors.orange,
+                    ),
+                  if (widget.item.args?.isNotEmpty == true)
+                    _buildTag(LucideIcons.terminal, '参数', Colors.blue),
+                  if (widget.item.forceRun)
+                    _buildTag(LucideIcons.alertCircle, '强制', Colors.red),
+                  if (widget.item.targetOs?.isNotEmpty == true)
+                    _buildTag(
+                      LucideIcons.monitor,
+                      widget.item.targetOs!,
+                      Colors.purple,
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    widget.updatedAtText,
+                    style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                  ),
+                  if (widget.canEdit && (widget.onEdit != null || widget.onDelete != null))
+                    Row(
+                      children: [
+                        if (widget.onEdit != null)
+                          _buildIconButton(LucideIcons.settings, widget.onEdit!),
+                        if (widget.onEdit != null && widget.onDelete != null)
+                          const SizedBox(width: 4),
+                        if (widget.onDelete != null)
+                          _buildIconButton(
+                            LucideIcons.trash2,
+                            widget.onDelete!,
+                            color: Colors.red,
+                          ),
+                      ],
+                    ),
+                ],
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Widget _iconButton(IconData icon, VoidCallback onTap, {Color? color}) {
+  Widget _buildTag(IconData icon, String label, MaterialColor color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.shade50,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.shade100),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 10, color: color.shade700),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: color.shade700,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIconButton(
+    IconData icon,
+    VoidCallback onTap, {
+    Color color = Colors.grey,
+  }) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
-      child: Container(
-        width: 28,
-        height: 28,
-        decoration: BoxDecoration(
-          color: (color ?? Colors.grey.shade600).withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.all(6),
+        child: Icon(
+          icon,
+          size: 16,
+          color: color == Colors.red
+              ? Colors.red.shade400
+              : Colors.grey.shade400,
         ),
-        child: Icon(icon, size: 16, color: color ?? Colors.grey.shade600),
       ),
     );
   }

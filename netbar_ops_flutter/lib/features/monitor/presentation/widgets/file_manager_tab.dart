@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../shared/providers/app_providers.dart';
 import '../../data/terminal_api.dart';
+
+import 'file_download_helper.dart' if (dart.library.html) 'file_download_helper_web.dart' as download_helper;
 
 class FileManagerTab extends ConsumerStatefulWidget {
   final int terminalId;
@@ -16,7 +19,7 @@ class FileManagerTab extends ConsumerStatefulWidget {
 }
 
 class _FileManagerTabState extends ConsumerState<FileManagerTab> {
-  String _currentPath = r'C:\';
+  String _currentPath = '';
   final TextEditingController _pathController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -24,6 +27,7 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
   List<TerminalFile> _files = [];
   bool _loading = false;
   String? _error;
+  String? _downloadingFile; // 正在下载的文件路径
 
   final List<String> _history = [];
   int _historyIndex = -1;
@@ -33,21 +37,56 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
   final Map<String, List<_TreeNode>> _treeChildren = <String, List<_TreeNode>>{};
   final Set<String> _treeLoading = <String>{};
 
+  // 动态磁盘列表
+  List<TerminalFile> _drives = [];
+  bool _drivesLoading = false;
+
+  // 路径编辑模式
+  bool _isEditingPath = false;
+  final FocusNode _pathFocusNode = FocusNode();
+
   @override
   void initState() {
     super.initState();
-    _currentPath = _normalizePath(_currentPath);
-    _pathController.text = _currentPath;
-    _history.add(_currentPath);
-    _historyIndex = 0;
-    _loadFiles(path: _currentPath);
+    _loadDrives();
   }
 
   @override
   void dispose() {
     _pathController.dispose();
     _searchController.dispose();
+    _pathFocusNode.dispose();
     super.dispose();
+  }
+
+  /// 加载磁盘列表
+  Future<void> _loadDrives() async {
+    setState(() {
+      _drivesLoading = true;
+    });
+    try {
+      final api = ref.read(terminalApiProvider);
+      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
+      final drives = await api.getFiles(widget.seatId, '', domain: domain);
+      if (mounted) {
+        setState(() {
+          _drives = drives;
+          _drivesLoading = false;
+        });
+        // 如果有磁盘，自动进入第一个磁盘
+        if (drives.isNotEmpty) {
+          final firstDrive = drives.first.path;
+          _navigateTo(firstDrive);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _drivesLoading = false;
+          _error = '获取磁盘列表失败: $e';
+        });
+      }
+    }
   }
 
   Future<void> _loadFiles({required String path}) async {
@@ -58,14 +97,18 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
     try {
       final api = ref.read(terminalApiProvider);
       final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
+      debugPrint('[FileManager] Loading files: seatId=${widget.seatId}, path="$path", domain=$domain');
       final list = await api.getFiles(widget.seatId, path, domain: domain);
+      debugPrint('[FileManager] Loaded ${list.length} files');
       if (mounted) {
         setState(() {
           _files = list;
           _loading = false;
         });
       }
-    } catch (e) {
+    } catch (e, stack) {
+      debugPrint('[FileManager] Error loading files: $e');
+      debugPrint('[FileManager] Stack: $stack');
       if (mounted) {
         setState(() {
           _error = e.toString();
@@ -75,36 +118,64 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
     }
   }
 
-  List<_TreeNode> get _driveNodes => const [
-        _TreeNode(label: '本地磁盘 (C:)', path: r'C:\', kind: _TreeNodeKind.drive),
-        _TreeNode(label: '本地磁盘 (D:)', path: r'D:\', kind: _TreeNodeKind.drive),
-      ];
+  List<_TreeNode> get _driveNodes => _drives
+      .map((d) => _TreeNode(
+            label: '本地磁盘 (${d.name})',
+            path: _normalizePath(d.path),
+            kind: _TreeNodeKind.drive,
+          ))
+      .toList();
 
+  /// 规范化路径
+  /// 磁盘根保持为 C: 格式（不带反斜杠）
+  /// 子目录为 C:\Windows 格式
   String _normalizePath(String path) {
     var out = path.replaceAll('/', r'\').trim();
-    if (out.isEmpty) return r'C:\';
-    if (RegExp(r'^[A-Za-z]:$').hasMatch(out)) out = '$out\\';
+    if (out.isEmpty) return '';
+    // 移除开头的反斜杠
+    while (out.startsWith('\\')) {
+      out = out.substring(1);
+    }
+    // 大写盘符
     if (out.length >= 2 && out[1] == ':') {
       out = out[0].toUpperCase() + out.substring(1);
     }
-    while (out.endsWith('\\') && out.length > 3) {
+    // 移除末尾的反斜杠（磁盘根 C:\ 也要移除变成 C:）
+    while (out.endsWith('\\')) {
       out = out.substring(0, out.length - 1);
     }
     return out;
   }
 
+  /// 判断是否为磁盘根路径（如 C:）
+  bool _isDriveRoot(String path) {
+    return RegExp(r'^[A-Za-z]:$').hasMatch(path);
+  }
+
+  /// 拼接路径
   String _joinPath(String base, String name) {
     final b = _normalizePath(base);
-    if (RegExp(r'^[A-Za-z]:\\$').hasMatch(b)) return '$b$name';
+    // C: + folder = C:\folder
+    // C:\Windows + System32 = C:\Windows\System32
     return '$b\\$name';
   }
 
+  /// 获取父路径
   String _parentPath(String path) {
     final p = _normalizePath(path);
-    if (RegExp(r'^[A-Za-z]:\\$').hasMatch(p)) return p;
+    if (p.isEmpty) return '';
+    // 磁盘根没有父路径
+    if (_isDriveRoot(p)) return p;
     final idx = p.lastIndexOf(r'\');
-    if (idx <= 2) return '${p.substring(0, 2)}\\';
+    if (idx <= 2) return p.substring(0, 2); // 返回磁盘根 C:
     return p.substring(0, idx);
+  }
+
+  /// 获取面包屑路径列表
+  List<String> get _breadcrumbs {
+    if (_currentPath.isEmpty) return [];
+    final parts = _currentPath.split(r'\').where((p) => p.isNotEmpty).toList();
+    return parts;
   }
 
   bool get _canGoBack => _historyIndex > 0;
@@ -112,7 +183,6 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
 
   Future<void> _navigateTo(String path, {bool pushHistory = true}) async {
     final next = _normalizePath(path);
-    if (next == _currentPath) return;
 
     setState(() {
       _currentPath = next;
@@ -144,11 +214,30 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
   }
 
   Future<void> _navigateUp() async {
-    await _navigateTo(_parentPath(_currentPath));
+    final parent = _parentPath(_currentPath);
+    if (parent.isNotEmpty && parent != _currentPath) {
+      await _navigateTo(parent);
+    }
   }
 
   Future<void> _openFolder(String name) async {
     await _navigateTo(_joinPath(_currentPath, name));
+  }
+
+  /// 点击面包屑导航
+  Future<void> _navigateToBreadcrumb(int index) async {
+    final parts = _breadcrumbs;
+    if (index < 0 || index >= parts.length) return;
+    // 构建路径
+    final drive = parts[0]; // 如 "C:"
+    if (index == 0) {
+      // 点击盘符，导航到磁盘根
+      await _navigateTo(drive);
+    } else {
+      // 点击子目录
+      final pathParts = parts.sublist(0, index + 1);
+      await _navigateTo('${pathParts[0]}\\${pathParts.sublist(1).join('\\')}');
+    }
   }
 
   List<TerminalFile> get _filteredFiles {
@@ -186,9 +275,56 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
     }
   }
 
+  /// 下载文件
+  Future<void> _downloadFile(TerminalFile file) async {
+    if (file.isDirectory || _downloadingFile == file.path) return;
+
+    setState(() {
+      _downloadingFile = file.path;
+    });
+
+    try {
+      final api = ref.read(terminalApiProvider);
+      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
+      final bytes = await api.downloadFile(widget.seatId, file.path, domain: domain);
+
+      // 使用平台相关的下载方法
+      await download_helper.downloadFile(bytes, file.name);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('已下载: ${file.name}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('下载失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _downloadingFile = null;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isNarrow = context.isNarrow || context.isPhone;
+
+    if (_drivesLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
     return Column(
       children: [
         _buildTopBar(isNarrow: isNarrow),
@@ -197,9 +333,20 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
               ? const Center(child: CircularProgressIndicator())
               : _error != null
                   ? Center(
-                      child: Text(
-                        '加载失败: $_error',
-                        style: const TextStyle(color: Colors.red),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '加载失败: $_error',
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                          const SizedBox(height: 12),
+                          ElevatedButton.icon(
+                            onPressed: () => _loadFiles(path: _currentPath),
+                            icon: const Icon(LucideIcons.refreshCw, size: 16),
+                            label: const Text('重试'),
+                          ),
+                        ],
                       ),
                     )
                   : isNarrow
@@ -217,27 +364,12 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
         color: Colors.white,
         border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
       ),
-      child: isNarrow
-          ? Column(
-              children: [
-                Row(
-                  children: [
-                    _buildNavIcon(
-                      LucideIcons.arrowUp,
-                      tooltip: '上一级',
-                      enabled: true,
-                      onTap: _navigateUp,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(child: _buildAddressBar()),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                SizedBox(height: 36, child: _buildSearchField()),
-              ],
-            )
-          : Row(
-              children: [
+      child: Column(
+        children: [
+          // 导航按钮 + 路径栏（面包屑/编辑框）+ 搜索框
+          Row(
+            children: [
+              if (!isNarrow) ...[
                 _buildNavIcon(
                   LucideIcons.arrowLeft,
                   tooltip: '后退',
@@ -252,18 +384,194 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
                   onTap: _goForward,
                 ),
                 const SizedBox(width: 6),
-                _buildNavIcon(
-                  LucideIcons.arrowUp,
-                  tooltip: '上一级',
-                  enabled: true,
-                  onTap: _navigateUp,
-                ),
-                const SizedBox(width: 10),
-                Expanded(child: _buildAddressBar()),
-                const SizedBox(width: 10),
-                SizedBox(width: 240, height: 34, child: _buildSearchField()),
               ],
+              _buildNavIcon(
+                LucideIcons.arrowUp,
+                tooltip: '上一级',
+                enabled: _currentPath.isNotEmpty && !_isDriveRoot(_currentPath),
+                onTap: _navigateUp,
+              ),
+              const SizedBox(width: 6),
+              _buildNavIcon(
+                LucideIcons.refreshCw,
+                tooltip: '刷新',
+                enabled: true,
+                onTap: () => _loadFiles(path: _currentPath),
+              ),
+              const SizedBox(width: 10),
+              // 合并的路径栏（面包屑 / 编辑模式）
+              Expanded(child: _buildPathBar()),
+              if (!isNarrow) ...[
+                const SizedBox(width: 10),
+                SizedBox(width: 200, height: 34, child: _buildSearchField()),
+              ],
+            ],
+          ),
+          // 移动端搜索框
+          if (isNarrow) ...[
+            const SizedBox(height: 8),
+            SizedBox(height: 36, child: _buildSearchField()),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 进入路径编辑模式
+  void _enterEditMode() {
+    setState(() {
+      _isEditingPath = true;
+      _pathController.text = _currentPath;
+    });
+    // 延迟聚焦并选中全部文本
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pathFocusNode.requestFocus();
+      _pathController.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _pathController.text.length,
+      );
+    });
+  }
+
+  /// 退出路径编辑模式
+  void _exitEditMode() {
+    setState(() => _isEditingPath = false);
+  }
+
+  /// 提交路径编辑
+  void _submitPathEdit() {
+    final path = _pathController.text.trim();
+    _exitEditMode();
+    if (path.isNotEmpty && path != _currentPath) {
+      _navigateTo(path);
+    }
+  }
+
+  /// 构建路径栏（面包屑 / 编辑模式切换）
+  Widget _buildPathBar() {
+    return Container(
+      height: 34,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: _isEditingPath ? _buildPathEditField() : _buildBreadcrumbContent(),
+    );
+  }
+
+  /// 构建路径编辑输入框
+  Widget _buildPathEditField() {
+    return Row(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Icon(LucideIcons.folderOpen, size: 14, color: Colors.grey.shade600),
+        ),
+        Expanded(
+          child: Focus(
+            onFocusChange: (hasFocus) {
+              // 失去焦点时取消编辑
+              if (!hasFocus && _isEditingPath) {
+                _exitEditMode();
+              }
+            },
+            child: KeyboardListener(
+              focusNode: FocusNode(),
+              onKeyEvent: (event) {
+                // 按 ESC 取消编辑
+                if (event is KeyDownEvent &&
+                    event.logicalKey == LogicalKeyboardKey.escape) {
+                  _exitEditMode();
+                }
+              },
+              child: TextField(
+                controller: _pathController,
+                focusNode: _pathFocusNode,
+                style: const TextStyle(fontSize: 12),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.symmetric(vertical: 8),
+                ),
+                onSubmitted: (_) => _submitPathEdit(),
+              ),
             ),
+          ),
+        ),
+        const SizedBox(width: 8),
+      ],
+    );
+  }
+
+  /// 构建面包屑内容（支持双击编辑）
+  Widget _buildBreadcrumbContent() {
+    final parts = _breadcrumbs;
+    return GestureDetector(
+      onDoubleTap: _enterEditMode,
+      child: Row(
+        children: [
+          const SizedBox(width: 6),
+          // 此电脑图标
+          InkWell(
+            onTap: _loadDrives,
+            borderRadius: BorderRadius.circular(4),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+              child: Icon(LucideIcons.monitor, size: 14, color: Colors.grey.shade600),
+            ),
+          ),
+          // 面包屑路径
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: parts.isEmpty
+                    ? [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: Text(
+                            '此电脑',
+                            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                          ),
+                        ),
+                      ]
+                    : parts.asMap().entries.expand((entry) {
+                        final index = entry.key;
+                        final part = entry.value;
+                        final isLast = index == parts.length - 1;
+                        return [
+                          Icon(LucideIcons.chevronRight, size: 14, color: Colors.grey.shade400),
+                          InkWell(
+                            onTap: isLast ? null : () => _navigateToBreadcrumb(index),
+                            borderRadius: BorderRadius.circular(4),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                              child: Text(
+                                part,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: isLast ? Colors.grey.shade900 : Colors.grey.shade600,
+                                  fontWeight: isLast ? FontWeight.w600 : FontWeight.normal,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ];
+                      }).toList(),
+              ),
+            ),
+          ),
+          // 编辑图标提示
+          Tooltip(
+            message: '双击编辑路径',
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Icon(LucideIcons.edit3, size: 12, color: Colors.grey.shade400),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -293,53 +601,6 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
             color: enabled ? Colors.grey.shade700 : Colors.grey.shade400,
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildAddressBar() {
-    return Container(
-      height: 34,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: Colors.grey.shade200),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          Icon(LucideIcons.folderOpen, size: 16, color: Colors.grey.shade600),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: _pathController,
-              style: const TextStyle(fontSize: 13),
-              decoration: const InputDecoration(
-                isDense: true,
-                border: InputBorder.none,
-                contentPadding: EdgeInsets.zero,
-              ),
-              onSubmitted: (v) {
-                final next = v.trim();
-                if (next.isEmpty) return;
-                _navigateTo(next);
-              },
-            ),
-          ),
-          const SizedBox(width: 6),
-          InkWell(
-            onTap: () => _loadFiles(path: _currentPath),
-            borderRadius: BorderRadius.circular(6),
-            child: Padding(
-              padding: const EdgeInsets.all(6),
-              child: Icon(
-                LucideIcons.refreshCw,
-                size: 16,
-                color: Colors.grey.shade600,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -616,6 +877,8 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
         ? '文件夹'
         : '${file.updatedAt} · ${_formatSize(file.size)} · ${_typeLabel(file)}';
 
+    final isDownloading = _downloadingFile == file.path;
+
     return ListTile(
       dense: true,
       contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -632,6 +895,22 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
         overflow: TextOverflow.ellipsis,
         style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
       ),
+      trailing: file.isDirectory
+          ? null
+          : IconButton(
+              icon: isDownloading
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.grey.shade500,
+                      ),
+                    )
+                  : Icon(LucideIcons.download, size: 18, color: Colors.grey.shade600),
+              onPressed: isDownloading ? null : () => _downloadFile(file),
+              tooltip: '下载',
+            ),
       selected: isSelected,
       selectedTileColor: Colors.blue.withOpacity(0.06),
       onTap: () {
@@ -658,9 +937,11 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
       child: Row(
         children: [
           Expanded(child: _buildHeaderCell('名称')),
-          SizedBox(width: 140, child: _buildHeaderCell('修改日期')),
+          SizedBox(width: 120, child: _buildHeaderCell('修改日期')),
           SizedBox(width: 80, child: _buildHeaderCell('类型')),
+          SizedBox(width: 100, child: _buildHeaderCell('版本')),
           SizedBox(width: 80, child: _buildHeaderCell('大小', textAlign: TextAlign.right)),
+          const SizedBox(width: 60), // 操作列
         ],
       ),
     );
@@ -679,14 +960,14 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
   }
 
   Widget _buildFileListItem(TerminalFile file, bool isSelected) {
-    final ext = file.name.split('.').last.toLowerCase();
+    final isDownloading = _downloadingFile == file.path;
 
     return GestureDetector(
       onTap: () => setState(() => _selectedFileId = file.path),
       onDoubleTap: () {
-         if (file.isDirectory) {
-            _openFolder(file.name);
-         }
+        if (file.isDirectory) {
+          _openFolder(file.name);
+        }
       },
       child: Container(
         height: 40,
@@ -713,7 +994,7 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
               ),
             ),
             SizedBox(
-              width: 140,
+              width: 120,
               child: Text(
                 file.updatedAt,
                 style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
@@ -727,12 +1008,45 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
               ),
             ),
             SizedBox(
+              width: 100,
+              child: Text(
+                file.version,
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            SizedBox(
               width: 80,
               child: Text(
                 file.isDirectory ? '' : _formatSize(file.size),
                 style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
                 textAlign: TextAlign.right,
               ),
+            ),
+            SizedBox(
+              width: 60,
+              child: file.isDirectory
+                  ? const SizedBox()
+                  : IconButton(
+                      icon: isDownloading
+                          ? SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.grey.shade500,
+                              ),
+                            )
+                          : Icon(
+                              LucideIcons.download,
+                              size: 16,
+                              color: AppColors.iosBlue,
+                            ),
+                      onPressed: isDownloading ? null : () => _downloadFile(file),
+                      tooltip: '下载',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    ),
             ),
           ],
         ),
@@ -755,10 +1069,10 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
           ),
           const SizedBox(width: 16),
           if (_selectedFileId != null)
-             Text(
-               '选中 1 个项目',
-               style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-             ),
+            Text(
+              '选中 1 个项目',
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+            ),
         ],
       ),
     );

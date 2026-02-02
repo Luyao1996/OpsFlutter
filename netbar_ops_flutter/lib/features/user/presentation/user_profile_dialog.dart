@@ -109,7 +109,9 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
 
     final isNarrow = context.isNarrow || context.isPhone;
     final screen = MediaQuery.sizeOf(context);
-    final maxWidth = isNarrow ? 560.0 : 800.0;
+    // TODO: 完整版带左侧菜单时使用 800.0，简化版使用 480.0
+    // final maxWidth = isNarrow ? 560.0 : 800.0;
+    final maxWidth = isNarrow ? 560.0 : 480.0;
     final narrowMaxLimit = (screen.height - 24).clamp(0.0, 900.0);
     final maxHeight = isNarrow
         ? (screen.height * 0.92).clamp(320.0, narrowMaxLimit >= 320 ? narrowMaxLimit : 320.0)
@@ -180,61 +182,151 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
   }
 
   Widget _buildDesktopBody(String userName, String role, String account) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    // TODO: 完整版带左侧菜单的布局（暂时隐藏，仅显示账户概览）
+    // return Row(
+    //   crossAxisAlignment: CrossAxisAlignment.start,
+    //   children: [
+    //     Container(
+    //       width: 256,
+    //       decoration: const BoxDecoration(
+    //         color: Color(0xFFF9FAFB),
+    //         border: Border(
+    //           right: BorderSide(color: Color(0xFFF3F4F6)),
+    //         ),
+    //       ),
+    //       padding: const EdgeInsets.all(16),
+    //       child: Column(
+    //         crossAxisAlignment: CrossAxisAlignment.start,
+    //         children: [
+    //           const Padding(
+    //             padding: EdgeInsets.only(left: 8, bottom: 24, top: 8),
+    //             child: Text(
+    //               '个人中心',
+    //               style: TextStyle(
+    //                 fontSize: 18,
+    //                 fontWeight: FontWeight.bold,
+    //                 color: Color(0xFF111827),
+    //               ),
+    //             ),
+    //           ),
+    //           _buildNavItem('overview', LucideIcons.user, '账户概览'),
+    //           const SizedBox(height: 4),
+    //           _buildNavItem('security', LucideIcons.shield, '安全设置'),
+    //           const SizedBox(height: 4),
+    //           _buildNavItem('settings', LucideIcons.settings, '偏好设置'),
+    //           const Spacer(),
+    //           _buildLogoutButton(),
+    //         ],
+    //       ),
+    //     ),
+    //     Expanded(
+    //       child: ScrollConfiguration(
+    //         behavior: _contentScrollBehavior(context),
+    //         child: SingleChildScrollView(
+    //           padding: const EdgeInsets.fromLTRB(32, 72, 64, 24),
+    //           child: _buildActiveTabContent(
+    //             userName,
+    //             role,
+    //             account,
+    //             isNarrow: false,
+    //           ),
+    //         ),
+    //       ),
+    //     ),
+    //   ],
+    // );
+
+    // 简化版：仅显示账户概览
+    return Column(
       children: [
-        Container(
-          width: 256,
-          decoration: const BoxDecoration(
-            color: Color(0xFFF9FAFB),
-            border: Border(
-              right: BorderSide(color: Color(0xFFF3F4F6)),
-            ),
-          ),
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Padding(
-                padding: EdgeInsets.only(left: 8, bottom: 24, top: 8),
-                child: Text(
-                  '个人中心',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF111827),
-                  ),
-                ),
+        // 标题栏
+        const Padding(
+          padding: EdgeInsets.only(left: 24, top: 20, bottom: 16),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '个人中心',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF111827),
               ),
-              _buildNavItem('overview', LucideIcons.user, '账户概览'),
-              const SizedBox(height: 4),
-              _buildNavItem('security', LucideIcons.shield, '安全设置'),
-              const SizedBox(height: 4),
-              _buildNavItem('settings', LucideIcons.settings, '偏好设置'),
-              const Spacer(),
-              _buildLogoutButton(),
-            ],
+            ),
           ),
         ),
+        // 内容区域
         Expanded(
-          child: ScrollConfiguration(
-            behavior: _contentScrollBehavior(context),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(32, 72, 64, 24),
-              child: _buildActiveTabContent(
-                userName,
-                role,
-                account,
-                isNarrow: false,
-              ),
-            ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+            child: _buildOverviewTab(userName, role, account, isNarrow: false),
           ),
+        ),
+        // 退出登录按钮
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+          child: _buildLogoutButton(),
         ),
       ],
     );
   }
 
   Widget _buildMobileBody(String userName, String role, String account) {
+    // TODO: 完整版带标签栏的布局（暂时隐藏，仅显示账户概览）
+    // return Column(
+    //   children: [
+    //     Padding(
+    //       padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+    //       child: Row(
+    //         children: [
+    //           const Expanded(
+    //             child: Text(
+    //               '个人中心',
+    //               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+    //             ),
+    //           ),
+    //           IconButton(
+    //             onPressed: () => Navigator.of(context).pop(),
+    //             icon: const Icon(LucideIcons.x, size: 20),
+    //             splashRadius: 22,
+    //           ),
+    //         ],
+    //       ),
+    //     ),
+    //     Padding(
+    //       padding: const EdgeInsets.symmetric(horizontal: 12),
+    //       child: Row(
+    //         children: [
+    //           Expanded(child: _buildMobileTab('overview', LucideIcons.user, '概览')),
+    //           const SizedBox(width: 8),
+    //           Expanded(child: _buildMobileTab('security', LucideIcons.shield, '安全')),
+    //           const SizedBox(width: 8),
+    //           Expanded(child: _buildMobileTab('settings', LucideIcons.settings, '偏好')),
+    //         ],
+    //       ),
+    //     ),
+    //     const SizedBox(height: 8),
+    //     Expanded(
+    //       child: ScrollConfiguration(
+    //         behavior: _contentScrollBehavior(context),
+    //         child: SingleChildScrollView(
+    //           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+    //           child: _buildActiveTabContent(
+    //             userName,
+    //             role,
+    //             account,
+    //             isNarrow: true,
+    //           ),
+    //         ),
+    //       ),
+    //     ),
+    //     Padding(
+    //       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+    //       child: _buildLogoutButton(),
+    //     ),
+    //   ],
+    // );
+
+    // 简化版：仅显示账户概览
     return Column(
       children: [
         Padding(
@@ -255,31 +347,10 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: [
-              Expanded(child: _buildMobileTab('overview', LucideIcons.user, '概览')),
-              const SizedBox(width: 8),
-              Expanded(child: _buildMobileTab('security', LucideIcons.shield, '安全')),
-              const SizedBox(width: 8),
-              Expanded(child: _buildMobileTab('settings', LucideIcons.settings, '偏好')),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
         Expanded(
-          child: ScrollConfiguration(
-            behavior: _contentScrollBehavior(context),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              child: _buildActiveTabContent(
-                userName,
-                role,
-                account,
-                isNarrow: true,
-              ),
-            ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: _buildOverviewTab(userName, role, account, isNarrow: true),
           ),
         ),
         Padding(

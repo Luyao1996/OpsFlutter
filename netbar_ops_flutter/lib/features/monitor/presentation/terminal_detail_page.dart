@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -6,9 +9,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:webrtc_remote/webrtc_remote.dart' as webrtc;
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../data/terminal_api.dart';
+import '../../desktop/data/desktop_api.dart';
 import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/providers/terminal_dock_provider.dart';
 import '../../../../shared/services/terminal_window_bridge.dart';
@@ -26,8 +31,31 @@ import 'widgets/chat_window_tab.dart';
 
 final terminalDetailProvider = FutureProvider.family<Terminal, int>((ref, terminalId) async {
   final api = ref.read(terminalApiProvider);
-  final domain = ref.watch(currentNetbarProvider).subdomainFull;
-  return api.getById(terminalId, domain: domain);
+  final currentNetbar = ref.watch(currentNetbarProvider);
+  final domain = currentNetbar.subdomainFull;
+
+  // 调试日志
+  debugPrint('[TerminalDetailProvider] ========== 开始获取终端详情 ==========');
+  debugPrint('[TerminalDetailProvider] terminalId: $terminalId');
+  debugPrint('[TerminalDetailProvider] currentNetbar.id: ${currentNetbar.id}');
+  debugPrint('[TerminalDetailProvider] currentNetbar.name: ${currentNetbar.name}');
+  debugPrint('[TerminalDetailProvider] currentNetbar.subdomainFull: $domain');
+
+  if (domain == null || domain.isEmpty) {
+    debugPrint('[TerminalDetailProvider] ERROR: domain 为空！');
+    throw Exception('网吧域名为空，无法获取终端详情');
+  }
+
+  try {
+    debugPrint('[TerminalDetailProvider] 开始调用 api.getById($terminalId, domain: $domain)');
+    final terminal = await api.getById(terminalId, domain: domain);
+    debugPrint('[TerminalDetailProvider] 成功获取终端: ${terminal.name}');
+    return terminal;
+  } catch (e, stack) {
+    debugPrint('[TerminalDetailProvider] ERROR: 获取终端失败: $e');
+    debugPrint('[TerminalDetailProvider] Stack: $stack');
+    rethrow;
+  }
 });
 
 class TerminalDetailPage extends ConsumerStatefulWidget {
@@ -56,6 +84,16 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   bool _isMaximized = false;
   Timer? _heartbeatTimer;
 
+  // 实时截图相关
+  final ScreenshotApi _screenshotApi = ScreenshotApi();
+  Uint8List? _liveScreenshot;
+  bool _screenshotLoading = false;
+  bool _screenshotRunning = false; // 是否正在自动获取截图
+  Timer? _screenshotTimer; // 定时获取截图的 Timer
+  Timer? _countdownTimer; // 倒计时 Timer
+  static const int _screenshotInterval = 10; // 截图间隔（秒）
+  int _screenshotCountdown = _screenshotInterval; // 倒计时剩余秒数
+
   final List<Map<String, dynamic>> _tabs = [
     {'icon': LucideIcons.gamepad2, 'label': '远程控制'},
     {'icon': LucideIcons.fileText, 'label': '文件管理'},
@@ -83,6 +121,107 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         final maximized = await WindowControl.isMaximized(wid);
         if (mounted) setState(() => _isMaximized = maximized);
       });
+    }
+
+  }
+
+  /// 开始自动获取截图
+  void _startScreenshotTimer() {
+    if (_screenshotRunning) return;
+    setState(() {
+      _screenshotRunning = true;
+      _screenshotCountdown = _screenshotInterval;
+    });
+    // 立即获取一次
+    _fetchScreenshotOnce();
+    // 启动倒计时
+    _startCountdown();
+  }
+
+  /// 启动倒计时
+  void _startCountdown() {
+    _countdownTimer?.cancel();
+    setState(() => _screenshotCountdown = _screenshotInterval);
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        _screenshotCountdown--;
+        if (_screenshotCountdown <= 0) {
+          _screenshotCountdown = _screenshotInterval;
+          _fetchScreenshotOnce();
+        }
+      });
+    });
+  }
+
+  /// 暂停自动获取截图
+  void _stopScreenshotTimer() {
+    _screenshotTimer?.cancel();
+    _screenshotTimer = null;
+    _countdownTimer?.cancel();
+    _countdownTimer = null;
+    if (mounted) {
+      setState(() {
+        _screenshotRunning = false;
+        _screenshotCountdown = _screenshotInterval;
+      });
+    }
+  }
+
+  /// 立即获取截图并重置计时器
+  void _fetchScreenshotNow() {
+    // 立即获取
+    _fetchScreenshotOnce();
+    // 如果正在运行状态，重置倒计时
+    if (_screenshotRunning) {
+      _startCountdown();
+    }
+  }
+
+  /// 获取单次截图
+  Future<void> _fetchScreenshotOnce() async {
+    if (!mounted) return;
+
+    final netbar = ref.read(currentNetbarProvider);
+    final domain = netbar.subdomainFull;
+    if (domain == null || domain.isEmpty) return;
+
+    final terminalAsync = ref.read(terminalDetailProvider(widget.terminalId));
+    final terminal = terminalAsync.valueOrNull;
+    if (terminal == null) return;
+
+    setState(() => _screenshotLoading = true);
+
+    try {
+      final result = await _screenshotApi.requestScreenshot(
+        domain: domain,
+        seatId: terminal.seatId,
+      );
+
+      if (!mounted) return;
+
+      Uint8List? bytes;
+      if (result.type == ScreenshotResultType.bytes && result.bytes != null) {
+        bytes = result.bytes;
+      } else if (result.type == ScreenshotResultType.base64 && result.base64Data != null) {
+        bytes = base64Decode(result.base64Data!);
+      }
+
+      if (bytes != null) {
+        setState(() {
+          _liveScreenshot = bytes;
+          _screenshotLoading = false;
+        });
+      } else {
+        setState(() => _screenshotLoading = false);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _screenshotLoading = false);
+      }
     }
   }
 
@@ -445,13 +584,98 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text('实时画面', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: const Text('实时', style: TextStyle(fontSize: 10, color: Colors.green)),
+                Row(
+                  children: [
+                    // 加载指示器
+                    if (_screenshotLoading)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.green.shade400,
+                          ),
+                        ),
+                      ),
+                    // 开始/暂停按钮（带倒计时）
+                    Tooltip(
+                      message: _screenshotRunning ? '暂停自动刷新' : '开始自动刷新',
+                      child: InkWell(
+                        onTap: () {
+                          if (_screenshotRunning) {
+                            _stopScreenshotTimer();
+                          } else {
+                            _startScreenshotTimer();
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(4),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: _screenshotRunning
+                                ? Colors.green.withOpacity(0.1)
+                                : Colors.grey.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _screenshotRunning ? LucideIcons.pause : LucideIcons.play,
+                                size: 12,
+                                color: _screenshotRunning ? Colors.green : Colors.grey.shade600,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _screenshotRunning ? '${_screenshotCountdown}s' : '已暂停',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: _screenshotRunning ? Colors.green : Colors.grey.shade600,
+                                  fontFeatures: const [FontFeature.tabularFigures()],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    // 立即获取按钮（放在最右边）
+                    Tooltip(
+                      message: '立即获取',
+                      child: InkWell(
+                        onTap: _screenshotLoading ? null : _fetchScreenshotNow,
+                        borderRadius: BorderRadius.circular(4),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                LucideIcons.camera,
+                                size: 12,
+                                color: _screenshotLoading ? Colors.grey.shade300 : Colors.blue,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '获取',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: _screenshotLoading ? Colors.grey.shade300 : Colors.blue,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -463,14 +687,21 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  // Placeholder for screen image
-                  Image.network(
-                    terminal.desktopPreviewUrl(width: 800, height: 450),
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const Center(
-                      child: Icon(LucideIcons.monitor, color: Colors.white24, size: 48),
+                  // 优先显示实时截图
+                  if (_liveScreenshot != null)
+                    Image.memory(
+                      _liveScreenshot!,
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true, // 避免切换图片时闪烁
+                    )
+                  else
+                    Image.network(
+                      terminal.desktopPreviewUrl(width: 800, height: 450),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const Center(
+                        child: Icon(LucideIcons.monitor, color: Colors.white24, size: 48),
+                      ),
                     ),
-                  ),
                   // Overlay gradient
                   Positioned.fill(
                     child: Container(
@@ -483,11 +714,45 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                       ),
                     ),
                   ),
+                  // 全屏按钮
+                  Positioned(
+                    right: 8,
+                    bottom: 8,
+                    child: Material(
+                      color: Colors.black.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(6),
+                      child: InkWell(
+                        onTap: () => _showFullscreenPreview(terminal),
+                        borderRadius: BorderRadius.circular(6),
+                        child: const Padding(
+                          padding: EdgeInsets.all(6),
+                          child: Icon(
+                            LucideIcons.maximize2,
+                            size: 16,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 全屏查看实时画面
+  void _showFullscreenPreview(Terminal terminal) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (context) => _FullscreenPreviewDialog(
+        screenshotBytes: _liveScreenshot,
+        fallbackUrl: terminal.desktopPreviewUrl(width: 1920, height: 1080),
+        terminalName: terminal.name,
       ),
     );
   }
@@ -706,7 +971,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     } else if (_selectedTab == '进程管理') {
       return ProcessManagerTab(terminalId: terminal.id, seatId: terminal.seatId);
     } else if (_selectedTab == '终端命令') {
-      return ConsoleManagerTab(terminalId: terminal.id);
+      return ConsoleManagerTab(terminalId: terminal.id, seatId: terminal.seatId);
     } else if (_selectedTab == '硬件配置') {
       return HardwareInfoTab(terminalId: terminal.id);
     } else if (_selectedTab == '网络监控') {
@@ -725,6 +990,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   @override
   void dispose() {
+    _screenshotTimer?.cancel(); // 停止截图计时器
+    _countdownTimer?.cancel(); // 停止倒计时
     _heartbeatTimer?.cancel();
     super.dispose();
   }
@@ -849,7 +1116,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
               LucideIcons.monitor,
               AppColors.iosBlue,
               Colors.white,
-              () => _remoteAction(terminal.seatId, 'vnc'),
+              () => _openVncRemote(terminal, type: 'control'),
             ),
           ),
           const SizedBox(width: 12),
@@ -897,7 +1164,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           LucideIcons.monitor,
           AppColors.iosBlue,
           Colors.white,
-          () => _remoteAction(terminal.seatId, 'vnc'),
+          () => _openVncRemote(terminal, type: 'control'),
         ),
         const SizedBox(height: 12),
         _buildBigActionButton(
@@ -942,6 +1209,75 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         ),
       ),
     );
+  }
+
+  /// 打开 VNC 远程桌面
+  /// type: 'control' (控制) 或 'view' (仅查看)
+  Future<void> _openVncRemote(Terminal terminal, {String type = 'control'}) async {
+    final netbar = ref.read(currentNetbarProvider);
+    final domain = netbar.subdomainFull;
+    if (domain == null || domain.isEmpty) {
+      showTopNotice(context, '网吧域名缺失，无法远程', level: NoticeLevel.error);
+      return;
+    }
+
+    // 获取用户信息
+    final authState = ref.read(authNotifierProvider);
+    final user = authState.user;
+
+    try {
+      // 发送远程连接请求
+      final api = ref.read(terminalApiProvider);
+      final result = await api.remote(
+        terminal.seatId,
+        type,
+        domain: domain,
+        user: {
+          'name': user?.nickname ?? user?.name ?? 'unknown',
+          'seat': terminal.name,
+          'mchName': netbar.name ?? '',
+        },
+      );
+
+      // 检查返回结果
+      final mark = result['mark'];
+      if (mark != null && mark.toString().isNotEmpty) {
+        // 构造 VNC URL
+        // 格式: {protocol}//{host}/noVnc/vnc.html?host={seatId}-{subdomain}&port=880&path=websockify&autoconnect=true&encrypt=0&password=hudd416
+        final subdomain = domain.split(':')[0]; // 去掉端口
+        final vncUrl = Uri.parse(
+          'http://net.hudd.cc:888/noVnc/vnc.html'
+          '?host=${terminal.seatId}-$subdomain'
+          '&port=880'
+          '&path=websockify'
+          '&autoconnect=true'
+          '&encrypt=0'
+          '&password=hudd416'
+          '${type == 'view' ? '&view_only=true' : ''}',
+        );
+
+        if (mounted) {
+          showTopNotice(context, '正在打开 VNC 远程...', level: NoticeLevel.success);
+        }
+
+        // 打开浏览器
+        if (await canLaunchUrl(vncUrl)) {
+          await launchUrl(vncUrl, mode: LaunchMode.externalApplication);
+        } else {
+          if (mounted) {
+            showTopNotice(context, '无法打开浏览器', level: NoticeLevel.error);
+          }
+        }
+      } else {
+        if (mounted) {
+          showTopNotice(context, '远程连接失败：未返回有效标识', level: NoticeLevel.error);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        showTopNotice(context, '远程连接失败: $e', level: NoticeLevel.error);
+      }
+    }
   }
 
   Widget _buildBigActionButton(
@@ -1044,5 +1380,105 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
       }
     }
+  }
+}
+
+/// 全屏预览对话框
+class _FullscreenPreviewDialog extends StatelessWidget {
+  final Uint8List? screenshotBytes;
+  final String fallbackUrl;
+  final String terminalName;
+
+  const _FullscreenPreviewDialog({
+    required this.screenshotBytes,
+    required this.fallbackUrl,
+    required this.terminalName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.all(16),
+      child: Stack(
+        children: [
+          // 图片区域（可缩放）
+          Center(
+            child: InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 4.0,
+              child: screenshotBytes != null
+                  ? Image.memory(
+                      screenshotBytes!,
+                      fit: BoxFit.contain,
+                    )
+                  : Image.network(
+                      fallbackUrl,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => Container(
+                        color: Colors.black54,
+                        child: const Center(
+                          child: Icon(LucideIcons.monitor, color: Colors.white24, size: 64),
+                        ),
+                      ),
+                    ),
+            ),
+          ),
+          // 顶部栏
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.black.withOpacity(0.7), Colors.transparent],
+                ),
+              ),
+              child: Row(
+                children: [
+                  Text(
+                    '实时画面 - $terminalName',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(LucideIcons.x, color: Colors.white),
+                    tooltip: '关闭',
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // 底部提示
+          Positioned(
+            bottom: 16,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Text(
+                  '双指缩放或滚轮缩放查看细节',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

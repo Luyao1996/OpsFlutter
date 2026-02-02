@@ -118,6 +118,9 @@ class _ResourceManagementPageState
   bool _isCut = false;
   bool _isExternalDragOver = false;
 
+  // 网吧切换监听
+  ProviderSubscription<CurrentNetbar>? _netbarSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -127,6 +130,27 @@ class _ResourceManagementPageState
       _registerWebDropZone();
       _registerWebPasteHandler();
     }
+
+    // 监听网吧切换，自动刷新数据
+    _netbarSubscription = ref.listenManual<CurrentNetbar>(
+      currentNetbarProvider,
+      (prev, next) {
+        if (prev?.id != next.id || prev?.version != next.version) {
+          setState(() {
+            _currentFolderId = null;
+            _folderHistory = [BreadcrumbItem(id: null, name: '根目录')];
+            _selectedIds.clear();
+            _clipboard.clear();
+            _isCut = false;
+            _searchQuery = '';
+            _fileSearchController.clear();
+            _isSearching = false;
+            _searchResults.clear();
+          });
+          _loadData();
+        }
+      },
+    );
   }
 
   List<TacticItem> get _selectedStartupItems {
@@ -135,8 +159,8 @@ class _ResourceManagementPageState
         .toList();
   }
 
-  bool get _canDisableStartupItem => _canEdit;
-  bool get _canDeleteStartupItem => _canEdit;
+  bool get _canDisableStartupItem => false; // 资源管理中启动项只读
+  bool get _canDeleteStartupItem => false; // 资源管理中启动项只读
 
   Future<void> _handleBatchStartupEnable(bool enable) async {
     if (!_ensureCanEdit(enable ? '启用启动项' : '禁用启动项')) return;
@@ -342,6 +366,7 @@ class _ResourceManagementPageState
 
   @override
   void dispose() {
+    _netbarSubscription?.close();
     _searchDebounce?.cancel();
     _fileSearchController.dispose();
     HardwareKeyboard.instance.removeHandler(_handleKeyboard);
@@ -691,46 +716,76 @@ class _ResourceManagementPageState
     return auth.user?.groupId ?? 0;
   }
 
-  /// 是否可以编辑当前区域
+  int get _currentUserId {
+    final auth = ref.watch(authNotifierProvider);
+    return auth.user?.id ?? 0;
+  }
+
+  /// 是否是超级管理员（总部管理员，group_id == 0 或 null）
+  bool get _isSuperAdmin {
+    final auth = ref.watch(authNotifierProvider);
+    final groupId = auth.user?.groupId;
+    return groupId == null || groupId == 0;
+  }
+
+  /// 是否是管理员（SuperAdmin 或 分部管理员）
+  bool get _isManager {
+    final auth = ref.watch(authNotifierProvider);
+    return auth.user?.hasAdminAccess == true;
+  }
+
+  /// 是否显示启动项 Tab（仅网吧资源显示）
+  bool get _showStartupTab => _currentZone == ResourceZone.branch;
+
+  /// 是否可以编辑文件（根据区域和角色判断）
   bool get _canEdit {
     switch (_currentZone) {
       case ResourceZone.headquarters:
-        return _isManager; // 总部资源仅管理员可编辑
+        return _isSuperAdmin; // 总公司资源：仅 SuperAdmin 可编辑
       case ResourceZone.branch:
-        return _isManager && _selectedMerchantId != null; // 网吧视图：管理员且已选择网吧
+        return _isManager; // 网吧资源：SuperAdmin 和 Admin 可编辑
       case ResourceZone.shared:
-        return _isManager; // 共享区：管理员可编辑
+        return _isManager; // 共享资源：SuperAdmin 和 Admin 可编辑（普通用户在 _canEditFile 中额外检查）
     }
   }
+
+  /// 检查是否可以编辑指定文件（共享区需检查文件所有者）
+  bool _canEditFile(Resource file) {
+    if (_currentZone == ResourceZone.shared) {
+      // 共享资源：SuperAdmin/Admin 可编辑，普通用户仅可编辑自己上传的文件
+      if (_isManager) return true;
+      return file.uploaderId == _currentUserId;
+    }
+    return _canEdit;
+  }
+
+  /// 启动项编辑权限（资源管理中全部只读）
+  bool get _canEditStartup => false;
+
+  /// 启动项启用/禁用权限（资源管理中全部只读）
+  bool get _canToggleStartup => false;
 
   /// 是否可以查看当前区域
   bool get _canView {
     switch (_currentZone) {
       case ResourceZone.headquarters:
-        return true; // 所有人可查看总部资源
+        return true; // 所有人可查看总公司资源
       case ResourceZone.branch:
-        return true; // 所有人可查看网吧视图（需选择网吧）
+        return true; // 所有人可查看网吧资源
       case ResourceZone.shared:
-        return true; // 共享区所有人可查看
+        return true; // 共享资源所有人可查看
     }
   }
 
   String _editDeniedReason() {
     switch (_currentZone) {
       case ResourceZone.headquarters:
-        return '总部资源仅管理员可编辑';
+        return '总公司资源仅超级管理员可编辑';
       case ResourceZone.branch:
-        if (_selectedMerchantId == null) return '请先选择网吧视图';
-        return '网吧视图资源仅管理员可编辑';
+        return '网吧资源仅管理员可编辑';
       case ResourceZone.shared:
-        return '共享区仅管理员可编辑';
+        return '共享资源仅管理员或文件上传者可编辑';
     }
-  }
-
-  /// 是否是管理员（有编辑权限）
-  bool get _isManager {
-    final auth = ref.watch(authNotifierProvider);
-    return auth.user?.hasAdminAccess == true;
   }
 
   /// 选中的网吧名称
@@ -756,37 +811,36 @@ class _ResourceManagementPageState
       if (_activeModule == ModuleTab.files) {
         List<Resource> resources;
         if (_currentZone == ResourceZone.shared) {
-          // 共享区：调用 /file/shared (根目录) 或 /file/view (子目录)
+          // 共享资源：调用 /file/shared
           resources = await _resourceApi.getSharedFiles(parentId: _currentFolderId);
-        } else if (_currentZone == ResourceZone.branch) {
-          // 分公司资源（网吧视图）：调用 /file/view?merchant_id=xxx
+        } else {
+          // 总公司资源和网吧资源：调用 /file/view，然后根据 group_id 过滤
           final response = await _resourceApi.getAllWithMerchants(
             parentId: _currentFolderId,
-            merchantId: _selectedMerchantId,
           );
-          resources = response.files;
-          // 更新网吧列表（仅在根目录时）
+          // 保存网吧列表
           if (_currentFolderId == null && response.merchants.isNotEmpty) {
             _merchants = response.merchants;
           }
-        } else {
-          // 总公司资源：调用 /file/view（不传 merchant_id）
-          final response = await _resourceApi.getAllWithMerchants(
-            parentId: _currentFolderId,
-          );
-          resources = response.files;
-          // 保存网吧列表供分公司资源使用
-          if (_currentFolderId == null && response.merchants.isNotEmpty) {
-            _merchants = response.merchants;
+          // 根据 group_id 过滤
+          if (_currentZone == ResourceZone.headquarters) {
+            // 总公司资源：group_id == 0
+            resources = response.files.where((f) => f.groupId == 0 || f.groupId == null).toList();
+          } else {
+            // 网吧资源：group_id != 0
+            resources = response.files.where((f) => f.groupId != null && f.groupId != 0).toList();
           }
         }
         if (mounted) setState(() => _files = resources);
       } else {
-        final items = await _startupItemApi.getAll(
-          zone: _getZoneString(),
-          netbarId: _getStartupNetbarId(),
-        );
-        if (mounted) setState(() => _startupItems = items);
+        // 启动项：仅网吧资源时加载
+        if (_currentZone == ResourceZone.branch) {
+          final items = await _startupItemApi.getAll();
+          if (mounted) setState(() => _startupItems = items);
+        } else {
+          // 总公司和共享资源不显示启动项
+          if (mounted) setState(() => _startupItems = []);
+        }
       }
     } catch (e) {
       if (mounted) setState(() => _error = '加载失败: $e');
@@ -806,9 +860,9 @@ class _ResourceManagementPageState
       _currentFolderId = null;
       _folderHistory = [BreadcrumbItem(id: null, name: '根目录')];
       _selectedIds.clear();
-      // 切换到分公司资源时，清空选中的网吧
-      if (zone == ResourceZone.branch) {
-        _selectedMerchantId = null;
+      // 如果不是网吧资源区域，自动切换到文件Tab（因为启动项Tab不显示）
+      if (zone != ResourceZone.branch && _activeModule == ModuleTab.startup) {
+        _activeModule = ModuleTab.files;
       }
     });
     _loadData();
@@ -883,7 +937,20 @@ class _ResourceManagementPageState
   }
 
   List<TacticItem> get _filteredStartupItems {
+    // 仅网吧资源区域显示启动项
+    if (_currentZone != ResourceZone.branch) {
+      return [];
+    }
+
     var items = _startupItems.toList();
+
+    // 根据当前网吧ID过滤启动项
+    final currentNetbarId = ref.read(currentNetbarProvider).id;
+    if (currentNetbarId != null) {
+      items = items.where((item) => item.merchantId == currentNetbarId).toList();
+    }
+
+    // 搜索过滤
     if (_searchQuery.isNotEmpty) {
       items = items
           .where(
@@ -1391,10 +1458,12 @@ class _ResourceManagementPageState
   }
 
   void _showFileContextMenu(Offset position, Resource file) {
-    final isExe =
-        !file.isDirectory &&
-        file.name.toLowerCase().endsWith('.exe') &&
-        _canEdit;
+    // "添加到启动项"条件：exe 文件 && 选择了网吧 && 是管理员（不受 _canEdit 限制）
+    final netbarId = ref.read(currentNetbarProvider).id;
+    final auth = ref.read(authNotifierProvider);
+    final isManager = auth.user?.hasAdminAccess == true;
+    final canAddStartup = netbarId != null && isManager;
+    final isExe = !file.isDirectory && file.name.toLowerCase().endsWith('.exe') && canAddStartup;
     showContextMenu(
       context: context,
       position: position,
@@ -1457,8 +1526,36 @@ class _ResourceManagementPageState
     );
   }
 
+  /// 获取当前目录路径（基于面包屑导航）
+  String _getCurrentFolderPath() {
+    if (_folderHistory.length <= 1) return '';
+    return _folderHistory.skip(1).map((b) => b.name).join('/');
+  }
+
+  /// 构建文件的完整路径
+  String _buildFullPath(Resource file) {
+    if (file.path.isNotEmpty && file.path.contains('/')) {
+      return file.path;
+    }
+    final folderPath = _getCurrentFolderPath();
+    return folderPath.isNotEmpty ? '$folderPath/${file.name}' : file.name;
+  }
+
   void _showAddStartupFromFile(Resource file) {
-    if (!_ensureCanEdit('添加到启动项')) return;
+    // 检查是否选择了网吧
+    final netbarId = ref.read(currentNetbarProvider).id;
+    if (netbarId == null) {
+      showTopNotice(context, '请先选择网吧', level: NoticeLevel.warning);
+      return;
+    }
+    final auth = ref.read(authNotifierProvider);
+    if (auth.user?.hasAdminAccess != true) {
+      showTopNotice(context, '无启动项编辑权限', level: NoticeLevel.warning);
+      return;
+    }
+
+    final fullPath = _buildFullPath(file);
+
     if (context.isPhone) {
       showModalBottomSheet(
         context: context,
@@ -1467,10 +1564,10 @@ class _ResourceManagementPageState
         enableDrag: false,
         builder: (context) => AddStartupItemModal(
           zone: _getZoneString(),
-          netbarId: _getNetbarId(),
+          netbarId: netbarId,
           resourceId: file.id,
-          defaultPath: file.path.isNotEmpty ? file.path : file.name,
-          defaultWorkingDir: deriveDirectoryFromPath(file.path),
+          defaultPath: fullPath,
+          defaultWorkingDir: deriveDirectoryFromPath(fullPath),
           isAdmin: _isAdmin,
           areas: _areas,
           onSuccess: _loadData,
@@ -1484,10 +1581,10 @@ class _ResourceManagementPageState
       context: context,
       builder: (context) => AddStartupItemModal(
         zone: _getZoneString(),
-        netbarId: _getNetbarId(),
+        netbarId: netbarId,
         resourceId: file.id,
-        defaultPath: file.path.isNotEmpty ? file.path : file.name,
-        defaultWorkingDir: deriveDirectoryFromPath(file.path),
+        defaultPath: fullPath,
+        defaultWorkingDir: deriveDirectoryFromPath(fullPath),
         isAdmin: _isAdmin,
         areas: _areas,
         onSuccess: _loadData,
@@ -1750,20 +1847,19 @@ class _ResourceManagementPageState
                   ResourceZone.headquarters,
                   LucideIcons.shieldAlert,
                   '总公司资源',
-                  subtitle: _isManager ? null : '（只读）',
+                  subtitle: _isSuperAdmin ? null : '（只读）',
                 ),
                 const SizedBox(height: 4),
                 _buildZoneButton(
                   ResourceZone.branch,
                   LucideIcons.building2,
-                  '网吧视图',
-                  subtitle: _selectedMerchantName,
+                  '网吧资源',
                 ),
                 const SizedBox(height: 4),
                 _buildZoneButton(
                   ResourceZone.shared,
                   LucideIcons.share2,
-                  '共享区资源',
+                  '共享资源',
                 ),
               ],
             ),
@@ -1779,13 +1875,12 @@ class _ResourceManagementPageState
         ResourceZone.headquarters,
         '总部',
         LucideIcons.shieldAlert,
-        subtitle: _isManager ? null : '只读',
+        subtitle: _isSuperAdmin ? null : '只读',
       ),
       _buildZonePill(
         ResourceZone.branch,
         '网吧',
         LucideIcons.building2,
-        subtitle: _selectedMerchantName,
       ),
       _buildZonePill(ResourceZone.shared, '共享', LucideIcons.share2),
     ];
@@ -2024,65 +2119,11 @@ class _ResourceManagementPageState
           );
         }
 
-        // 网吧视图时显示选择器
-        if (_currentZone == ResourceZone.branch) {
-          utilityActions.add(_buildMerchantSelector());
-        }
         utilityActions.add(_buildLayoutToggle());
         if (_canEdit) utilityActions.add(_buildUploadButton());
       } else {
-        if (_canEdit) {
-          if (_selectedStartupItems.isNotEmpty && !isPhone) {
-            quickActions.addAll([
-                _buildBatchButton(
-                  isPhone ? '启用' : '批量启用',
-                  LucideIcons.toggleRight,
-                  const Color(0xFF22C55E),
-                  () => _handleBatchStartupEnable(true),
-                  enabled: _canDisableStartupItem,
-                ),
-                _buildBatchButton(
-                  isPhone ? '禁用' : '批量禁用',
-                  LucideIcons.toggleLeft,
-                  Colors.grey.shade600,
-                  () => _handleBatchStartupEnable(false),
-                  enabled: _canDisableStartupItem,
-                ),
-                _buildBatchButton(
-                  isPhone ? '删除' : '批量删除',
-                  LucideIcons.trash2,
-                  Colors.red,
-                  _handleBatchStartupDelete,
-                  enabled: _canDeleteStartupItem,
-                ),
-              ]);
-            }
-            if (!isPhone) {
-              utilityActions.add(
-                ElevatedButton.icon(
-                  onPressed: _showAddStartupItemModal,
-                  icon: const Icon(LucideIcons.plus, size: 14),
-                  label: const Text('新增启动项'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF22C55E),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    textStyle: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              );
-            }
-          }
-        }
+        // 资源管理中启动项完全只读，不显示任何编辑按钮
+      }
 
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -2100,8 +2141,10 @@ class _ResourceManagementPageState
                   LucideIcons.folderOpen,
                   '文件管理',
                 ),
-                const SizedBox(width: 12),
-                _buildModuleTab(ModuleTab.startup, LucideIcons.zap, '启动项'),
+                if (_showStartupTab) ...[
+                  const SizedBox(width: 12),
+                  _buildModuleTab(ModuleTab.startup, LucideIcons.zap, '启动项'),
+                ],
               ],
             ),
             if (_activeModule == ModuleTab.files &&
@@ -2137,67 +2180,7 @@ class _ResourceManagementPageState
                   ],
                 ],
               )
-            else if (_activeModule == ModuleTab.startup && _canEdit && isPhone)
-              _selectedStartupItems.isEmpty
-                  ? Row(
-                      children: [
-                        _buildMobileActionButton(
-                          label: '新增',
-                          icon: LucideIcons.plus,
-                          color: const Color(0xFF22C55E),
-                          enabled: true,
-                          onTap: _showAddStartupItemModal,
-                        ),
-                        const Spacer(),
-                      ],
-                    )
-                  : Row(
-                      children: [
-                        if (_canDisableStartupItem) ...[
-                          Expanded(
-                            child: _buildMobileActionButton(
-                              label: '启用',
-                              icon: LucideIcons.toggleRight,
-                              color: const Color(0xFF22C55E),
-                              enabled: true,
-                              onTap: () => _handleBatchStartupEnable(true),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _buildMobileActionButton(
-                              label: '禁用',
-                              icon: LucideIcons.toggleLeft,
-                              color: Colors.grey.shade600,
-                              enabled: true,
-                              onTap: () => _handleBatchStartupEnable(false),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                        ],
-                        if (_canDeleteStartupItem) ...[
-                          Expanded(
-                            child: _buildMobileActionButton(
-                              label: '删除',
-                              icon: LucideIcons.trash2,
-                              color: Colors.red,
-                              enabled: true,
-                              onTap: _handleBatchStartupDelete,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                        ],
-                        Expanded(
-                          child: _buildMobileActionButton(
-                            label: '新增',
-                            icon: LucideIcons.plus,
-                            color: const Color(0xFF22C55E),
-                            enabled: true,
-                            onTap: _showAddStartupItemModal,
-                          ),
-                        ),
-                      ],
-                    )
+            // 资源管理中启动项完全只读，不显示移动端编辑按钮
             else if (utilityActions.isNotEmpty)
               Wrap(spacing: 8, runSpacing: 8, children: utilityActions),
           ],
@@ -2214,8 +2197,10 @@ class _ResourceManagementPageState
       child: Row(
         children: [
           _buildModuleTab(ModuleTab.files, LucideIcons.folderOpen, '文件管理'),
-          const SizedBox(width: 16),
-          _buildModuleTab(ModuleTab.startup, LucideIcons.zap, '启动项'),
+          if (_showStartupTab) ...[
+            const SizedBox(width: 16),
+            _buildModuleTab(ModuleTab.startup, LucideIcons.zap, '启动项'),
+          ],
           const Spacer(),
           if (_activeModule == ModuleTab.files) ...[
             if (_selectedResources.isNotEmpty) ...[
@@ -2369,59 +2354,15 @@ class _ResourceManagementPageState
               ),
             ],
           ],
+          // 资源管理中启动项完全只读，不显示任何编辑按钮
           if (_activeModule == ModuleTab.startup) ...[
-            if (_canEdit && _selectedStartupItems.isNotEmpty) ...[
+            // 仅显示已选数量（只读状态）
+            if (_selectedStartupItems.isNotEmpty) ...[
               Text(
                 '已选 ${_selectedStartupItems.length} 项',
                 style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
               ),
-              const SizedBox(width: 12),
-              _buildBatchButton(
-                '批量启用',
-                LucideIcons.toggleRight,
-                const Color(0xFF22C55E),
-                () => _handleBatchStartupEnable(true),
-                enabled: _canDisableStartupItem,
-              ),
-              const SizedBox(width: 8),
-              _buildBatchButton(
-                '批量禁用',
-                LucideIcons.toggleLeft,
-                Colors.grey.shade600,
-                () => _handleBatchStartupEnable(false),
-                enabled: _canDisableStartupItem,
-              ),
-              const SizedBox(width: 8),
-              _buildBatchButton(
-                '批量删除',
-                LucideIcons.trash2,
-                Colors.red,
-                _handleBatchStartupDelete,
-                enabled: _canDeleteStartupItem,
-              ),
-              const SizedBox(width: 12),
             ],
-            if (_canEdit)
-              ElevatedButton.icon(
-                onPressed: _showAddStartupItemModal,
-                icon: const Icon(LucideIcons.plus, size: 14),
-                label: const Text('新增启动项'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF22C55E),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  textStyle: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
           ],
         ],
       ),
@@ -3094,17 +3035,7 @@ class _ResourceManagementPageState
             Icon(LucideIcons.zap, size: 64, color: Colors.grey.shade300),
             const SizedBox(height: 16),
             Text('暂无启动项', style: TextStyle(color: Colors.grey.shade500)),
-            const SizedBox(height: 16),
-            if (_canEdit)
-              ElevatedButton.icon(
-                onPressed: _showAddStartupItemModal,
-                icon: const Icon(LucideIcons.plus, size: 16),
-                label: const Text('添加启动项'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.iosBlue,
-                  foregroundColor: Colors.white,
-                ),
-              ),
+            // 资源管理中启动项只读，不显示添加按钮
           ],
         ),
       );
@@ -3129,11 +3060,9 @@ class _ResourceManagementPageState
       key: ValueKey('startup-${item.id}'),
       item: item,
       isSelected: isSelected,
-      canEdit: _canEdit,
+      canEdit: _canEditStartup, // 资源管理中启动项只读
       updatedAtText: _formatDate(DateTime.tryParse(item.updatedAt) ?? DateTime.now()),
-      onToggleEnabled: _canEdit
-          ? (val) => _toggleStartupItemEnabled(item, val)
-          : null,
+      onToggleEnabled: null, // 资源管理中启动项不可启用/禁用
       onTap: () {
         final isCtrlPressed = HardwareKeyboard.instance.isControlPressed;
         setState(() {
@@ -3150,7 +3079,7 @@ class _ResourceManagementPageState
           }
         });
       },
-      onDoubleTap: _canEdit ? () => _showStartupConfigModal(item) : null,
+      onDoubleTap: null, // 资源管理中启动项不可双击编辑
       onSecondaryTapDown: (details) {
         if (!isSelected) {
           setState(() {
@@ -3160,31 +3089,14 @@ class _ResourceManagementPageState
         }
         _showStartupItemContextMenu(details.globalPosition, item);
       },
-      onEdit: () => _showStartupConfigModal(item),
-      onDelete: () => _handleDeleteStartupItem(item),
+      onEdit: null, // 资源管理中启动项不可编辑
+      onDelete: null, // 资源管理中启动项不可删除
     );
   }
 
   void _showStartupItemContextMenu(Offset position, TacticItem item) {
-    showContextMenu(
-      context: context,
-      position: position,
-      items: [
-        if (_canEdit)
-          ContextMenuItem(
-            label: '配置',
-            icon: LucideIcons.settings,
-            onTap: () => _showStartupConfigModal(item),
-          ),
-        if (_canEdit)
-          ContextMenuItem(
-            label: '删除',
-            icon: LucideIcons.trash2,
-            onTap: () => _handleDeleteStartupItem(item),
-            divider: true,
-          ),
-      ],
-    );
+    // 资源管理中启动项只读，右键菜单为空
+    // 可以考虑不显示右键菜单，或者只显示"查看"选项
   }
 
   void _showAddStartupItemModal() {
@@ -3294,8 +3206,8 @@ class _ResourceStartupCard extends StatefulWidget {
   final VoidCallback onTap;
   final VoidCallback? onDoubleTap;
   final Function(TapDownDetails) onSecondaryTapDown;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
 
   const _ResourceStartupCard({
     super.key,
@@ -3307,8 +3219,8 @@ class _ResourceStartupCard extends StatefulWidget {
     required this.onTap,
     this.onDoubleTap,
     required this.onSecondaryTapDown,
-    required this.onEdit,
-    required this.onDelete,
+    this.onEdit,
+    this.onDelete,
   });
 
   @override
@@ -3466,16 +3378,19 @@ class _ResourceStartupCardState extends State<_ResourceStartupCard> {
                     widget.updatedAtText,
                     style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                   ),
-                  if (widget.canEdit)
+                  if (widget.canEdit && (widget.onEdit != null || widget.onDelete != null))
                     Row(
                       children: [
-                        _buildIconButton(LucideIcons.settings, widget.onEdit),
-                        const SizedBox(width: 4),
-                        _buildIconButton(
-                          LucideIcons.trash2,
-                          widget.onDelete,
-                          color: Colors.red,
-                        ),
+                        if (widget.onEdit != null)
+                          _buildIconButton(LucideIcons.settings, widget.onEdit!),
+                        if (widget.onEdit != null && widget.onDelete != null)
+                          const SizedBox(width: 4),
+                        if (widget.onDelete != null)
+                          _buildIconButton(
+                            LucideIcons.trash2,
+                            widget.onDelete!,
+                            color: Colors.red,
+                          ),
                       ],
                     ),
                 ],

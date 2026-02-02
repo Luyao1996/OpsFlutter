@@ -273,6 +273,8 @@ class StartupItem {
   final int? creatorGroupId;
   final String? enabledAt;
   final String? disabledAt;
+  final String? disableIn; // 禁用到期时间（临时禁用时有值，格式为 ISO8601 时间字符串）
+  final bool isDisable; // 是否禁用（后端 is_disable 字段）
   final MerchantBrief? merchant;
   final String createdAt;
   final String updatedAt;
@@ -293,7 +295,7 @@ class StartupItem {
   String get path => startupPath ?? '';
   String get zone => 'BRANCH';
   int? get netbarId => merchantId;
-  bool get enabled => disabledAt == null;
+  bool get enabled => !isDisable; // 使用 is_disable 判断启用状态
   String? get args => parameter;
   int? get delay => startupDelay;
   bool get forceRun => isForcedOn;
@@ -320,6 +322,8 @@ class StartupItem {
     this.creatorGroupId,
     this.enabledAt,
     this.disabledAt,
+    this.disableIn,
+    this.isDisable = false,
     this.merchant,
     required this.createdAt,
     required this.updatedAt,
@@ -340,6 +344,8 @@ class StartupItem {
       creatorGroupId: json['creator_group_id'],
       enabledAt: json['enabled_at'],
       disabledAt: json['disabled_at'],
+      disableIn: json['disable_in'],
+      isDisable: json['is_disable'] == true || json['is_disable'] == 1,
       merchant: json['merchant'] != null ? MerchantBrief.fromJson(json['merchant'] as Map<String, dynamic>) : null,
       createdAt: json['created_at']?.toString() ?? '',
       updatedAt: json['updated_at']?.toString() ?? '',
@@ -360,6 +366,8 @@ class StartupItem {
     'creator_group_id': creatorGroupId,
     'enabled_at': enabledAt,
     'disabled_at': disabledAt,
+    'disable_in': disableIn,
+    'is_disable': isDisable,
     'path': startupPath,
     'parameter': parameter,
     'delay': startupDelay,
@@ -455,6 +463,7 @@ class TacticItem {
   String? get args => startup?.parameter;
   bool get forceRun => startup?.isForcedOn ?? false;
   String? get targetOs => startup?.targetOs;
+  String? get disableIn => startup?.disableIn; // 禁用到期时间
 
   TacticItem({
     required this.id,

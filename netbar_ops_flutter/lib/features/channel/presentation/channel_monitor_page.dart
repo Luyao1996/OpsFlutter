@@ -506,7 +506,7 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
                   ),
                   const SizedBox(height: 16),
                   TextButton.icon(
-                    onPressed: () => context.go('/channel-management?tab=startup'),
+                    onPressed: () => context.go('/channel-management?tab=startup&zone=BRANCH'),
                     icon: const Icon(LucideIcons.plus, size: 16),
                     label: const Text('前往配置启动项'),
                     style: TextButton.styleFrom(
@@ -908,7 +908,7 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
                         );
                     if (!context.mounted) return;
                     Navigator.of(context).pop();
-                    context.go('/channel-management?tab=startup&edit_startup_item_id=$startupItemId');
+                    context.go('/channel-management?tab=startup&zone=BRANCH&edit_startup_item_id=$startupItemId');
                   },
           ),
         );

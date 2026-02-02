@@ -31,14 +31,33 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   String _groupSearchQuery = '';
   bool _isLoading = true;
 
+  // 网吧切换监听
+  ProviderSubscription<CurrentNetbar>? _netbarSubscription;
+
   @override
   void initState() {
     super.initState();
     _loadData();
+
+    // 监听网吧切换，自动刷新数据
+    _netbarSubscription = ref.listenManual<CurrentNetbar>(
+      currentNetbarProvider,
+      (prev, next) {
+        if (prev?.id != next.id || prev?.version != next.version) {
+          setState(() {
+            _selectedGroupId = 0;
+            _searchQuery = '';
+            _groupSearchQuery = '';
+          });
+          _loadData();
+        }
+      },
+    );
   }
 
   @override
   void dispose() {
+    _netbarSubscription?.close();
     super.dispose();
   }
 

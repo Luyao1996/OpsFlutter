@@ -4,50 +4,24 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/utils/top_notice.dart';
 import '../data/netbar_api.dart';
-import '../data/area_api.dart';
+import '../data/group_api.dart' as group_api;
 
-/// 可编辑的区域
-class EditableArea {
-  int? id;
-  final TextEditingController nameController;
-  final TextEditingController startIpController;
-  final TextEditingController endIpController;
-
-  EditableArea({
-    this.id,
-    String name = '',
-    String startIp = '',
-    String endIp = '',
-  })  : nameController = TextEditingController(text: name),
-        startIpController = TextEditingController(text: startIp),
-        endIpController = TextEditingController(text: endIp);
-
-  String get name => nameController.text.trim();
-  String get startIp => startIpController.text.trim();
-  String get endIp => endIpController.text.trim();
-
-  void dispose() {
-    nameController.dispose();
-    startIpController.dispose();
-    endIpController.dispose();
-  }
-
-  factory EditableArea.fromNetbarArea(NetbarArea area) {
-    return EditableArea(
-      id: area.id,
-      name: area.name,
-      startIp: area.startIp,
-      endIp: area.endIp,
-    );
-  }
-}
-
-/// 编辑网吧弹窗 - 对应 Vue 的 EditNetbarModal.vue
+/// 新增/编辑网吧弹窗 - 对应 Vue 的 AddNetbarDialog.vue
 class EditNetbarModal extends StatefulWidget {
-  final Netbar netbar;
+  /// 编辑模式时传入网吧对象，新增模式时为 null
+  final Netbar? netbar;
   final VoidCallback? onSaved;
+  final VoidCallback? onDeleted;
 
-  const EditNetbarModal({super.key, required this.netbar, this.onSaved});
+  const EditNetbarModal({
+    super.key,
+    this.netbar,
+    this.onSaved,
+    this.onDeleted,
+  });
+
+  /// 是否为新增模式
+  bool get isCreateMode => netbar == null;
 
   @override
   State<EditNetbarModal> createState() => _EditNetbarModalState();
@@ -55,25 +29,52 @@ class EditNetbarModal extends StatefulWidget {
 
 class _EditNetbarModalState extends State<EditNetbarModal> {
   final _netbarApi = NetbarApi();
-  final _areaApi = AreaApi();
+  final _groupApi = group_api.GroupApi();
 
   late TextEditingController _nameController;
   late TextEditingController _terminalCountController;
 
-  List<EditableArea> _areas = [];
-  final List<int> _areasToDelete = [];
+  // 分组相关
+  List<group_api.Group> _groupList = [];
+  List<int> _selectedGroupIds = [];
+  bool _loadingGroups = true;
+
+  // 可管理人相关
+  List<group_api.GroupUser> _userList = [];
+  List<int> _selectedUserIds = [];
+  bool _loadingUsers = true;
+
   bool _saving = false;
-  bool _loading = true;
+  bool _deleting = false;
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.netbar.name);
-    _terminalCountController = TextEditingController(
-      text: widget.netbar.terminalCount.toString(),
-    );
+
+    if (widget.isCreateMode) {
+      // 新增模式：空值
+      _nameController = TextEditingController();
+      _terminalCountController = TextEditingController();
+    } else {
+      // 编辑模式：回填数据
+      _nameController = TextEditingController(text: widget.netbar!.name);
+      _terminalCountController = TextEditingController(
+        text: widget.netbar!.terminalCount.toString(),
+      );
+
+      // 回填已选分组
+      if (widget.netbar!.groups != null) {
+        _selectedGroupIds = widget.netbar!.groups!.map((g) => g.id).toList();
+      }
+
+      // 回填已选用户
+      if (widget.netbar!.users != null) {
+        _selectedUserIds = widget.netbar!.users!.map((u) => u.id).toList();
+      }
+    }
+
     HardwareKeyboard.instance.addHandler(_handleKey);
-    _loadAreas();
+    _loadData();
   }
 
   @override
@@ -81,9 +82,6 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
     HardwareKeyboard.instance.removeHandler(_handleKey);
     _nameController.dispose();
     _terminalCountController.dispose();
-    for (final a in _areas) {
-      a.dispose();
-    }
     super.dispose();
   }
 
@@ -96,69 +94,93 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
     return false;
   }
 
-  Future<void> _loadAreas() async {
+  Future<void> _loadData() async {
+    await Future.wait([
+      _loadGroups(),
+      _loadUsers(),
+    ]);
+  }
+
+  Future<void> _loadGroups() async {
     try {
-      final areas = await _areaApi.getByNetbar(widget.netbar.id);
-      setState(() {
-        for (final a in _areas) {
-          a.dispose();
-        }
-        _areas = areas.map((a) => EditableArea.fromNetbarArea(a)).toList();
-        _loading = false;
-      });
+      final groups = await _groupApi.getAll();
+      if (mounted) {
+        setState(() {
+          _groupList = groups;
+          _loadingGroups = false;
+        });
+      }
     } catch (e) {
-      setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loadingGroups = false);
+      }
     }
   }
 
-  void _addArea() {
-    setState(() {
-      _areas.add(EditableArea());
-    });
-  }
+  Future<void> _loadUsers() async {
+    try {
+      // 从分组列表中获取用户（GroupApi 返回的分组包含用户信息）
+      final groups = await _groupApi.getAll();
+      final users = <group_api.GroupUser>[];
+      final seenIds = <int>{};
 
-  void _removeArea(int index) {
-    final area = _areas[index];
-    if (area.id != null) {
-      _areasToDelete.add(area.id!);
+      for (final group in groups) {
+        if (group.users != null) {
+          for (final gu in group.users!) {
+            if (!seenIds.contains(gu.id)) {
+              seenIds.add(gu.id);
+              users.add(gu);
+            }
+          }
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _userList = users;
+          _loadingUsers = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _loadingUsers = false);
+      }
     }
-    setState(() {
-      area.dispose();
-      _areas.removeAt(index);
-    });
   }
 
   Future<void> _handleSave() async {
+    // 表单验证
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      showTopNotice(context, '请输入网吧名称', level: NoticeLevel.warning);
+      return;
+    }
+    if (_selectedGroupIds.isEmpty) {
+      showTopNotice(context, '请选择所属分组', level: NoticeLevel.warning);
+      return;
+    }
+
     setState(() => _saving = true);
     try {
-      // 1. 更新网吧基本信息
-      await _netbarApi.update(widget.netbar.id, {
-        'name': _nameController.text.trim(),
-        'total_seats': int.tryParse(_terminalCountController.text) ?? 0,
-      });
+      final data = {
+        'name': name,
+        'terminal_count': int.tryParse(_terminalCountController.text) ?? 0,
+        'group_id': _selectedGroupIds.isNotEmpty ? _selectedGroupIds.first : null,
+        'group_ids': _selectedGroupIds,
+        'user_ids': _selectedUserIds,
+      };
 
-      // 2. 删除标记的区域
-      for (final id in _areasToDelete) {
-        await _areaApi.delete(id);
-      }
-
-      // 3. 更新或创建区域
-      for (final area in _areas) {
-        if (area.name.isEmpty) continue;
-        if (area.id != null) {
-          await _areaApi.update(
-            area.id!,
-            name: area.name,
-            startIp: area.startIp,
-            endIp: area.endIp,
-          );
-        } else {
-          await _areaApi.create(
-            widget.netbar.id,
-            name: area.name,
-            startIp: area.startIp.isNotEmpty ? area.startIp : null,
-            endIp: area.endIp.isNotEmpty ? area.endIp : null,
-          );
+      if (widget.isCreateMode) {
+        // 新增模式
+        await _netbarApi.create(data);
+        if (mounted) {
+          showTopNotice(context, '创建成功', level: NoticeLevel.success);
+        }
+      } else {
+        // 编辑模式
+        await _netbarApi.update(widget.netbar!.id, data);
+        if (mounted) {
+          showTopNotice(context, '保存成功', level: NoticeLevel.success);
         }
       }
 
@@ -166,17 +188,59 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (mounted) {
-        showTopNotice(context, '保存失败: $e', level: NoticeLevel.error);
+        showTopNotice(context, '${widget.isCreateMode ? '创建' : '保存'}失败: $e', level: NoticeLevel.error);
       }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
+  Future<void> _handleDelete() async {
+    if (widget.isCreateMode) return; // 新增模式不支持删除
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确认删除'),
+        content: Text('确定要删除网吧"${widget.netbar!.name}"吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _deleting = true);
+    try {
+      await _netbarApi.delete(widget.netbar!.id);
+      widget.onDeleted?.call();
+      if (mounted) {
+        showTopNotice(context, '删除成功', level: NoticeLevel.success);
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      if (mounted) {
+        showTopNotice(context, '删除失败: $e', level: NoticeLevel.error);
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final screen = MediaQuery.sizeOf(context);
-    final isNarrow = screen.width < 860;
+    final isNarrow = screen.width < 600;
+
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: EdgeInsets.symmetric(
@@ -185,13 +249,13 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
       ),
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: 760,
+          maxWidth: 500,
           maxHeight: MediaQuery.of(context).size.height * 0.9,
         ),
         child: DecoratedBox(
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(16),
             boxShadow: AppShadows.xl,
           ),
           child: Column(
@@ -209,7 +273,7 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
 
   Widget _buildHeader() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
       ),
@@ -219,29 +283,19 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
               color: AppColors.iosBlue.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(
               LucideIcons.building2,
-              size: 24,
+              size: 20,
               color: AppColors.iosBlue,
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '编辑网吧',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'ID: ${widget.netbar.id}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                ),
-              ],
+            child: Text(
+              widget.isCreateMode ? '新增网吧' : '编辑网吧',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
           ),
           IconButton(
@@ -250,7 +304,7 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
               backgroundColor: Colors.grey.shade100,
               shape: const CircleBorder(),
             ),
-            icon: Icon(LucideIcons.x, size: 18, color: Colors.grey.shade500),
+            icon: Icon(LucideIcons.x, size: 16, color: Colors.grey.shade500),
           ),
         ],
       ),
@@ -263,238 +317,277 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 基本信息
-          _buildSectionLabel('基本信息'),
-          _buildCard(
-            child: Column(
-              children: [
-                _buildLabeledField(
-                  label: '网吧名称',
-                  controller: _nameController,
-                ),
-                Divider(
-                  height: 1,
-                  indent: 16,
-                  endIndent: 16,
-                  color: Colors.grey.shade200,
-                ),
-                _buildLabeledField(
-                  label: '终端数量',
-                  controller: _terminalCountController,
-                  isNumber: true,
-                ),
-              ],
+          // 网吧名称
+          _buildFormField(
+            label: '网吧名称',
+            child: TextField(
+              controller: _nameController,
+              decoration: _inputDecoration('请输入网吧名称'),
             ),
           ),
-          const SizedBox(height: 24),
-          // 区域配置
-          _buildSectionLabel('区域配置'),
-          _buildAreasSection(),
+          const SizedBox(height: 16),
+
+          // 终端数
+          _buildFormField(
+            label: '终端数',
+            child: TextField(
+              controller: _terminalCountController,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: _inputDecoration('请输入终端数'),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // 所属分组
+          _buildFormField(
+            label: '所属分组',
+            child: _buildGroupSelector(),
+          ),
+          const SizedBox(height: 16),
+
+          // 可管理人
+          _buildFormField(
+            label: '可管理人',
+            child: _buildUserSelector(),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildSectionLabel(String label) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 4, bottom: 8),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          color: Colors.grey.shade500,
-          letterSpacing: 0.5,
+  Widget _buildFormField({required String label, required Widget child}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: Colors.grey.shade700,
+          ),
         ),
-      ),
+        const SizedBox(height: 8),
+        child,
+      ],
     );
   }
 
-  Widget _buildCard({required Widget child}) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade100),
+  InputDecoration _inputDecoration(String hint) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+      filled: true,
+      fillColor: Colors.grey.shade50,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: Colors.grey.shade200),
       ),
-      child: child,
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: Colors.grey.shade200),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: AppColors.iosBlue, width: 2),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
     );
   }
 
-  Widget _buildLabeledField({
-    required String label,
-    required TextEditingController controller,
-    bool isNumber = false,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade600),
-          ),
-          const SizedBox(height: 6),
-          TextField(
-            controller: controller,
-            keyboardType: isNumber ? TextInputType.number : TextInputType.text,
-            inputFormatters: isNumber ? [FilteringTextInputFormatter.digitsOnly] : null,
-            decoration: InputDecoration(
-              isDense: true,
-              filled: true,
-              fillColor: Colors.white,
-              hintText: label,
-              hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey.shade200),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey.shade200),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: AppColors.iosBlue, width: 2),
-              ),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            ),
-            style: const TextStyle(fontSize: 14),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAreasSection() {
-    if (_loading) {
+  /// 分组多选器
+  Widget _buildGroupSelector() {
+    if (_loadingGroups) {
       return Container(
-        height: 100,
+        height: 48,
         decoration: BoxDecoration(
           color: Colors.grey.shade50,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.grey.shade200),
         ),
-        child: const Center(child: CircularProgressIndicator()),
+        child: const Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
       );
     }
 
-    return _buildCard(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    return _buildMultiSelectChips(
+      items: _groupList.map((g) => _SelectItem(id: g.id, label: g.name)).toList(),
+      selectedIds: _selectedGroupIds,
+      onChanged: (ids) => setState(() => _selectedGroupIds = ids),
+      placeholder: '请选择分组',
+    );
+  }
+
+  /// 用户多选器
+  Widget _buildUserSelector() {
+    if (_loadingUsers) {
+      return Container(
+        height: 48,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: const Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+
+    return _buildMultiSelectChips(
+      items: _userList.map((u) => _SelectItem(id: u.id, label: u.nickname)).toList(),
+      selectedIds: _selectedUserIds,
+      onChanged: (ids) => setState(() => _selectedUserIds = ids),
+      placeholder: '选择管理人',
+    );
+  }
+
+  /// 多选 Chips 组件
+  Widget _buildMultiSelectChips({
+    required List<_SelectItem> items,
+    required List<int> selectedIds,
+    required ValueChanged<List<int>> onChanged,
+    required String placeholder,
+  }) {
+    return InkWell(
+      onTap: () => _showMultiSelectDialog(
+        items: items,
+        selectedIds: selectedIds,
+        onChanged: onChanged,
+        title: placeholder,
+      ),
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Row(
           children: [
-            Row(
-              children: [
-                const SizedBox(width: 24),
-                Expanded(
-                  flex: 2,
-                  child: Text('分区名称', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade600)),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  flex: 2,
-                  child: Text('开始 IP', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade600)),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  flex: 2,
-                  child: Text('结束 IP', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade600)),
-                ),
-                const SizedBox(width: 44),
-              ],
+            Expanded(
+              child: selectedIds.isEmpty
+                  ? Text(
+                      placeholder,
+                      style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+                    )
+                  : Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: selectedIds.map((id) {
+                        final item = items.firstWhere(
+                          (i) => i.id == id,
+                          orElse: () => _SelectItem(id: id, label: id.toString()),
+                        );
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppColors.iosBlue.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                item.label,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: AppColors.iosBlue,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              GestureDetector(
+                                onTap: () {
+                                  final newIds = List<int>.from(selectedIds)..remove(id);
+                                  onChanged(newIds);
+                                },
+                                child: Icon(
+                                  LucideIcons.x,
+                                  size: 14,
+                                  color: AppColors.iosBlue.withValues(alpha: 0.7),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ),
             ),
-            const SizedBox(height: 12),
-            ..._areas.asMap().entries.map(
-              (entry) => _buildAreaRow(entry.key, entry.value),
-            ),
-            const SizedBox(height: 8),
-            _buildAddAreaButton(),
+            Icon(LucideIcons.chevronDown, size: 18, color: Colors.grey.shade400),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildAreaRow(int index, EditableArea area) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 24,
-            child: Icon(LucideIcons.gripVertical, size: 16, color: Colors.grey.shade300),
+  /// 显示多选对话框
+  void _showMultiSelectDialog({
+    required List<_SelectItem> items,
+    required List<int> selectedIds,
+    required ValueChanged<List<int>> onChanged,
+    required String title,
+  }) {
+    final tempSelected = List<int>.from(selectedIds);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(title, style: const TextStyle(fontSize: 16)),
+          contentPadding: const EdgeInsets.symmetric(vertical: 16),
+          content: SizedBox(
+            width: 300,
+            child: items.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Center(child: Text('暂无数据')),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: items.length,
+                    itemBuilder: (ctx, index) {
+                      final item = items[index];
+                      final isSelected = tempSelected.contains(item.id);
+                      return CheckboxListTile(
+                        value: isSelected,
+                        title: Text(item.label, style: const TextStyle(fontSize: 14)),
+                        controlAffinity: ListTileControlAffinity.leading,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                        onChanged: (val) {
+                          setDialogState(() {
+                            if (val == true) {
+                              tempSelected.add(item.id);
+                            } else {
+                              tempSelected.remove(item.id);
+                            }
+                          });
+                        },
+                      );
+                    },
+                  ),
           ),
-          const SizedBox(width: 8),
-          Expanded(flex: 2, child: _buildAreaInput(area.nameController, '分区名称')),
-          const SizedBox(width: 8),
-          Expanded(flex: 2, child: _buildAreaInput(area.startIpController, '开始 IP')),
-          const SizedBox(width: 8),
-          Expanded(flex: 2, child: _buildAreaInput(area.endIpController, '结束 IP')),
-          const SizedBox(width: 8),
-          IconButton(
-            onPressed: () => _removeArea(index),
-            icon: Icon(
-              LucideIcons.trash2,
-              size: 16,
-              color: Colors.grey.shade400,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('取消'),
             ),
-            hoverColor: Colors.red.shade50,
-            style: IconButton.styleFrom(foregroundColor: Colors.red),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAreaInput(TextEditingController controller, String placeholder) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: TextField(
-        controller: controller,
-        decoration: InputDecoration(
-          hintText: placeholder,
-          hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 8,
-          ),
-        ),
-        style: const TextStyle(fontSize: 13),
-      ),
-    );
-  }
-
-  Widget _buildAddAreaButton() {
-    return GestureDetector(
-      onTap: _addArea,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Colors.grey.shade300,
-            style: BorderStyle.solid,
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(LucideIcons.plus, size: 16, color: Colors.grey.shade500),
-            const SizedBox(width: 8),
-            Text(
-              '添加新分区',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: Colors.grey.shade500,
-              ),
+            TextButton(
+              onPressed: () {
+                onChanged(tempSelected);
+                Navigator.of(ctx).pop();
+              },
+              child: const Text('确定'),
             ),
           ],
         ),
@@ -504,14 +597,30 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
 
   Widget _buildFooter() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       decoration: BoxDecoration(
         color: Colors.grey.shade50.withValues(alpha: 0.5),
         border: Border(top: BorderSide(color: Colors.grey.shade100)),
-        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
       ),
       child: Row(
         children: [
+          // 删除按钮（仅编辑模式显示）
+          if (!widget.isCreateMode)
+            TextButton.icon(
+              onPressed: _deleting ? null : _handleDelete,
+              icon: _deleting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(LucideIcons.trash2, size: 16),
+              label: Text(_deleting ? '删除中...' : '删除'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.red,
+              ),
+            ),
           const Spacer(),
           // 取消按钮
           TextButton(
@@ -526,10 +635,19 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
           ),
           const SizedBox(width: 12),
           // 保存按钮
-          ElevatedButton.icon(
+          ElevatedButton(
             onPressed: _saving ? null : _handleSave,
-            icon: _saving
-                ? SizedBox(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.iosBlue,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              elevation: 0,
+            ),
+            child: _saving
+                ? const SizedBox(
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(
@@ -537,20 +655,18 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
                       color: Colors.white,
                     ),
                   )
-                : const Icon(LucideIcons.save, size: 16),
-            label: Text(_saving ? '保存中...' : '保存更改'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.iosBlue,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              elevation: 0,
-            ),
+                : Text(widget.isCreateMode ? '创建' : '保存'),
           ),
         ],
       ),
     );
   }
+}
+
+/// 选项项
+class _SelectItem {
+  final int id;
+  final String label;
+
+  _SelectItem({required this.id, required this.label});
 }

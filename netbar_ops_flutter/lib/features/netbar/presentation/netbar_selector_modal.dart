@@ -201,7 +201,34 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
             onSelect: (group) => setState(() => _selectedGroup = group),
             label: '分组',
           ),
+          const SizedBox(width: 12),
+          _buildAddButton(),
         ],
+      ),
+    );
+  }
+
+  Widget _buildAddButton() {
+    return ElevatedButton.icon(
+      onPressed: _handleAdd,
+      icon: const Icon(LucideIcons.plus, size: 16),
+      label: const Text('新增网吧'),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: AppColors.iosBlue,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        elevation: 0,
+      ),
+    );
+  }
+
+  void _handleAdd() {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.2),
+      builder: (context) => EditNetbarModal(
+        onSaved: () => ref.invalidate(netbarListProvider),
       ),
     );
   }
@@ -643,9 +670,13 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
       ),
       child: Row(
         children: [
+          Icon(LucideIcons.plus, size: 12, color: Colors.grey.shade400),
+          const SizedBox(width: 6),
+          Text('点击新增按钮添加网吧', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+          const SizedBox(width: 16),
           Icon(LucideIcons.edit2, size: 12, color: Colors.grey.shade400),
           const SizedBox(width: 6),
-          Text('点击编辑按钮可修改网吧信息', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+          Text('点击编辑按钮修改网吧信息', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
           const Spacer(),
           Text('Esc 关闭', style: TextStyle(fontSize: 12, color: Colors.grey.shade400)),
         ],

@@ -50,6 +50,12 @@ class ApiClient {
             final message = map['message'];
             final data = map['data'];
 
+            // 如果没有 code 字段，说明不是标准 API 响应格式，直接传递
+            // 这种情况常见于网吧终端接口直接返回数据（如文件列表）
+            if (code == null) {
+              return handler.next(response);
+            }
+
             // 处理响应体中的 401 未授权
             if (code == 401) {
               final ignoreUnauthorized = response.requestOptions.extra['ignoreUnauthorized'] == true;

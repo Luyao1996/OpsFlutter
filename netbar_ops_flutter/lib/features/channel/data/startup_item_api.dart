@@ -86,10 +86,19 @@ class StartupItemApi {
   }
 
   /// 禁用启动项（仍用 startup 接口）
+  /// [state.duration] 可以是小时数(int)或 'permanent' 表示永久禁用
   Future<void> disable(int startupId, EnabledState state) async {
-    final hours = state.durationDays != null ? state.durationDays! * 24 : null;
+    int? hours;
+    if (state.duration != null && state.duration != 'permanent') {
+      // duration 可能是 int 或 String
+      if (state.duration is int) {
+        hours = state.duration as int;
+      } else {
+        hours = int.tryParse(state.duration.toString());
+      }
+    }
     await _client.post('/startup/disable/$startupId', data: {
-      if (hours != null) 'hours': hours,
+      if (hours != null && hours > 0) 'hours': hours,
     });
   }
 
