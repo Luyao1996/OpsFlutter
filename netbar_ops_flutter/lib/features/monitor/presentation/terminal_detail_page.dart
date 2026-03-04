@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -29,7 +30,7 @@ import 'widgets/network_monitor_tab.dart';
 import 'widgets/log_manager_tab.dart';
 import 'widgets/chat_window_tab.dart';
 
-final terminalDetailProvider = FutureProvider.family<Terminal, int>((ref, terminalId) async {
+final terminalDetailProvider = FutureProvider.autoDispose.family<Terminal, int>((ref, terminalId) async {
   final api = ref.read(terminalApiProvider);
   final currentNetbar = ref.watch(currentNetbarProvider);
   final domain = currentNetbar.subdomainFull;
@@ -89,10 +90,10 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   Uint8List? _liveScreenshot;
   bool _screenshotLoading = false;
   bool _screenshotRunning = false; // 是否正在自动获取截图
-  Timer? _screenshotTimer; // 定时获取截图的 Timer
   Timer? _countdownTimer; // 倒计时 Timer
-  static const int _screenshotInterval = 10; // 截图间隔（秒）
+  static const int _screenshotInterval = 5; // 截图间隔（秒）
   int _screenshotCountdown = _screenshotInterval; // 倒计时剩余秒数
+  bool _screenshotCancelled = false; // 用于标记请求是否被取消
 
   final List<Map<String, dynamic>> _tabs = [
     {'icon': LucideIcons.gamepad2, 'label': '远程控制'},
@@ -130,28 +131,29 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     if (_screenshotRunning) return;
     setState(() {
       _screenshotRunning = true;
-      _screenshotCountdown = _screenshotInterval;
+      _screenshotCancelled = false;
     });
-    // 立即获取一次
-    _fetchScreenshotOnce();
-    // 启动倒计时
-    _startCountdown();
+    // 立即获取一次（获取成功后会自动启动倒计时）
+    _fetchScreenshotOnce(autoStart: true);
   }
 
-  /// 启动倒计时
+  /// 启动倒计时（截图成功后调用）
   void _startCountdown() {
     _countdownTimer?.cancel();
+    if (!_screenshotRunning || !mounted) return;
+
     setState(() => _screenshotCountdown = _screenshotInterval);
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) {
+      if (!mounted || !_screenshotRunning) {
         timer.cancel();
         return;
       }
       setState(() {
         _screenshotCountdown--;
         if (_screenshotCountdown <= 0) {
-          _screenshotCountdown = _screenshotInterval;
-          _fetchScreenshotOnce();
+          timer.cancel();
+          // 倒计时结束，再次获取截图
+          _fetchScreenshotOnce(autoStart: true);
         }
       });
     });
@@ -159,13 +161,14 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   /// 暂停自动获取截图
   void _stopScreenshotTimer() {
-    _screenshotTimer?.cancel();
-    _screenshotTimer = null;
+    // 标记取消，正在进行的请求会检查此标志
+    _screenshotCancelled = true;
     _countdownTimer?.cancel();
     _countdownTimer = null;
     if (mounted) {
       setState(() {
         _screenshotRunning = false;
+        _screenshotLoading = false;
         _screenshotCountdown = _screenshotInterval;
       });
     }
@@ -173,16 +176,15 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   /// 立即获取截图并重置计时器
   void _fetchScreenshotNow() {
+    // 取消当前倒计时
+    _countdownTimer?.cancel();
     // 立即获取
-    _fetchScreenshotOnce();
-    // 如果正在运行状态，重置倒计时
-    if (_screenshotRunning) {
-      _startCountdown();
-    }
+    _fetchScreenshotOnce(autoStart: _screenshotRunning);
   }
 
   /// 获取单次截图
-  Future<void> _fetchScreenshotOnce() async {
+  /// [autoStart] 为 true 时，成功后会自动启动倒计时
+  Future<void> _fetchScreenshotOnce({bool autoStart = false}) async {
     if (!mounted) return;
 
     final netbar = ref.read(currentNetbarProvider);
@@ -201,7 +203,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         seatId: terminal.seatId,
       );
 
-      if (!mounted) return;
+      // 检查是否已被取消
+      if (!mounted || _screenshotCancelled) {
+        if (mounted) setState(() => _screenshotLoading = false);
+        return;
+      }
 
       Uint8List? bytes;
       if (result.type == ScreenshotResultType.bytes && result.bytes != null) {
@@ -215,12 +221,32 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           _liveScreenshot = bytes;
           _screenshotLoading = false;
         });
+        // 获取成功后，如果在自动模式下，启动倒计时
+        if (autoStart && _screenshotRunning) {
+          _startCountdown();
+        }
       } else {
         setState(() => _screenshotLoading = false);
+        // 获取失败，如果在自动模式下，重试
+        if (autoStart && _screenshotRunning && !_screenshotCancelled) {
+          Future.delayed(const Duration(seconds: 1), () {
+            if (mounted && _screenshotRunning && !_screenshotCancelled) {
+              _fetchScreenshotOnce(autoStart: true);
+            }
+          });
+        }
       }
     } catch (_) {
       if (mounted) {
         setState(() => _screenshotLoading = false);
+        // 获取失败，如果在自动模式下，重试
+        if (autoStart && _screenshotRunning && !_screenshotCancelled) {
+          Future.delayed(const Duration(seconds: 1), () {
+            if (mounted && _screenshotRunning && !_screenshotCancelled) {
+              _fetchScreenshotOnce(autoStart: true);
+            }
+          });
+        }
       }
     }
   }
@@ -401,17 +427,14 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
                 ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: Icon(LucideIcons.settings, size: 18, color: Colors.grey.shade600),
-                  onPressed: () {},
-                ),
-                if (isDesktopPlatform)
+                if (isDesktopPlatform) ...[
+                  const SizedBox(width: 8),
                   IconButton(
                     icon: Icon(LucideIcons.minus, size: 18, color: Colors.grey.shade600),
                     tooltip: '最小化到 Dock',
                     onPressed: () => _handleMinimize(terminal),
                   ),
+                ],
                 if (isDesktopPlatform && widget.isStandaloneWindow)
                   IconButton(
                     icon: Icon(
@@ -422,11 +445,13 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                     tooltip: _isMaximized ? '还原窗口' : '最大化窗口',
                     onPressed: _handleToggleMaximize,
                   ),
-                IconButton(
-                  icon: Icon(LucideIcons.x, size: 18, color: Colors.grey.shade600),
-                  tooltip: '关闭窗口',
-                  onPressed: _handleClose,
-                ),
+                // 浏览器模式不显示关闭按钮
+                if (!kIsWeb)
+                  IconButton(
+                    icon: Icon(LucideIcons.x, size: 18, color: Colors.grey.shade600),
+                    tooltip: '关闭窗口',
+                    onPressed: _handleClose,
+                  ),
               ],
             )
           ],
@@ -491,10 +516,6 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                       )
                     : Icon(LucideIcons.refreshCw, size: 18, color: Colors.grey.shade700),
               ),
-              IconButton(
-                icon: Icon(LucideIcons.settings, size: 18, color: Colors.grey.shade600),
-                onPressed: () {},
-              ),
               if (isDesktopPlatform)
                 IconButton(
                   icon: Icon(LucideIcons.minus, size: 18, color: Colors.grey.shade600),
@@ -511,11 +532,13 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                   tooltip: _isMaximized ? '还原窗口' : '最大化窗口',
                   onPressed: _handleToggleMaximize,
                 ),
-              IconButton(
-                icon: Icon(LucideIcons.x, size: 18, color: Colors.grey.shade600),
-                tooltip: '关闭',
-                onPressed: _handleClose,
-              ),
+              // 浏览器模式不显示关闭按钮
+              if (!kIsWeb)
+                IconButton(
+                  icon: Icon(LucideIcons.x, size: 18, color: Colors.grey.shade600),
+                  tooltip: '关闭',
+                  onPressed: _handleClose,
+                ),
             ],
           ),
           const SizedBox(height: 6),
@@ -629,7 +652,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                               ),
                               const SizedBox(width: 4),
                               Text(
-                                _screenshotRunning ? '${_screenshotCountdown}s' : '已暂停',
+                                _screenshotRunning
+                                    ? (_screenshotLoading ? '获取中...' : '${_screenshotCountdown}s')
+                                    : '已暂停',
                                 style: TextStyle(
                                   fontSize: 10,
                                   color: _screenshotRunning ? Colors.green : Colors.grey.shade600,
@@ -990,7 +1015,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   @override
   void dispose() {
-    _screenshotTimer?.cancel(); // 停止截图计时器
+    _screenshotCancelled = true; // 标记取消
     _countdownTimer?.cancel(); // 停止倒计时
     _heartbeatTimer?.cancel();
     super.dispose();
@@ -1189,26 +1214,79 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   }
 
   /// 打开 WebRTC 远程桌面
-  void _openWebRTCRemote(Terminal terminal) {
-    // TODO: 后续从 terminal 获取 peerId
-    const peerId = 'xxx';  // 暂时写死
-    const wsUrl = 'wss://webrtc.03kan.com/ws?Peer=$peerId&type=Client';
+  Future<void> _openWebRTCRemote(Terminal terminal) async {
+    final netbar = ref.read(currentNetbarProvider);
+    final domain = netbar.subdomainFull;
+    if (domain == null || domain.isEmpty) {
+      showTopNotice(context, '网吧域名缺失，无法远程', level: NoticeLevel.error);
+      return;
+    }
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => webrtc.RemoteScreen(
-          server: webrtc.ServerConfig(
-            id: 'webrtc_${terminal.id}',
-            name: 'WebRTC ${terminal.name}',
-            host: 'webrtc.03kan.com',
-            port: 443,
-            wsUrl: wsUrl,
-          ),
-          onDisconnect: () => Navigator.pop(context),
-        ),
+    // 显示 loading
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
       ),
     );
+
+    try {
+      // 获取用户信息
+      final authState = ref.read(authNotifierProvider);
+      final user = authState.user;
+
+      // 发送 task 命令
+      final api = ref.read(terminalApiProvider);
+      final result = await api.remote(
+        terminal.seatId,
+        'webrtc',
+        domain: domain,
+        user: {
+          'name': user?.nickname ?? user?.name ?? 'unknown',
+          'seat': terminal.name,
+          'mchName': netbar.name ?? '',
+        },
+      );
+
+      // 关闭 loading
+      if (mounted) Navigator.pop(context);
+
+      // 检查返回结果
+      final mark = result['mark'];
+      if (mark != null && mark.toString().isNotEmpty) {
+        // 构造 WebRTC 参数并打开
+        final subdomain = domain.split('.')[0];
+        final peerId = '${terminal.seatId}-$subdomain';
+        final wsUrl = 'wss://webrtc.03kan.com/ws?Peer=$peerId&type=Client';
+
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => webrtc.RemoteScreen(
+              server: webrtc.ServerConfig(
+                id: 'webrtc_${terminal.id}',
+                name: 'WebRTC ${terminal.name}',
+                host: 'webrtc.03kan.com',
+                port: 443,
+                wsUrl: wsUrl,
+              ),
+              onDisconnect: () => Navigator.pop(context),
+            ),
+          ),
+        );
+      } else {
+        if (mounted) {
+          showTopNotice(context, '远程连接失败：未返回有效标识', level: NoticeLevel.error);
+        }
+      }
+    } catch (e) {
+      // 关闭 loading
+      if (mounted) Navigator.pop(context);
+      if (mounted) {
+        showTopNotice(context, '远程连接失败: $e', level: NoticeLevel.error);
+      }
+    }
   }
 
   /// 打开 VNC 远程桌面

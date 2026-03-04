@@ -251,7 +251,18 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     );
   }
 
+  /// 全局页面路由（不需要显示网吧 Tab 栏）
+  static const _globalRoutes = ['/dashboard', '/user-management', '/system-logs'];
+
+  /// 判断当前是否是全局页面
+  bool _isGlobalPage() {
+    final location = GoRouterState.of(context).uri.path;
+    return _globalRoutes.any((route) => location == route || location.startsWith('$route/'));
+  }
+
   Widget _buildHeader(AuthState authState, bool isNarrow, AsyncValue<DashboardStats> stats) {
+    final isGlobalPage = _isGlobalPage();
+
     if (isNarrow) {
       return Container(
         height: 56,
@@ -266,7 +277,11 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
           children: [
             _buildLeftSection(authState, isNarrow: true),
             const SizedBox(width: 10),
-            Expanded(child: _buildNetbarPicker(true)),
+            // 全局页面不显示网吧选择器，网吧页面显示
+            if (!isGlobalPage)
+              Expanded(child: _buildNetbarPicker(true))
+            else
+              const Spacer(),
             const SizedBox(width: 10),
             _buildRightSection(authState, true),
           ],
@@ -283,36 +298,60 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
       padding: EdgeInsets.symmetric(horizontal: isNarrow ? 12 : 24),
       child: Row(
         children: [
-          // 左侧: Logo & 菜单
+          // 左侧: Logo & 菜单 & 页面名称
           _buildLeftSection(authState, isNarrow: isNarrow),
           const SizedBox(width: 24),
-          Container(width: 1, height: 24, color: Colors.grey.shade200),
-          const SizedBox(width: 24),
-          // 网吧选择：桌面用标签栏，移动用单个选择按钮
-          Expanded(
-            child: Row(
-              children: [
-                Expanded(
-                  child: isNarrow
-                      ? _buildNetbarPicker(isNarrow)
-                      : const NetbarTabBar(),
-                ),
-                if (!isNarrow) ...[
+          // 全局页面不显示网吧选项卡，网吧页面显示
+          if (!isGlobalPage) ...[
+            Container(width: 1, height: 24, color: Colors.grey.shade200),
+            const SizedBox(width: 24),
+            Expanded(
+              child: Row(
+                children: [
+                  Expanded(child: const NetbarTabBar()),
                   const SizedBox(width: 24),
-                  _buildStatusPills(stats), // Moved here
+                  _buildStatusPills(stats),
                 ],
-              ],
+              ),
             ),
-          ),
+          ] else
+            const Spacer(),
           const SizedBox(width: 12),
-          // 右侧: 运维、通知、用户
+          // 右侧: 用户菜单
           _buildRightSection(authState, isNarrow),
         ],
       ),
     );
   }
 
+  /// 获取当前页面信息（名称、图标、颜色）
+  ({String name, IconData icon, Color color}) _getCurrentPageInfo() {
+    final location = GoRouterState.of(context).uri.path;
+
+    if (location.startsWith('/dashboard')) {
+      return (name: '概览', icon: LucideIcons.layoutDashboard, color: Colors.blue);
+    } else if (location.startsWith('/monitor')) {
+      return (name: '网吧管理', icon: LucideIcons.network, color: Colors.indigo);
+    } else if (location.startsWith('/resource-management')) {
+      return (name: '资源管理', icon: LucideIcons.database, color: Colors.orange);
+    } else if (location.startsWith('/channel-management')) {
+      return (name: '通道管理', icon: LucideIcons.activity, color: AppColors.iosBlue);
+    } else if (location.startsWith('/desktop-management')) {
+      return (name: '桌面管理', icon: LucideIcons.layoutGrid, color: Colors.teal);
+    } else if (location.startsWith('/user-management')) {
+      return (name: '用户账户', icon: LucideIcons.users, color: Colors.purple);
+    } else if (location.startsWith('/channel-monitor')) {
+      return (name: '监控中心', icon: LucideIcons.monitor, color: Colors.green);
+    } else if (location.startsWith('/system-logs')) {
+      return (name: '系统日志', icon: LucideIcons.fileText, color: Colors.grey);
+    } else {
+      return (name: '首页', icon: LucideIcons.home, color: AppColors.iosBlue);
+    }
+  }
+
   Widget _buildLeftSection(AuthState authState, {required bool isNarrow}) {
+    final pageInfo = _getCurrentPageInfo();
+
     return Row(
       children: [
         // 系统菜单按钮
@@ -381,12 +420,13 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
               LucideIcons.activity,
               AppColors.iosBlue,
             ),
-            _buildMenuItem(
-              '桌面管理',
-              '/desktop-management',
-              LucideIcons.layoutGrid,
-              Colors.teal,
-            ),
+            if (!platformHelper.isMobile)
+              _buildMenuItem(
+                '桌面管理',
+                '/desktop-management',
+                LucideIcons.layoutGrid,
+                Colors.teal,
+              ),
             // 总部管理员或分部管理员可以访问用户账户
             if (authState.user?.hasAdminAccess == true)
               _buildMenuItem(
@@ -410,6 +450,19 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
             _buildMenuItem('安全中心', '#', LucideIcons.shield, Colors.red),
           ],
         ),
+        // 当前页面名称
+        if (!isNarrow) ...[
+          const SizedBox(width: 12),
+          Icon(pageInfo.icon, size: 18, color: pageInfo.color),
+          const SizedBox(width: 8),
+          Text(
+            pageInfo.name,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
       ],
     );
   }

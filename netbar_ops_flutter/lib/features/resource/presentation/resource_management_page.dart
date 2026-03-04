@@ -1768,52 +1768,14 @@ class _ResourceManagementPageState
     return Scaffold(
       backgroundColor: const Color(0xFFFAFAFA),
       bottomNavigationBar: _isMobile ? _buildMobileZoneSelector() : null,
-      body: Column(
-        children: [
-          _buildHeader(),
-          Expanded(
-            child: _isMobile
-                ? _buildMainArea()
-                : Row(
-                    children: [
-                      _buildSidebar(),
-                      Expanded(child: _buildMainArea()),
-                    ],
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      padding: _isMobile
-          ? const EdgeInsets.symmetric(horizontal: 12, vertical: 12)
-          : const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
-        boxShadow: AppShadows.sm,
-      ),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: () => context.go('/monitor'),
-            icon: Icon(LucideIcons.arrowLeft, color: Colors.grey.shade600),
-          ),
-          Container(
-            width: 1,
-            height: 24,
-            color: Colors.grey.shade200,
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-          ),
-          const Text(
-            '资源管理',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-        ],
-      ),
+      body: _isMobile
+          ? _buildMainArea()
+          : Row(
+              children: [
+                _buildSidebar(),
+                Expanded(child: _buildMainArea()),
+              ],
+            ),
     );
   }
 
@@ -2072,53 +2034,6 @@ class _ResourceManagementPageState
       final utilityActions = <Widget>[];
 
       if (_activeModule == ModuleTab.files) {
-        if (_selectedResources.isNotEmpty) {
-          quickActions.add(
-            _buildBatchButton(
-              '复制',
-              LucideIcons.copy,
-              AppColors.iosBlue,
-              _handleBatchCopy,
-            ),
-          );
-          if (_canEdit) {
-            quickActions.addAll([
-              _buildBatchButton(
-                '剪切',
-                LucideIcons.scissors,
-                Colors.orange,
-                _handleBatchCut,
-                enabled: _canEdit,
-              ),
-              _buildBatchButton(
-                '删除',
-                LucideIcons.trash2,
-                Colors.red,
-                _handleBatchDelete,
-                enabled: _canEdit,
-              ),
-              if (_currentZone == ResourceZone.shared)
-                _buildBatchButton(
-                  '拷贝到本网吧',
-                  LucideIcons.download,
-                  const Color(0xFF22C55E),
-                  _handleCopyToLocal,
-                ),
-            ]);
-          }
-        }
-
-        if (_canEdit && _clipboard.isNotEmpty) {
-          quickActions.add(
-            _buildBatchButton(
-              '粘贴 (${_clipboard.length})',
-              LucideIcons.clipboard,
-              Colors.green,
-              _handlePaste,
-            ),
-          );
-        }
-
         utilityActions.add(_buildLayoutToggle());
         if (_canEdit) utilityActions.add(_buildUploadButton());
       } else {
@@ -2512,35 +2427,38 @@ class _ResourceManagementPageState
         color: Colors.grey.shade50,
         border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
       ),
-      child: Row(
-        children: [
-          for (int i = 0; i < _folderHistory.length; i++) ...[
-            GestureDetector(
-              onTap: () => _handleBreadcrumbClick(i),
-              child: Text(
-                _folderHistory[i].name,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: i == _folderHistory.length - 1
-                      ? FontWeight.w500
-                      : FontWeight.normal,
-                  color: i == _folderHistory.length - 1
-                      ? Colors.grey.shade900
-                      : Colors.grey.shade500,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (int i = 0; i < _folderHistory.length; i++) ...[
+              GestureDetector(
+                onTap: () => _handleBreadcrumbClick(i),
+                child: Text(
+                  _folderHistory[i].name,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: i == _folderHistory.length - 1
+                        ? FontWeight.w500
+                        : FontWeight.normal,
+                    color: i == _folderHistory.length - 1
+                        ? Colors.grey.shade900
+                        : Colors.grey.shade500,
+                  ),
                 ),
               ),
-            ),
-            if (i < _folderHistory.length - 1)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: Icon(
-                  LucideIcons.chevronRight,
-                  size: 14,
-                  color: Colors.grey.shade400,
+              if (i < _folderHistory.length - 1)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Icon(
+                    LucideIcons.chevronRight,
+                    size: 14,
+                    color: Colors.grey.shade400,
+                  ),
                 ),
-              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }

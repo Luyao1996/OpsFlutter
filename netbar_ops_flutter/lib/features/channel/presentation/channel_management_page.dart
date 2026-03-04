@@ -1845,7 +1845,6 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       backgroundColor: AppColors.iosBg,
       body: Column(
         children: [
-          _buildHeader(),
           Expanded(
             child: Row(
               children: [
@@ -1855,37 +1854,6 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
             ),
           ),
           if (_isMobile) _buildMobileZoneSelector(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      padding: _isMobile
-          ? const EdgeInsets.symmetric(horizontal: 12, vertical: 12)
-          : const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
-        boxShadow: AppShadows.sm,
-      ),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: () => context.go('/monitor'),
-            icon: Icon(LucideIcons.arrowLeft, color: Colors.grey.shade600),
-          ),
-          Container(
-            width: 1,
-            height: 24,
-            color: Colors.grey.shade200,
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-          ),
-          const Text(
-            '通道管理',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
         ],
       ),
     );
@@ -2140,42 +2108,6 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
     final mobileUtilityActions = <Widget>[];
     if (_activeModule == ModuleTab.files) {
       if (_isMobile) {
-        if (_selectedResources.isNotEmpty) {
-          mobileQuickActions.add(
-            _buildBatchButton(
-              '复制',
-              LucideIcons.copy,
-              AppColors.iosBlue,
-              _handleBatchCopy,
-            ),
-          );
-          if (_canEdit) {
-            mobileQuickActions.addAll([
-              _buildBatchButton(
-                '剪切',
-                LucideIcons.scissors,
-                Colors.orange,
-                _handleBatchCut,
-              ),
-              _buildBatchButton(
-                '删除',
-                LucideIcons.trash2,
-                Colors.red,
-                _handleBatchDelete,
-              ),
-            ]);
-          }
-        }
-        if (_canEdit && _clipboard.isNotEmpty) {
-          mobileQuickActions.add(
-            _buildBatchButton(
-              '粘贴 (${_clipboard.length})',
-              LucideIcons.clipboard,
-              Colors.green,
-              _handlePaste,
-            ),
-          );
-        }
         mobileUtilityActions.add(_buildLayoutToggle());
         if (_canEdit) mobileUtilityActions.add(_buildUploadButton());
       } else {
