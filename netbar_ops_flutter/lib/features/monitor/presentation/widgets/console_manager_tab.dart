@@ -487,12 +487,15 @@ class _ConsoleManagerTabState extends ConsumerState<ConsoleManagerTab> {
             style: TextStyle(color: Color(0xFF888888), fontSize: 14),
           ),
           const SizedBox(width: 8),
-          Text(
-            '命令提示符 - ${widget.seatId}',
-            style: const TextStyle(
-              color: Color(0xFFCCCCCC),
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
+          Flexible(
+            child: Text(
+              '命令提示符 - ${widget.seatId}',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFFCCCCCC),
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
           const Spacer(),

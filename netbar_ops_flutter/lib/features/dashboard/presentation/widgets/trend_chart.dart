@@ -12,9 +12,10 @@ class TrendChart extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final selectedRange = ref.watch(dashboardRangeProvider);
     final trendAsync = ref.watch(dashboardTrendProvider);
+    final isMobile = MediaQuery.of(context).size.width < 600;
 
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.all(isMobile ? 12 : 24),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
@@ -24,62 +25,49 @@ class TrendChart extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '终端在线趋势',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '近 ${selectedRange == TimeRange.months12 ? '12个月' : '30天'} 数据监控',
-                    style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
-                  ),
-                ],
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
+          // 手机端上下排列，桌面端左右排列
+          if (isMobile) ...[
+            Text(
+              '终端在线趋势',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '近 ${selectedRange == TimeRange.months12 ? '12个月' : '30天'} 数据监控',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
                 ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<TimeRange>(
-                    value: selectedRange,
-                    isDense: true,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.black87,
+                _buildRangeDropdown(ref, selectedRange),
+              ],
+            ),
+          ] else ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '终端在线趋势',
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                     ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: TimeRange.days30,
-                        child: Text('最近30天'),
-                      ),
-                      DropdownMenuItem(
-                        value: TimeRange.months12,
-                        child: Text('最近12个月'),
-                      ),
-                    ],
-                    onChanged: (newValue) {
-                      if (newValue != null) {
-                        ref.read(dashboardRangeProvider.notifier).state = newValue;
-                      }
-                    },
-                  ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '近 ${selectedRange == TimeRange.months12 ? '12个月' : '30天'} 数据监控',
+                      style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+                    ),
+                  ],
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
+                _buildRangeDropdown(ref, selectedRange),
+              ],
+            ),
+          ],
+          SizedBox(height: isMobile ? 8 : 16),
           // 图例
           _buildLegend(),
-          const SizedBox(height: 16),
+          SizedBox(height: isMobile ? 8 : 16),
           Expanded(
             child: trendAsync.when(
               loading: () => const Center(child: CircularProgressIndicator()),
@@ -95,13 +83,20 @@ class TrendChart extends ConsumerWidget {
 
                 return SfCartesianChart(
                   plotAreaBorderWidth: 0,
+                  zoomPanBehavior: ZoomPanBehavior(
+                    enablePanning: true,
+                    enablePinching: true,
+                    zoomMode: ZoomMode.x,
+                  ),
                   primaryXAxis: CategoryAxis(
                     majorGridLines: const MajorGridLines(width: 0),
                     axisLine: const AxisLine(width: 0),
                     majorTickLines: const MajorTickLines(width: 0),
-                    labelStyle: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                    labelStyle: TextStyle(color: Colors.grey.shade600, fontSize: isMobile ? 10 : 11),
                     labelRotation: data.length > 15 ? 45 : 0,
                     labelIntersectAction: AxisLabelIntersectAction.rotate45,
+                    autoScrollingDelta: isMobile ? 10 : null,
+                    autoScrollingMode: AutoScrollingMode.end,
                   ),
                   primaryYAxis: NumericAxis(
                     axisLine: const AxisLine(width: 0),
@@ -239,6 +234,43 @@ class TrendChart extends ConsumerWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 时间范围下拉框
+  Widget _buildRangeDropdown(WidgetRef ref, TimeRange selectedRange) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<TimeRange>(
+          value: selectedRange,
+          isDense: true,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: Colors.black87,
+          ),
+          items: const [
+            DropdownMenuItem(
+              value: TimeRange.days30,
+              child: Text('最近30天'),
+            ),
+            DropdownMenuItem(
+              value: TimeRange.months12,
+              child: Text('最近12个月'),
+            ),
+          ],
+          onChanged: (newValue) {
+            if (newValue != null) {
+              ref.read(dashboardRangeProvider.notifier).state = newValue;
+            }
+          },
+        ),
       ),
     );
   }

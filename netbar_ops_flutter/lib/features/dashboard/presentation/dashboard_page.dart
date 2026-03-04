@@ -83,7 +83,7 @@ class DashboardPage extends ConsumerWidget {
             }
 
             final itemWidth = (width - (columns - 1) * gap) / columns;
-            const chartAndActionsHeight = 500.0;
+            final chartAndActionsHeight = isPhone ? 350.0 : 500.0;
 
             return SingleChildScrollView(
               padding: EdgeInsets.all(pagePadding),

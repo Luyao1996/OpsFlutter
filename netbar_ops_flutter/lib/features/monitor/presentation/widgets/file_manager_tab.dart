@@ -398,6 +398,8 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
                 enabled: true,
                 onTap: () => _loadFiles(path: _currentPath),
               ),
+              const SizedBox(width: 6),
+              _buildDriveDropdown(),
               const SizedBox(width: 10),
               // 合并的路径栏（面包屑 / 编辑模式）
               Expanded(child: _buildPathBar()),
@@ -413,6 +415,58 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
             SizedBox(height: 36, child: _buildSearchField()),
           ],
         ],
+      ),
+    );
+  }
+
+  /// 获取当前盘符（如 C:）
+  String get _currentDrive {
+    if (_currentPath.length >= 2 && _currentPath[1] == ':') {
+      return _currentPath.substring(0, 2);
+    }
+    return '';
+  }
+
+  /// 磁盘切换下拉按钮
+  Widget _buildDriveDropdown() {
+    final current = _currentDrive;
+    return Tooltip(
+      message: '切换磁盘',
+      child: Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade50,
+          border: Border.all(color: Colors.grey.shade200),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<String>(
+            value: _drives.any((d) => _normalizePath(d.path) == current) ? current : null,
+            isDense: true,
+            icon: Icon(LucideIcons.chevronDown, size: 14, color: Colors.grey.shade600),
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.grey.shade800),
+            items: _drives.map((d) {
+              final path = _normalizePath(d.path);
+              return DropdownMenuItem<String>(
+                value: path,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(LucideIcons.hardDrive, size: 14, color: Colors.grey.shade600),
+                    const SizedBox(width: 6),
+                    Text('${d.name}'),
+                  ],
+                ),
+              );
+            }).toList(),
+            onChanged: (value) {
+              if (value != null && value != current) {
+                _navigateTo(value);
+              }
+            },
+          ),
+        ),
       ),
     );
   }
