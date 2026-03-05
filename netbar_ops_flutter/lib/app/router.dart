@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -149,10 +150,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/terminal/:id',
         pageBuilder: (context, state) {
-          final id = int.parse(state.pathParameters['id'] ?? '0'); // Convert String to int
+          final id = int.parse(state.pathParameters['id'] ?? '0');
+          final screenshot = state.extra as Uint8List?;
           return CustomTransitionPage(
             key: state.pageKey,
-            child: TerminalDetailPage(terminalId: id),
+            child: TerminalDetailPage(terminalId: id, initialScreenshot: screenshot),
             transitionsBuilder: (context, animation, secondaryAnimation, child) {
               return FadeTransition(opacity: animation, child: child);
             },

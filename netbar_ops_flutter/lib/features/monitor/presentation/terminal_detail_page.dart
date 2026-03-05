@@ -28,7 +28,7 @@ import 'widgets/console_manager_tab.dart';
 import 'widgets/hardware_info_tab.dart';
 import 'widgets/network_monitor_tab.dart';
 import 'widgets/log_manager_tab.dart';
-import 'widgets/chat_window_tab.dart';
+
 
 final terminalDetailProvider = FutureProvider.autoDispose.family<Terminal, int>((ref, terminalId) async {
   final api = ref.read(terminalApiProvider);
@@ -64,6 +64,7 @@ class TerminalDetailPage extends ConsumerStatefulWidget {
   final bool isStandaloneWindow;
   final int? windowId;
   final String? initialTab;
+  final Uint8List? initialScreenshot;
 
   const TerminalDetailPage({
     super.key,
@@ -71,6 +72,7 @@ class TerminalDetailPage extends ConsumerStatefulWidget {
     this.isStandaloneWindow = false,
     this.windowId,
     this.initialTab,
+    this.initialScreenshot,
   });
 
   @override
@@ -103,12 +105,14 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     {'icon': LucideIcons.cpu, 'label': '硬件配置'},
     {'icon': LucideIcons.network, 'label': '网络监控'},
     {'icon': LucideIcons.fileSpreadsheet, 'label': '日志分析'},
-    {'icon': LucideIcons.messageSquare, 'label': '聊天窗口'},
   ];
 
   @override
   void initState() {
     super.initState();
+    if (widget.initialScreenshot != null) {
+      _liveScreenshot = widget.initialScreenshot;
+    }
     if (widget.initialTab != null && widget.initialTab!.isNotEmpty) {
       _selectedTab = widget.initialTab!;
     }
@@ -1003,8 +1007,6 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       return const NetworkMonitorTab();
     } else if (_selectedTab == '日志分析') {
       return LogManagerTab(terminalId: terminal.id);
-    } else if (_selectedTab == '聊天窗口') {
-      return ChatWindowTab(terminalId: terminal.id, terminalName: terminal.name);
     }
     return Center(child: Text('功能模块 [$_selectedTab] 开发中...'));
   }

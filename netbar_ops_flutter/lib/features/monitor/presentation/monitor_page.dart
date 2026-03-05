@@ -658,7 +658,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
       openInNewTab(buildWebUrlForLocation(location));
       return;
     }
-    context.push(location);
+    context.push(location, extra: _screenshotCache[terminal.seatId]);
   }
 
   /// 转换并格式化为东八区时间

@@ -395,10 +395,12 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
       ),
       child: Row(
         children: [
-          TextButton.icon(
+          IconButton(
             onPressed: _delete,
-            icon: const Icon(LucideIcons.trash2, size: 16, color: Colors.red),
-            label: const Text('删除成员', style: TextStyle(color: Colors.red)),
+            icon: const Icon(LucideIcons.trash2, size: 18, color: Colors.red),
+            tooltip: '删除成员',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
           ),
           const Spacer(),
           TextButton(
@@ -411,7 +413,7 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.iosBlue,
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               elevation: 0,
             ),

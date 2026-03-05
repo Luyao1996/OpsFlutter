@@ -282,7 +282,13 @@ class StartupItemMonitorApi {
     if (data is Map<String, dynamic>) {
       final paginator = data['paginator'] as Map<String, dynamic>?;
       if (paginator != null) {
-        merchantList = paginator['data'] as List? ?? [];
+        final raw = paginator['data'];
+        if (raw is List) {
+          merchantList = raw;
+        } else if (raw is Map) {
+          // 后端单条数据时可能返回 Map 而非 List
+          merchantList = [raw];
+        }
       }
     }
 

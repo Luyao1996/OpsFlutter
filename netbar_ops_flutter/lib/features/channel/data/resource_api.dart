@@ -361,14 +361,15 @@ class ResourceApi {
     throw UnimplementedError('后端不支持复制资源');
   }
 
-  /// 移动资源 - 后端不支持
-  Future<Resource> move(
-    int id,
-    int? targetParentId, {
-    int? netbarId,
-    String? zone,
-  }) async {
-    throw UnimplementedError('后端不支持移动资源');
+  /// 移动资源
+  Future<void> move(int id, int? targetParentId) async {
+    final data = <String, dynamic>{
+      'group_file_id': id,
+    };
+    if (targetParentId != null) {
+      data['dest_group_file_id'] = targetParentId;
+    }
+    await _client.post('/file/move', data: FormData.fromMap(data));
   }
 
   /// 上传文件（multipart）

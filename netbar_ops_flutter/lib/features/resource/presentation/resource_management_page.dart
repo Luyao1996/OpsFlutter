@@ -1685,15 +1685,16 @@ class _ResourceManagementPageState
     if (_clipboard.isEmpty) return;
     if (!_ensureCanEdit('粘贴')) return;
 
+    final wasCut = _isCut;
     try {
       for (final file in _clipboard) {
-        if (_isCut) {
+        if (wasCut) {
           await _resourceApi.move(file.id, _currentFolderId);
         } else {
           await _resourceApi.copy(file.id, _currentFolderId);
         }
       }
-      if (_isCut) {
+      if (wasCut) {
         setState(() {
           _clipboard.clear();
           _isCut = false;
@@ -1701,7 +1702,7 @@ class _ResourceManagementPageState
       }
       _loadData();
       if (mounted) {
-        showTopNotice(context, _isCut ? '移动成功' : '复制成功', level: NoticeLevel.success);
+        showTopNotice(context, wasCut ? '移动成功' : '复制成功', level: NoticeLevel.success);
       }
     } catch (e) {
       if (mounted) {
@@ -2036,6 +2037,42 @@ class _ResourceManagementPageState
       if (_activeModule == ModuleTab.files) {
         utilityActions.add(_buildLayoutToggle());
         if (_canEdit) utilityActions.add(_buildUploadButton());
+        // 选中文件时显示操作按钮
+        if (_selectedResources.isNotEmpty) {
+          quickActions.add(_buildMobileActionButton(
+            label: '复制',
+            icon: LucideIcons.copy,
+            color: AppColors.iosBlue,
+            enabled: true,
+            onTap: _handleBatchCopy,
+          ));
+          if (_canEdit) {
+            quickActions.add(_buildMobileActionButton(
+              label: '剪切',
+              icon: LucideIcons.scissors,
+              color: Colors.orange,
+              enabled: true,
+              onTap: _handleBatchCut,
+            ));
+            quickActions.add(_buildMobileActionButton(
+              label: '删除',
+              icon: LucideIcons.trash2,
+              color: Colors.red,
+              enabled: true,
+              onTap: _handleBatchDelete,
+            ));
+          }
+        }
+        // 剪贴板有内容时显示粘贴按钮
+        if (_canEdit && _clipboard.isNotEmpty) {
+          quickActions.add(_buildMobileActionButton(
+            label: '粘贴 (${_clipboard.length})',
+            icon: LucideIcons.clipboard,
+            color: Colors.green,
+            enabled: true,
+            onTap: _handlePaste,
+          ));
+        }
       } else {
         // 资源管理中启动项完全只读，不显示任何编辑按钮
       }

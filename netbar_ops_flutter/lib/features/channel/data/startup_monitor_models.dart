@@ -37,7 +37,8 @@ class StartupItemStats {
     }
 
     // 解析 analysis 数组中的统计数据（如果有）
-    final analysisList = json['analysis'] as List? ?? [];
+    final rawAnalysis = json['analysis'];
+    final analysisList = rawAnalysis is List ? rawAnalysis : [];
     int launchCount = 0;
     int failureCount = 0;
     int survival1min = 0;
@@ -97,11 +98,13 @@ class NetbarMonitorData {
   /// 结构: {id, name, terminal_count, terminal_avg, is_online, groups, startups}
   factory NetbarMonitorData.fromJson(Map<String, dynamic> json) {
     // 从 startups 数组解析启动项
-    final startupsJson = json['startups'] as List? ?? [];
+    final rawStartups = json['startups'];
+    final startupsJson = rawStartups is List ? rawStartups : [];
 
     // 从 groups 数组取第一个分组的名称
     String groupName = '默认分组';
-    final groups = json['groups'] as List?;
+    final rawGroups = json['groups'];
+    final groups = rawGroups is List ? rawGroups : null;
     if (groups != null && groups.isNotEmpty) {
       final firstGroup = groups.first;
       if (firstGroup is Map<String, dynamic>) {
