@@ -3,10 +3,12 @@
 //
 
 #include "flutter_window.h"
+#include "../../../windows/runner/virtual_clipboard.h"
 
 #include "flutter_windows.h"
 
 #include "tchar.h"
+#include <windowsx.h>
 
 #include <iostream>
 #include <utility>
@@ -33,7 +35,7 @@ void RegisterWindowClass(WNDPROC wnd_proc) {
     window_class.hInstance = GetModuleHandle(nullptr);
     window_class.hIcon =
         LoadIcon(window_class.hInstance, IDI_APPLICATION);
-    window_class.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
+    window_class.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     window_class.lpszMenuName = nullptr;
     window_class.lpfnWndProc = wnd_proc;
     RegisterClass(&window_class);
@@ -81,6 +83,11 @@ bool ShouldHideNativeChrome(const std::string &args) {
   return (true_pos - key_pos) < 64;
 }
 
+// System-aware resize border width (matches Windows native behavior).
+inline int GetResizeBorderWidth() {
+  return GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+}
+
 }
 
 FlutterWindow::FlutterWindow(
@@ -96,22 +103,18 @@ FlutterWindow::FlutterWindow(
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   scale_factor_ = dpi / 96.0;
 
-  const bool hide_chrome = ShouldHideNativeChrome(args);
+  hide_chrome_ = ShouldHideNativeChrome(args);
+
+  // Use chromeless style at creation time to avoid flicker
+  const DWORD style = hide_chrome_
+      ? (WS_OVERLAPPEDWINDOW & ~(WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX))
+      : WS_OVERLAPPEDWINDOW;
 
   HWND window_handle = CreateWindow(
-      kFlutterWindowClassName, L"", WS_OVERLAPPEDWINDOW,
+      kFlutterWindowClassName, L"", style,
       Scale(target_point.x, scale_factor_), Scale(target_point.y, scale_factor_),
       Scale(1280, scale_factor_), Scale(720, scale_factor_),
       nullptr, nullptr, GetModuleHandle(nullptr), this);
-
-  if (hide_chrome && window_handle) {
-    LONG style = GetWindowLong(window_handle, GWL_STYLE);
-    style &= ~(WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
-    SetWindowLong(window_handle, GWL_STYLE, style);
-    SetWindowPos(window_handle, nullptr, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
-                     SWP_FRAMECHANGED);
-  }
 
   RECT frame;
   GetClientRect(window_handle, &frame);
@@ -127,6 +130,15 @@ FlutterWindow::FlutterWindow(
   SetParent(view_handle, window_handle);
   MoveWindow(view_handle, 0, 0, frame.right - frame.left, frame.bottom - frame.top, true);
 
+  // Subclass the Flutter child view so its border zone returns HTTRANSPARENT,
+  // allowing the parent window's WM_NCHITTEST to handle resize hit-testing.
+  if (hide_chrome_ && view_handle) {
+    child_view_handle_ = view_handle;
+    SetWindowSubclass(view_handle, FlutterWindow::ChildHitTestSubclassProc,
+                      /*uIdSubclass=*/1,
+                      reinterpret_cast<DWORD_PTR>(window_handle));
+  }
+
   InternalMultiWindowPluginRegisterWithRegistrar(
       flutter_controller_->engine()->GetRegistrarForPlugin("DesktopMultiWindowPlugin"));
   window_channel_ = WindowChannel::RegisterWithRegistrar(
@@ -134,6 +146,12 @@ FlutterWindow::FlutterWindow(
 
   if (_g_window_created_callback) {
     _g_window_created_callback(flutter_controller_.get());
+  }
+
+  // Register virtual clipboard plugin for remote clipboard file sync
+  VirtualClipboardPlugin::Register(flutter_controller_->engine()->messenger());
+  if (auto* vcp = VirtualClipboardPlugin::GetInstance()) {
+    vcp->SetWindowHandle(window_handle);
   }
 
   // hide the window when created.
@@ -145,6 +163,35 @@ FlutterWindow::FlutterWindow(
 FlutterWindow *FlutterWindow::GetThisFromHandle(HWND window) noexcept {
   return reinterpret_cast<FlutterWindow *>(
       GetWindowLongPtr(window, GWLP_USERDATA));
+}
+
+// static - Subclass proc for the Flutter child view window.
+// When the mouse is within the parent's resize border zone, returns HTTRANSPARENT
+// so that Windows forwards WM_NCHITTEST to the parent (our custom handler).
+LRESULT CALLBACK FlutterWindow::ChildHitTestSubclassProc(
+    HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
+    UINT_PTR uIdSubclass, DWORD_PTR dwRefData) {
+  if (uMsg == WM_NCHITTEST) {
+    HWND parent = reinterpret_cast<HWND>(dwRefData);
+    LONG style = GetWindowLong(parent, GWL_STYLE);
+    // Only transparent at border when resizable (has WS_THICKFRAME) and not maximized.
+    // Fullscreen removes WS_THICKFRAME, so border stays opaque to preserve hover events.
+    if ((style & WS_THICKFRAME) && !IsZoomed(parent)) {
+      const int border = GetResizeBorderWidth();
+      RECT rc;
+      GetWindowRect(parent, &rc);
+      const int x = GET_X_LPARAM(lParam);
+      const int y = GET_Y_LPARAM(lParam);
+      if (x < rc.left + border || x > rc.right  - border ||
+          y < rc.top  + border || y > rc.bottom - border) {
+        return HTTRANSPARENT;
+      }
+    }
+  } else if (uMsg == WM_NCDESTROY) {
+    // Clean up subclass when child window is destroyed
+    RemoveWindowSubclass(hWnd, ChildHitTestSubclassProc, uIdSubclass);
+  }
+  return DefSubclassProc(hWnd, uMsg, wParam, lParam);
 }
 
 // static
@@ -164,6 +211,56 @@ LRESULT CALLBACK FlutterWindow::WndProc(HWND window, UINT message, WPARAM wparam
 }
 
 LRESULT FlutterWindow::MessageHandler(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+
+  // Highest priority: hideNativeChrome interception.
+  // Must run BEFORE Flutter engine and plugins (e.g. window_manager),
+  // otherwise plugins will handle the message first and restore the title bar.
+  if (hide_chrome_) {
+    switch (message) {
+      case WM_NCCALCSIZE:
+        // Entire window rect is client area - no title bar, no border
+        return 0;
+      case WM_NCPAINT:
+        // Skip all non-client area painting
+        return 0;
+      case WM_NCHITTEST: {
+        // No resize when maximized or fullscreen (WS_THICKFRAME removed)
+        if (IsZoomed(hwnd)) return HTCLIENT;
+        if (!(GetWindowLong(hwnd, GWL_STYLE) & WS_THICKFRAME)) return HTCLIENT;
+        // System-aware resize border (matches ChildHitTestSubclassProc)
+        const int border = GetResizeBorderWidth();
+        RECT rc;
+        GetWindowRect(hwnd, &rc);
+        int x = GET_X_LPARAM(lparam);
+        int y = GET_Y_LPARAM(lparam);
+        bool left   = x < rc.left   + border;
+        bool right  = x > rc.right  - border;
+        bool top    = y < rc.top    + border;
+        bool bottom = y > rc.bottom - border;
+        if (top    && left)  return HTTOPLEFT;
+        if (top    && right) return HTTOPRIGHT;
+        if (bottom && left)  return HTBOTTOMLEFT;
+        if (bottom && right) return HTBOTTOMRIGHT;
+        if (left)   return HTLEFT;
+        if (right)  return HTRIGHT;
+        if (top)    return HTTOP;
+        if (bottom) return HTBOTTOM;
+        return HTCLIENT;
+      }
+      // Forward non-client button messages directly to DefWindowProc,
+      // bypassing Flutter engine / plugins (e.g. window_manager) that
+      // may consume them and prevent the system resize modal loop.
+      case WM_NCLBUTTONDOWN:
+      case WM_NCLBUTTONDBLCLK:
+        return DefWindowProc(hwnd, message, wparam, lparam);
+      case WM_GETMINMAXINFO: {
+        MINMAXINFO* mmi = reinterpret_cast<MINMAXINFO*>(lparam);
+        mmi->ptMinTrackSize.x = static_cast<LONG>(400 * scale_factor_);
+        mmi->ptMinTrackSize.y = static_cast<LONG>(300 * scale_factor_);
+        return 0;
+      }
+    }
+  }
 
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
@@ -210,7 +307,6 @@ LRESULT FlutterWindow::MessageHandler(HWND hwnd, UINT message, WPARAM wparam, LP
       RECT rect;
       GetClientRect(window_handle_, &rect);
       if (child_content_ != nullptr) {
-        // Size and position the child window.
         MoveWindow(child_content_, rect.left, rect.top, rect.right - rect.left,
                    rect.bottom - rect.top, TRUE);
       }
@@ -223,6 +319,28 @@ LRESULT FlutterWindow::MessageHandler(HWND hwnd, UINT message, WPARAM wparam, LP
       }
       return 0;
     }
+    case WM_VCLIPBOARD_REQUEST: {
+      auto* params = reinterpret_cast<VClipboardRequestParams*>(wparam);
+      if (params && flutter_controller_) {
+        auto* plugin = VirtualClipboardPlugin::GetInstance();
+        if (plugin && plugin == params->plugin) {
+          auto channel = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+              flutter_controller_->engine()->messenger(),
+              "com.webrtcgo/virtual_clipboard",
+              &flutter::StandardMethodCodec::GetInstance());
+
+          flutter::EncodableMap args;
+          args[flutter::EncodableValue("fileIndex")] = flutter::EncodableValue(params->fileIndex);
+          args[flutter::EncodableValue("offset")] = flutter::EncodableValue(params->offset);
+          args[flutter::EncodableValue("size")] = flutter::EncodableValue(params->size);
+
+          channel->InvokeMethod("requestFileData",
+              std::make_unique<flutter::EncodableValue>(flutter::EncodableValue(args)));
+        }
+        delete params;
+      }
+      return 0;
+    }
     default: break;
   }
 
@@ -232,6 +350,11 @@ LRESULT FlutterWindow::MessageHandler(HWND hwnd, UINT message, WPARAM wparam, LP
 void FlutterWindow::Destroy() {
   if (window_channel_) {
     window_channel_ = nullptr;
+  }
+  // Remove subclass before destroying the Flutter controller
+  if (child_view_handle_) {
+    RemoveWindowSubclass(child_view_handle_, ChildHitTestSubclassProc, 1);
+    child_view_handle_ = nullptr;
   }
   if (flutter_controller_) {
     flutter_controller_ = nullptr;

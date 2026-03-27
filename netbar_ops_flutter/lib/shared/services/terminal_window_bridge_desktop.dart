@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../features/monitor/data/terminal_api.dart';
 import '../providers/terminal_dock_provider.dart';
@@ -10,6 +13,8 @@ import '../utils/platform_utils.dart';
 
 class TerminalWindowBridge {
   static bool _initializedMainHandler = false;
+  // Track open windows: terminalId -> windowId
+  static final Map<int, int> _openWindows = {};
 
   static void initMainWindowHandler(ProviderContainer container) {
     if (!isDesktopPlatform || _initializedMainHandler) return;
@@ -27,7 +32,10 @@ class TerminalWindowBridge {
             break;
           case 'terminal_close':
             final id = args['terminalId'] as int?;
-            if (id != null) notifier.removeMinimized(id);
+            if (id != null) {
+              notifier.removeMinimized(id);
+              _openWindows.remove(id);
+            }
             break;
           case 'terminal_tab_changed':
             final id = args['terminalId'] as int?;
@@ -43,14 +51,43 @@ class TerminalWindowBridge {
     required int terminalId,
     required String initialTab,
     Terminal? terminalSnapshot,
+    Uint8List? screenshotBytes,
   }) async {
     if (!isDesktopPlatform) return null;
+
+    // Check if window already open for this terminal
+    final existingWid = _openWindows[terminalId];
+    if (existingWid != null) {
+      try {
+        final ids = await DesktopMultiWindow.getAllSubWindowIds();
+        if (ids.contains(existingWid)) {
+          // Window still exists, bring to front
+          final controller = WindowController.fromWindowId(existingWid);
+          await controller.show();
+          return existingWid;
+        }
+      } catch (_) {}
+      // Window no longer exists, clean up
+      _openWindows.remove(terminalId);
+    }
+
+    // 截图通过临时文件传递（命令行参数有长度限制，无法直接传 base64）
+    String? screenshotTempPath;
+    if (screenshotBytes != null) {
+      try {
+        final tempDir = await getTemporaryDirectory();
+        final file = File('${tempDir.path}/terminal_screenshot_$terminalId.png');
+        await file.writeAsBytes(screenshotBytes);
+        screenshotTempPath = file.path;
+      } catch (_) {}
+    }
 
     final payload = jsonEncode({
       'terminalId': terminalId,
       'initialTab': initialTab,
       'hideNativeChrome': true,
       if (terminalSnapshot != null) 'terminal': terminalSnapshot.toJson(),
+      if (screenshotTempPath != null) 'screenshotPath': screenshotTempPath,
     });
 
     final controller = await DesktopMultiWindow.createWindow(payload);
@@ -60,6 +97,7 @@ class TerminalWindowBridge {
       ..center()
       ..show();
 
+    _openWindows[terminalId] = controller.windowId;
     return controller.windowId;
   }
 
@@ -113,6 +151,7 @@ class TerminalWindowBridge {
         } catch (_) {}
       }
     } catch (_) {}
+    _openWindows.clear();
   }
 
   static Future<void> sendToMain(

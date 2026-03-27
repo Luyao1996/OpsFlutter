@@ -90,8 +90,13 @@ void BaseFlutterWindow::Show() {
   if (!handle) {
     return;
   }
-  ShowWindow(handle, SW_SHOW);
-
+  // SW_RESTORE handles minimized windows; SetForegroundWindow brings to front
+  if (IsIconic(handle)) {
+    ShowWindow(handle, SW_RESTORE);
+  } else {
+    ShowWindow(handle, SW_SHOW);
+  }
+  SetForegroundWindow(handle);
 }
 
 void BaseFlutterWindow::Hide() {

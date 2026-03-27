@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/monitor/data/terminal_api.dart';
@@ -10,6 +12,7 @@ class TerminalWindowBridge {
     required int terminalId,
     required String initialTab,
     Terminal? terminalSnapshot,
+    Uint8List? screenshotBytes,
   }) async {
     return null;
   }

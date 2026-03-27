@@ -56,6 +56,7 @@ class TerminalApi {
     debugPrint('[TerminalApi._netbarGet] Token: ${token != null ? "有" : "无"}');
 
     final dio = _createProxiedDio();
+    final sw = Stopwatch()..start();
 
     try {
       final response = await dio.get(
@@ -70,9 +71,11 @@ class TerminalApi {
           sendTimeout: const Duration(seconds: 30),
         ),
       );
+      sw.stop();
 
       debugPrint('[TerminalApi._netbarGet] ========== 请求成功 ==========');
       debugPrint('[TerminalApi._netbarGet] 状态码: ${response.statusCode}');
+      debugPrint('[TerminalApi._netbarGet] 耗时: ${sw.elapsedMilliseconds}ms');
       return response;
     } on DioException catch (e) {
       debugPrint('[TerminalApi._netbarGet] ========== 请求失败 ==========');
@@ -92,18 +95,43 @@ class TerminalApi {
     final token = TokenStore.getToken();
     final dio = _createProxiedDio();
 
+    final headers = {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+
+    // 拼接完整 URL（含 query 参数）
+    final fullUri = Uri.parse(url).replace(queryParameters: queryParameters?.map((k, v) => MapEntry(k, v.toString())));
+    debugPrint('[TerminalApi._netbarPost] ========== POST 请求 ==========');
+    debugPrint('[TerminalApi._netbarPost] URL: $fullUri');
+    debugPrint('[TerminalApi._netbarPost] Headers: $headers');
+    debugPrint('[TerminalApi._netbarPost] Body: $data');
+
+    final sw = Stopwatch()..start();
     try {
-      return await dio.post(
+      final response = await dio.post(
         url,
         data: data,
         queryParameters: queryParameters,
-        options: Options(
-          headers: {
-            'Content-Type': 'application/json',
-            if (token != null) 'Authorization': 'Bearer $token',
-          },
-        ),
+        options: Options(headers: headers),
       );
+      sw.stop();
+      debugPrint('[TerminalApi._netbarPost] 响应状态码: ${response.statusCode}');
+      debugPrint('[TerminalApi._netbarPost] 耗时: ${sw.elapsedMilliseconds}ms');
+      // 分段打印避免 logcat 截断（每段800字符）
+      final resStr = response.data.toString();
+      for (var i = 0; i < resStr.length; i += 800) {
+        final end = (i + 800 < resStr.length) ? i + 800 : resStr.length;
+        debugPrint('[TerminalApi._netbarPost] 响应[${i ~/ 800}]: ${resStr.substring(i, end)}');
+      }
+      return response;
+    } on DioException catch (e) {
+      debugPrint('[TerminalApi._netbarPost] ========== 请求失败 ==========');
+      debugPrint('[TerminalApi._netbarPost] 错误类型: ${e.type}');
+      debugPrint('[TerminalApi._netbarPost] 状态码: ${e.response?.statusCode}');
+      debugPrint('[TerminalApi._netbarPost] 响应数据: ${e.response?.data}');
+      debugPrint('[TerminalApi._netbarPost] 错误消息: ${e.message}');
+      rethrow;
     } finally {
       dio.close();
     }
@@ -114,7 +142,12 @@ class TerminalApi {
   dynamic _unwrapResponse(Response response) {
     final raw = response.data;
     debugPrint('[TerminalApi] _unwrapResponse raw type: ${raw.runtimeType}');
-    debugPrint('[TerminalApi] _unwrapResponse raw: $raw');
+    // 分段打印避免 logcat 截断
+    final rawStr = raw.toString();
+    for (var i = 0; i < rawStr.length; i += 800) {
+      final end = (i + 800 < rawStr.length) ? i + 800 : rawStr.length;
+      debugPrint('[TerminalApi] _unwrapResponse[${i ~/ 800}]: ${rawStr.substring(i, end)}');
+    }
     if (raw is Map<String, dynamic>) {
       debugPrint('[TerminalApi] raw is Map, keys: ${raw.keys.toList()}');
       // 检查是否为标准 API 响应格式 {code, data, msg?}
@@ -205,6 +238,10 @@ class TerminalApi {
         }
       }
 
+      if (list.isNotEmpty) {
+        debugPrint('[TerminalApi.getAll] 第一条原始数据字段: ${list.first.keys.toList()}');
+        debugPrint('[TerminalApi.getAll] 第一条原始数据: ${list.first}');
+      }
       return list.map((e) => Terminal.fromJson(e)).toList();
     } catch (e) {
       if (_shouldReturnEmpty(e)) return [];
@@ -537,12 +574,98 @@ class TerminalApi {
     }
   }
 
-  /// 获取硬件信息
-  Future<List<Map<String, dynamic>>> getHardwareInfo(int id) async {
+  /// 获取硬件信息（静态 + 实时合并）
+  Future<List<Map<String, dynamic>>> getHardwareInfo(String seatId, {required String domain}) async {
+    debugPrint('[TerminalApi.getHardwareInfo] ========== 开始 ==========');
+    debugPrint('[TerminalApi.getHardwareInfo] seatId=$seatId, domain=$domain');
+    if (domain.isEmpty) {
+      debugPrint('[TerminalApi.getHardwareInfo] domain 为空，无法请求');
+      return [];
+    }
+    if (seatId.isEmpty) {
+      debugPrint('[TerminalApi.getHardwareInfo] seatId 为空，无法请求');
+      return [];
+    }
     try {
-      return TerminalMockData.hardware(id);
+      final url = _buildUrl(domain, '/task');
+      debugPrint('[TerminalApi.getHardwareInfo] 请求静态信息 URL: $url');
+      final infoResponse = await _netbarPost(
+        domain,
+        '/task',
+        queryParameters: {'seat': seatId},
+        data: {'fun': 'hwinfo', 'data': {'type': 'info'}},
+      );
+      debugPrint('[TerminalApi.getHardwareInfo] 静态信息响应状态码: ${infoResponse.statusCode}');
+      final infoData = _unwrapResponse(infoResponse);
+      debugPrint('[TerminalApi.getHardwareInfo] 静态信息解包类型: ${infoData.runtimeType}');
+
+      // 尝试获取实时数据（可选，失败不影响静态信息展示）
+      Map<String, dynamic> realtimeData = {};
+      try {
+        debugPrint('[TerminalApi.getHardwareInfo] 请求实时信息...');
+        final rtResponse = await _netbarPost(
+          domain,
+          '/task',
+          queryParameters: {'seat': seatId},
+          data: {'fun': 'hwinfo', 'data': {'type': 'realtime'}},
+        );
+        debugPrint('[TerminalApi.getHardwareInfo] 实时信息响应状态码: ${rtResponse.statusCode}');
+        final rtRaw = _unwrapResponse(rtResponse);
+        if (rtRaw is Map<String, dynamic>) realtimeData = rtRaw;
+      } catch (e) {
+        debugPrint('[TerminalApi.getHardwareInfo] 实时信息获取失败(可忽略): $e');
+      }
+
+      if (infoData is Map<String, dynamic>) {
+        final result = _transformHardwareInfo(infoData, realtimeData);
+        debugPrint('[TerminalApi.getHardwareInfo] 转换完成，共 ${result.length} 个硬件分类');
+        return result;
+      }
+      debugPrint('[TerminalApi.getHardwareInfo] infoData 不是 Map，返回空');
+      return [];
+    } catch (e, stack) {
+      debugPrint('[TerminalApi.getHardwareInfo] ========== 失败 ==========');
+      debugPrint('[TerminalApi.getHardwareInfo] 错误: $e');
+      debugPrint('[TerminalApi.getHardwareInfo] Stack: $stack');
+      if (_shouldReturnEmpty(e)) {
+        debugPrint('[TerminalApi.getHardwareInfo] 错误被判定为可忽略，返回空列表');
+        return [];
+      }
+      rethrow;
+    }
+  }
+
+  /// 获取硬件实时信息（供网络监控等周期调用）
+  Future<Map<String, dynamic>> getHardwareRealtime(String seatId, {required String domain}) async {
+    if (domain.isEmpty || seatId.isEmpty) return {};
+    try {
+      final response = await _netbarPost(
+        domain,
+        '/task',
+        queryParameters: {'seat': seatId},
+        data: {'fun': 'hwinfo', 'data': {'type': 'realtime'}},
+      );
+      final data = _unwrapResponse(response);
+      if (data is Map<String, dynamic>) return data;
+      return {};
     } catch (e) {
-      if (_shouldReturnEmpty(e)) return TerminalMockData.hardware(id);
+      debugPrint('[TerminalApi.getHardwareRealtime] 错误: $e');
+      if (_shouldReturnEmpty(e)) return {};
+      rethrow;
+    }
+  }
+
+  /// 电源控制（关机/重启/注销/锁定）
+  Future<void> controlPc(String seatId, String type, {required String domain}) async {
+    try {
+      await _netbarPost(
+        domain,
+        '/task',
+        queryParameters: {'seat': seatId},
+        data: {'fun': 'controlPc', 'data': {'type': type}},
+      );
+    } catch (e) {
+      if (_shouldReturnEmpty(e)) return;
       rethrow;
     }
   }
@@ -570,5 +693,206 @@ class TerminalApi {
   /// 远程唤醒 (WOL)
   Future<void> wakeOnLan(String seatId, {required String domain}) async {
     await _netbarGet(domain, '/awaken', queryParameters: {'seat': seatId});
+  }
+
+  // ===== 硬件信息格式化辅助 =====
+
+  /// 将 hwinfo API 响应转换为 UI 展示格式 [{name, details: [{label, value}]}]
+  List<Map<String, dynamic>> _transformHardwareInfo(
+      Map<String, dynamic> info, Map<String, dynamic> realtime) {
+    final result = <Map<String, dynamic>>[];
+
+    // --- CPU ---
+    final cpuInfoList = info['cpu'] as List? ?? [];
+    final cpuRtList = realtime['cpu'] as List? ?? [];
+    for (var i = 0; i < cpuInfoList.length; i++) {
+      final cpu = cpuInfoList[i];
+      if (cpu is! Map<String, dynamic>) continue;
+      final rt = _findById(cpuRtList, cpu['id']);
+      final details = <Map<String, dynamic>>[
+        {'label': '型号', 'value': cpu['name'] ?? ''},
+        {'label': '厂商', 'value': cpu['vendor'] ?? ''},
+        {'label': '核心/线程', 'value': '${cpu['core_count'] ?? 0}核/${cpu['thread_count'] ?? 0}线程'},
+        {'label': '基础频率', 'value': _formatFreq(cpu['base_freq'])},
+        {'label': '缓存', 'value': 'L1:${_formatBytes(cpu['l1_cache'])} L2:${_formatBytes(cpu['l2_cache'])} L3:${_formatBytes(cpu['l3_cache'])}'},
+      ];
+      if (rt != null) {
+        details.add({'label': '当前负载', 'value': '${rt['load_total'] ?? 0}%'});
+        if ((rt['clock_core'] ?? 0) > 0) {
+          details.add({'label': '实时频率', 'value': _formatFreq(rt['clock_core'])});
+        }
+        if ((rt['power'] ?? 0) > 0) {
+          details.add({'label': '功耗', 'value': '${(rt['power'] as num).toStringAsFixed(1)}W'});
+        }
+      }
+      result.add({'name': '处理器 (CPU)', 'details': details});
+    }
+
+    // --- GPU ---
+    final gpuInfoList = info['gpu'] as List? ?? [];
+    final gpuRtList = realtime['gpu'] as List? ?? [];
+    for (var i = 0; i < gpuInfoList.length; i++) {
+      final gpu = gpuInfoList[i];
+      if (gpu is! Map<String, dynamic>) continue;
+      final rt = _findById(gpuRtList, gpu['id']);
+      final details = <Map<String, dynamic>>[
+        {'label': '型号', 'value': gpu['name'] ?? ''},
+        {'label': '厂商', 'value': gpu['vendor'] ?? ''},
+        {'label': '显存', 'value': _formatBytes(gpu['memory_total'])},
+      ];
+      if (rt != null) {
+        details.add({'label': '温度', 'value': '核心${rt['temperature'] ?? 0}°C / 显存${rt['temperature_memory'] ?? 0}°C / 热点${rt['temperature_hotspot'] ?? 0}°C'});
+        details.add({'label': 'GPU负载', 'value': '${rt['load_gpu'] ?? 0}%'});
+        details.add({'label': '显存负载', 'value': '${rt['load_memory'] ?? 0}%'});
+        if ((rt['clock_core'] ?? 0) > 0 || (rt['clock_memory'] ?? 0) > 0) {
+          details.add({'label': '频率', 'value': '核心${_formatFreq(rt['clock_core'])} / 显存${_formatFreq(rt['clock_memory'])}'});
+        }
+        if ((rt['power'] ?? 0) > 0) {
+          details.add({'label': '功耗', 'value': '${(rt['power'] as num).toStringAsFixed(1)}W'});
+        }
+      }
+      result.add({'name': '显卡 (GPU)', 'details': details});
+    }
+
+    // --- 内存 (聚合所有插槽) ---
+    final memInfoList = info['memory'] as List? ?? [];
+    final memRt = realtime['memory'];
+    if (memInfoList.isNotEmpty) {
+      int totalSize = 0;
+      for (final mem in memInfoList) {
+        if (mem is Map<String, dynamic>) {
+          totalSize += (mem['size'] as num? ?? 0).toInt();
+        }
+      }
+      final first = memInfoList[0] as Map<String, dynamic>;
+      final details = <Map<String, dynamic>>[
+        {'label': '总容量', 'value': '${_formatBytes(totalSize)} (${memInfoList.length}条)'},
+        {'label': '频率', 'value': '${first['speed'] ?? 0} MHz'},
+        {'label': '类型', 'value': '${first['type'] ?? ''} ${first['form_factor'] ?? ''}'},
+        {'label': '厂商', 'value': first['manufacturer'] ?? ''},
+        {'label': '电压', 'value': '${(first['voltage'] ?? 0).toStringAsFixed(1)}V'},
+        {'label': '数据位宽', 'value': '${first['data_width'] ?? 0}bit'},
+      ];
+      if (memRt is Map<String, dynamic>) {
+        details.add({'label': '当前占用', 'value': '${memRt['load_total'] ?? 0}%'});
+      }
+      result.add({'name': '内存 (RAM)', 'details': details});
+    }
+
+    // --- 存储 (每块硬盘一张卡) ---
+    final storageInfoList = info['storage'] as List? ?? [];
+    final storageRtList = realtime['storage'] as List? ?? [];
+    for (var i = 0; i < storageInfoList.length; i++) {
+      final disk = storageInfoList[i];
+      if (disk is! Map<String, dynamic>) continue;
+      final rt = _findById(storageRtList, disk['id']);
+      final rotation = (disk['rotation'] ?? 0) as num;
+      final details = <Map<String, dynamic>>[
+        {'label': '型号', 'value': (disk['model'] ?? '').toString().trim()},
+        {'label': '容量', 'value': _formatBytes(disk['size'])},
+        {'label': '类型/接口', 'value': '${disk['type'] ?? ''} ${disk['interface'] ?? ''}${rotation > 0 ? ' ${rotation}RPM' : ''}'},
+        {'label': '序列号', 'value': (disk['serial'] ?? '').toString().trim()},
+        {'label': '固件', 'value': disk['firmware'] ?? ''},
+      ];
+      if (rt != null) {
+        final used = (rt['used_space'] as num? ?? 0).toDouble();
+        final free = (rt['free_space'] as num? ?? 0).toDouble();
+        final total = used + free;
+        final pct = total > 0 ? (used / total * 100).toStringAsFixed(1) : '0';
+        details.add({'label': '已用空间', 'value': '${_formatBytes(used)} / ${_formatBytes(total)} ($pct%)'});
+        details.add({'label': '健康度', 'value': '${rt['health'] ?? 0}%'});
+      }
+      final idx = i + 1;
+      result.add({'name': '存储 (磁盘$idx)', 'details': details});
+    }
+
+    // --- 网络 ---
+    final netInfoList = info['network'] as List? ?? [];
+    final netRtList = realtime['network'] as List? ?? [];
+    for (var i = 0; i < netInfoList.length; i++) {
+      final net = netInfoList[i];
+      if (net is! Map<String, dynamic>) continue;
+      final rt = _findById(netRtList, net['id']);
+      final details = <Map<String, dynamic>>[
+        {'label': '网卡', 'value': net['description'] ?? net['name'] ?? ''},
+        {'label': 'IP', 'value': net['ip_address'] ?? ''},
+        {'label': '网关', 'value': net['gateway'] ?? ''},
+        {'label': '子网掩码', 'value': net['subnet_mask'] ?? ''},
+        {'label': 'MAC', 'value': net['mac'] ?? ''},
+        {'label': '速率', 'value': _formatNetSpeed(net['speed'])},
+        {'label': 'DNS', 'value': net['dns'] ?? ''},
+      ];
+      if (rt != null) {
+        details.add({'label': '上传速度', 'value': _formatBytesSpeed(rt['upload_speed'])});
+        details.add({'label': '下载速度', 'value': _formatBytesSpeed(rt['download_speed'])});
+      }
+      result.add({'name': '网络 (Network)', 'details': details});
+    }
+
+    // --- 主板 ---
+    final mbInfoList = info['motherboard'] as List? ?? [];
+    for (final mb in mbInfoList) {
+      if (mb is! Map<String, dynamic>) continue;
+      result.add({
+        'name': '主板 (Motherboard)',
+        'details': [
+          {'label': '厂商', 'value': mb['manufacturer'] ?? ''},
+          {'label': '型号', 'value': mb['product'] ?? ''},
+          {'label': '版本', 'value': mb['version'] ?? ''},
+          {'label': 'BIOS', 'value': '${mb['bios_vendor'] ?? ''} ${mb['bios_version'] ?? ''}'},
+          {'label': 'BIOS日期', 'value': mb['bios_date'] ?? ''},
+        ],
+      });
+    }
+
+    return result;
+  }
+
+  /// 根据 id 从 realtime 列表中查找对应项
+  Map<String, dynamic>? _findById(List? list, dynamic id) {
+    if (list == null || id == null) return null;
+    for (final item in list) {
+      if (item is Map<String, dynamic> && item['id'] == id) return item;
+    }
+    return null;
+  }
+
+  /// 格式化字节数
+  String _formatBytes(dynamic bytes) {
+    final b = (bytes is num) ? bytes.toDouble() : 0.0;
+    if (b <= 0) return '0';
+    if (b >= 1024 * 1024 * 1024 * 1024) return '${(b / (1024 * 1024 * 1024 * 1024)).toStringAsFixed(1)} TB';
+    if (b >= 1024 * 1024 * 1024) return '${(b / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    if (b >= 1024 * 1024) return '${(b / (1024 * 1024)).toStringAsFixed(1)} MB';
+    if (b >= 1024) return '${(b / 1024).toStringAsFixed(0)} KB';
+    return '${b.toInt()} B';
+  }
+
+  /// 格式化频率（Hz → GHz/MHz）
+  String _formatFreq(dynamic freq) {
+    final f = (freq is num) ? freq.toDouble() : 0.0;
+    if (f <= 0) return '0';
+    if (f >= 1000000000) return '${(f / 1000000000).toStringAsFixed(2)} GHz';
+    if (f >= 1000000) return '${(f / 1000000).toStringAsFixed(0)} MHz';
+    if (f >= 1000) return '${(f / 1000).toStringAsFixed(0)} KHz';
+    return '${f.toInt()} Hz';
+  }
+
+  /// 格式化网卡速率（bps → Gbps/Mbps）
+  String _formatNetSpeed(dynamic speed) {
+    final s = (speed is num) ? speed.toDouble() : 0.0;
+    if (s <= 0) return '0';
+    if (s >= 1000000000) return '${(s / 1000000000).toStringAsFixed(0)} Gbps';
+    if (s >= 1000000) return '${(s / 1000000).toStringAsFixed(0)} Mbps';
+    if (s >= 1000) return '${(s / 1000).toStringAsFixed(0)} Kbps';
+    return '${s.toInt()} bps';
+  }
+
+  /// 格式化字节速率（bytes/s → MB/s, KB/s）
+  String _formatBytesSpeed(dynamic bytesPerSec) {
+    final b = (bytesPerSec is num) ? bytesPerSec.toDouble() : 0.0;
+    if (b >= 1024 * 1024) return '${(b / (1024 * 1024)).toStringAsFixed(2)} MB/s';
+    if (b >= 1024) return '${(b / 1024).toStringAsFixed(1)} KB/s';
+    return '${b.toInt()} B/s';
   }
 }

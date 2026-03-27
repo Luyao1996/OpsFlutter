@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 /// iOS 风格颜色
@@ -92,6 +93,15 @@ class AppShadows {
 
 /// 应用主题
 class AppTheme {
+  /// Windows: Microsoft YaHei UI (UI 优化版，适合屏幕小字号显示)
+  /// 其他平台: null (使用 Flutter 平台默认字体)
+  static String? get _platformFontFamily {
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      return 'Microsoft YaHei UI';
+    }
+    return null;
+  }
+
   static ThemeData get lightTheme {
     return ThemeData(
       useMaterial3: true,
@@ -104,7 +114,7 @@ class AppTheme {
         surface: AppColors.iosCard,
         error: AppColors.red,
       ),
-      fontFamily: 'Microsoft YaHei', // 使用微软雅黑以接近 Web 效果
+      fontFamily: _platformFontFamily,
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.white,
         foregroundColor: Colors.black87,

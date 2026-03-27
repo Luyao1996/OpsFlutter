@@ -5,6 +5,13 @@
 #include "flutter_window.h"
 #include "utils.h"
 
+#include <flutter_webrtc/flutter_web_r_t_c_plugin.h>
+#include <window_manager/window_manager_plugin.h>
+
+// Register selected plugins in sub-windows created by desktop_multi_window
+typedef void (*WindowCreatedCallback)(flutter::FlutterViewController *controller);
+extern "C" void DesktopMultiWindowSetWindowCreatedCallback(WindowCreatedCallback callback);
+
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
   // Attach to console when present (e.g., 'flutter run') or create a
@@ -23,6 +30,16 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       GetCommandLineArguments();
 
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
+
+  // Register essential plugins in sub-windows for WebRTC remote desktop
+  DesktopMultiWindowSetWindowCreatedCallback(
+      [](flutter::FlutterViewController *controller) {
+        auto engine = controller->engine();
+        FlutterWebRTCPluginRegisterWithRegistrar(
+            engine->GetRegistrarForPlugin("FlutterWebRTCPlugin"));
+        WindowManagerPluginRegisterWithRegistrar(
+            engine->GetRegistrarForPlugin("WindowManagerPlugin"));
+      });
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);

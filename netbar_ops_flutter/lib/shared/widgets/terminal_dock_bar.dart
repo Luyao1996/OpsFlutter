@@ -149,7 +149,10 @@ class _TerminalDockIconState extends ConsumerState<TerminalDockIcon> {
           child: SizedBox(
             width: cardSize.width,
             height: cardSize.height,
-            child: TerminalCard(terminal: widget.item.terminal),
+            child: TerminalCard(
+              terminal: widget.item.terminal,
+              screenshotBytes: widget.item.screenshotBytes,
+            ),
           ),
         ),
       ),
@@ -207,21 +210,30 @@ class _TerminalDockIconState extends ConsumerState<TerminalDockIcon> {
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(12),
-              child: Image.network(
-                t.desktopThumbnailUrl,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                  color: Colors.grey.shade50,
-                  child: _buildFallbackContent(),
-                ),
-                loadingBuilder: (context, child, progress) {
-                  if (progress == null) return child;
-                  return Container(
-                    color: Colors.grey.shade50,
-                    child: _buildFallbackContent(),
-                  );
-                },
-              ),
+              child: widget.item.screenshotBytes != null
+                  ? Image.memory(
+                      widget.item.screenshotBytes!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        color: Colors.grey.shade50,
+                        child: _buildFallbackContent(),
+                      ),
+                    )
+                  : Image.network(
+                      t.desktopThumbnailUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        color: Colors.grey.shade50,
+                        child: _buildFallbackContent(),
+                      ),
+                      loadingBuilder: (context, child, progress) {
+                        if (progress == null) return child;
+                        return Container(
+                          color: Colors.grey.shade50,
+                          child: _buildFallbackContent(),
+                        );
+                      },
+                    ),
             ),
           ),
         ),

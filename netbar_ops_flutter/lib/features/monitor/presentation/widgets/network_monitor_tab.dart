@@ -1,27 +1,36 @@
 import 'dart:async';
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
+import '../../../../shared/providers/app_providers.dart';
 
-class NetworkMonitorTab extends StatefulWidget {
-  const NetworkMonitorTab({super.key});
+class NetworkMonitorTab extends ConsumerStatefulWidget {
+  final String seatId;
+  const NetworkMonitorTab({super.key, required this.seatId});
 
   @override
-  State<NetworkMonitorTab> createState() => _NetworkMonitorTabState();
+  ConsumerState<NetworkMonitorTab> createState() => _NetworkMonitorTabState();
 }
 
-class _NetworkMonitorTabState extends State<NetworkMonitorTab> {
+class _NetworkMonitorTabState extends ConsumerState<NetworkMonitorTab> {
   late List<_ChartData> _uploadData;
   late List<_ChartData> _downloadData;
   late Timer _timer;
   int _timeCounter = 0;
+  bool _fetching = false;
+
+  // 累计流量
+  double _uploadTotal = 0;
+  double _downloadTotal = 0;
 
   @override
   void initState() {
     super.initState();
     _uploadData = List.generate(60, (index) => _ChartData(index, 0));
     _downloadData = List.generate(60, (index) => _ChartData(index, 0));
-    _timer = Timer.periodic(const Duration(seconds: 1), _updateDataSource);
+    // 立即获取一次
+    _fetchRealtime();
+    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _fetchRealtime());
   }
 
   @override
@@ -30,21 +39,60 @@ class _NetworkMonitorTabState extends State<NetworkMonitorTab> {
     super.dispose();
   }
 
-  void _updateDataSource(Timer timer) {
-    _timeCounter++;
-    final random = math.Random();
-    
-    // Simulate traffic (in KB/s)
-    double upload = random.nextDouble() * 500;
-    double download = random.nextDouble() * 2000 + 500;
+  Future<void> _fetchRealtime() async {
+    if (_fetching) {
+      debugPrint('[NetworkMonitorTab] 跳过：上一次请求还在进行中');
+      return;
+    }
+    if (!mounted) {
+      debugPrint('[NetworkMonitorTab] 跳过：widget 已销毁');
+      return;
+    }
+    _fetching = true;
+    try {
+      final api = ref.read(terminalApiProvider);
+      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
+      debugPrint('[NetworkMonitorTab] _fetchRealtime seatId=${widget.seatId}, domain=$domain');
+      if (domain.isEmpty) {
+        debugPrint('[NetworkMonitorTab] domain 为空，跳过');
+        return;
+      }
 
-    _uploadData.removeAt(0);
-    _uploadData.add(_ChartData(_timeCounter, upload));
-    
-    _downloadData.removeAt(0);
-    _downloadData.add(_ChartData(_timeCounter, download));
+      final data = await api.getHardwareRealtime(widget.seatId, domain: domain);
+      if (!mounted) return;
 
-    setState(() {});
+      debugPrint('[NetworkMonitorTab] 返回数据 keys: ${data.keys.toList()}');
+      final networkList = data['network'] as List? ?? [];
+      debugPrint('[NetworkMonitorTab] network 列表长度: ${networkList.length}');
+      if (networkList.isNotEmpty) {
+        final net = networkList[0] as Map<String, dynamic>;
+        debugPrint('[NetworkMonitorTab] network[0]: $net');
+        // upload_speed / download_speed 单位: bytes/s → 转换为 KB/s 用于图表
+        final upload = (net['upload_speed'] as num? ?? 0).toDouble() / 1024;
+        final download = (net['download_speed'] as num? ?? 0).toDouble() / 1024;
+
+        _timeCounter++;
+        _uploadData.removeAt(0);
+        _uploadData.add(_ChartData(_timeCounter, upload));
+        _downloadData.removeAt(0);
+        _downloadData.add(_ChartData(_timeCounter, download));
+
+        _uploadTotal = (net['upload_total'] as num? ?? 0).toDouble();
+        _downloadTotal = (net['download_total'] as num? ?? 0).toDouble();
+      }
+      setState(() {});
+    } catch (e) {
+      debugPrint('[NetworkMonitorTab] 请求失败: $e');
+    } finally {
+      _fetching = false;
+    }
+  }
+
+  String _formatBytes(double bytes) {
+    if (bytes >= 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+    if (bytes >= 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
+    if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${bytes.toInt()} B';
   }
 
   @override
@@ -65,6 +113,7 @@ class _NetworkMonitorTabState extends State<NetworkMonitorTab> {
                       '${(_downloadData.last.value / 1024).toStringAsFixed(2)} MB/s',
                       Colors.green,
                       compact: isNarrow,
+                      subtitle: '累计: ${_formatBytes(_downloadTotal)}',
                     ),
                   ),
                   SizedBox(width: isNarrow ? 12 : 16),
@@ -74,6 +123,7 @@ class _NetworkMonitorTabState extends State<NetworkMonitorTab> {
                       '${(_uploadData.last.value / 1024).toStringAsFixed(2)} MB/s',
                       Colors.blue,
                       compact: isNarrow,
+                      subtitle: '累计: ${_formatBytes(_uploadTotal)}',
                     ),
                   ),
                 ],
@@ -127,7 +177,7 @@ class _NetworkMonitorTabState extends State<NetworkMonitorTab> {
     );
   }
 
-  Widget _buildInfoCard(String title, String value, Color color, {required bool compact}) {
+  Widget _buildInfoCard(String title, String value, Color color, {required bool compact, String? subtitle}) {
     return Container(
       padding: EdgeInsets.all(compact ? 12 : 16),
       decoration: BoxDecoration(
@@ -162,6 +212,15 @@ class _NetworkMonitorTabState extends State<NetworkMonitorTab> {
               color: color,
             ),
           ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: compact ? 10 : 11, color: Colors.grey.shade500),
+            ),
+          ],
         ],
       ),
     );

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -6,6 +7,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../../core/storage/token_store.dart';
 import '../../../core/responsive/responsive.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
@@ -15,8 +18,11 @@ import '../../../shared/utils/platform_utils.dart';
 import '../../../shared/utils/top_notice.dart';
 import '../../../shared/utils/open_in_new_tab.dart';
 import '../data/terminal_api.dart';
+import '../data/router_api.dart';
 import '../../desktop/data/desktop_api.dart';
 import 'widgets/terminal_card.dart';
+import 'widgets/router_card.dart';
+import 'widgets/router_edit_modal.dart';
 
 /// 终端列表 Provider - 移除 autoDispose 避免频繁重载
 final terminalsProvider = FutureProvider<List<Terminal>>((ref) async {
@@ -33,7 +39,7 @@ class MonitorPage extends ConsumerStatefulWidget {
   ConsumerState<MonitorPage> createState() => _MonitorPageState();
 }
 
-class _MonitorPageState extends ConsumerState<MonitorPage> {
+class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingObserver {
   String _searchQuery = '';
   bool _isListView = false;
   String _filterStatus = 'all'; // all, busy, online_idle, offline
@@ -53,10 +59,140 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
   static const int _maxRetryCount = 10; // 最大重试次数
   static const Duration _retryBaseDelay = Duration(seconds: 3); // 基础重试延迟
 
+  // Realtime hwinfo cache: seatId -> {cpu, gpu, ram, disk}
+  final Map<String, Map<String, double>> _realtimeCache = {};
+  bool _realtimeLoading = false;
+  Timer? _realtimeTimer;
+
+  // Router traffic polling visibility control
+  bool _appActive = true;       // app in foreground
+  bool _onMonitorPage = true;   // GoRouter current location is /monitor
+  int _mobileTabIndex = 0;      // mobile tab: 0=devices, 1=terminals
+
+  bool get _devicesVisible => _appActive && _onMonitorPage && (!context.isPhone || _mobileTabIndex == 0);
+
+  Listenable? _routeListenable;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      try {
+        _routeListenable = GoRouter.of(context).routeInformationProvider;
+        _routeListenable?.addListener(_onRouteChanged);
+        _onRouteChanged();
+      } catch (_) {}
+    });
+  }
+
+  void _onRouteChanged() {
+    if (!mounted) return;
+    try {
+      final location = GoRouterState.of(context).uri.path;
+      final onMonitor = location == '/monitor';
+      if (onMonitor != _onMonitorPage) {
+        setState(() => _onMonitorPage = onMonitor);
+      }
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
+    _realtimeTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _routeListenable?.removeListener(_onRouteChanged);
     _hideContextMenu();
     super.dispose();
+  }
+
+  // WidgetsBindingObserver: app lifecycle
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final active = state == AppLifecycleState.resumed;
+    if (active != _appActive) {
+      setState(() => _appActive = active);
+    }
+  }
+
+  /// 批量获取在线终端的 hwinfo realtime（CPU/GPU/RAM）
+  Future<void> _loadRealtimeStats(List<Terminal> terminals) async {
+    if (_realtimeLoading) return;
+    _realtimeLoading = true;
+    final api = ref.read(terminalApiProvider);
+    final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
+    if (domain.isEmpty) { _realtimeLoading = false; return; }
+
+    final online = terminals.where((t) => t.status > 0 && t.seatId.isNotEmpty).toList();
+
+    // Fetch in parallel, max 5 concurrent
+    final futures = <Future>[];
+    for (final t in online) {
+      futures.add(
+        api.getHardwareRealtime(t.seatId, domain: domain).then((rt) {
+          if (!mounted) return;
+          final stats = <String, double>{};
+          // CPU
+          final cpuList = rt['cpu'] as List?;
+          if (cpuList != null && cpuList.isNotEmpty) {
+            final c = cpuList[0];
+            if (c is Map<String, dynamic>) stats['cpu'] = (c['load_total'] ?? 0).toDouble();
+          }
+          // GPU
+          final gpuList = rt['gpu'] as List?;
+          if (gpuList != null && gpuList.isNotEmpty) {
+            final g = gpuList[0];
+            if (g is Map<String, dynamic>) stats['gpu'] = (g['load_gpu'] ?? 0).toDouble();
+          }
+          // Memory
+          final memData = rt['memory'];
+          if (memData is List && memData.isNotEmpty) {
+            double total = 0; int count = 0;
+            for (final m in memData) {
+              if (m is Map<String, dynamic>) { total += (m['load_total'] ?? 0).toDouble(); count++; }
+            }
+            if (count > 0) stats['ram'] = total / count;
+          } else if (memData is Map<String, dynamic>) {
+            stats['ram'] = (memData['load_total'] ?? 0).toDouble();
+          }
+          _realtimeCache[t.seatId] = stats;
+        }).catchError((_) {}),
+      );
+      // Throttle: every 5 requests, wait for them to complete
+      if (futures.length >= 5) {
+        await Future.wait(futures);
+        futures.clear();
+      }
+    }
+    if (futures.isNotEmpty) await Future.wait(futures);
+
+    _realtimeLoading = false;
+    if (mounted) setState(() {}); // trigger rebuild with updated cache
+
+    // Schedule next refresh after 15 seconds
+    _realtimeTimer?.cancel();
+    _realtimeTimer = Timer(const Duration(seconds: 15), () {
+      final ts = ref.read(terminalsProvider).valueOrNull ?? [];
+      _loadRealtimeStats(ts);
+    });
+  }
+
+  /// Apply cached realtime stats to a terminal
+  Terminal _applyRealtimeStats(Terminal t) {
+    final stats = _realtimeCache[t.seatId];
+    if (stats == null || stats.isEmpty) return t;
+    return Terminal(
+      id: t.id, seatId: t.seatId, name: t.name, code: t.code,
+      netbarId: t.netbarId, areaId: t.areaId, ip: t.ip, mac: t.mac,
+      os: t.os, type: t.type, status: t.status,
+      cpuUsage: stats['cpu'] ?? t.cpuUsage,
+      ramUsage: stats['ram'] ?? t.ramUsage,
+      gpuUsage: stats['gpu'] ?? t.gpuUsage,
+      diskUsage: t.diskUsage, uptime: t.uptime,
+      screenshotUrl: t.screenshotUrl, lastOnline: t.lastOnline,
+      lastHeartbeat: t.lastHeartbeat, createdAt: t.createdAt,
+      updatedAt: t.updatedAt, remote: t.remote,
+    );
   }
 
   /// 批量获取所有在线终端的截图
@@ -162,6 +298,12 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
             if (terminals.isNotEmpty && _screenshotCache.isEmpty && !_screenshotsLoading) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 _loadScreenshots(terminals);
+              });
+            }
+            // 触发批量 hwinfo realtime 请求
+            if (terminals.isNotEmpty && _realtimeCache.isEmpty && !_realtimeLoading) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _loadRealtimeStats(terminals);
               });
             }
             return _buildContent(terminals);
@@ -395,19 +537,25 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
               ),
             ),
             Expanded(
-              child: TabBarView(
-                children: [
-                  // 关键设备状态
-                  CustomScrollView(
-                    slivers: [
-                      SliverToBoxAdapter(
-                        child: _buildDevicesSection(
-                          devices,
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: _MobileTabAwareBuilder(
+                onTabChanged: (index) {
+                  if (_mobileTabIndex != index) {
+                    setState(() => _mobileTabIndex = index);
+                  }
+                },
+                builder: (context, tabIndex) => TabBarView(
+                  children: [
+                    // 关键设备状态
+                    CustomScrollView(
+                      slivers: [
+                        SliverToBoxAdapter(
+                          child: _buildDevicesSection(
+                            devices,
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
                   // 终端列表
                   CustomScrollView(
                     slivers: [
@@ -438,7 +586,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                                       context,
                                       index,
                                     ) {
-                                      final terminal = filteredClients[index];
+                                      final terminal = _applyRealtimeStats(filteredClients[index]);
                                       return TerminalCard(
                                         terminal: terminal,
                                         screenshotBytes: _screenshotCache[terminal.seatId],
@@ -455,6 +603,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                     ],
                   ),
                 ],
+              ),
               ),
             ),
           ],
@@ -502,7 +651,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                         mainAxisSpacing: 16,
                       ),
                       delegate: SliverChildBuilderDelegate((context, index) {
-                        final terminal = filteredClients[index];
+                        final terminal = _applyRealtimeStats(filteredClients[index]);
                         return TerminalCard(
                           terminal: terminal,
                           screenshotBytes: _screenshotCache[terminal.seatId],
@@ -641,8 +790,19 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
   }
 
   /// 打开终端详情
+  // Track open terminal detail on mobile to prevent duplicates
+  final Set<int> _mobileOpenTerminals = {};
+
   void _openTerminalDetail(Terminal terminal) {
     if (isDesktopPlatform) {
+      // 先检查 Dock 中是否有该终端的最小化记录
+      final dockState = ref.read(terminalDockProvider);
+      final dockItem = dockState.minimized[terminal.id];
+      if (dockItem != null) {
+        TerminalWindowBridge.restoreFromDock(ref, dockItem);
+        return;
+      }
+
       final lastTab = ref
           .read(terminalDockProvider.notifier)
           .lastTabFor(terminal.id);
@@ -650,15 +810,23 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
         terminalId: terminal.id,
         initialTab: lastTab,
         terminalSnapshot: terminal,
+        screenshotBytes: _screenshotCache[terminal.seatId],
       );
       return;
     }
+    // Mobile: prevent duplicate push
+    if (_mobileOpenTerminals.contains(terminal.id)) return;
+    _mobileOpenTerminals.add(terminal.id);
+
     final location = '/terminal/${terminal.id}';
     if (kIsWeb) {
       openInNewTab(buildWebUrlForLocation(location));
+      _mobileOpenTerminals.remove(terminal.id);
       return;
     }
-    context.push(location, extra: _screenshotCache[terminal.seatId]);
+    context.push(location, extra: _screenshotCache[terminal.seatId]).then((_) {
+      _mobileOpenTerminals.remove(terminal.id);
+    });
   }
 
   /// 转换并格式化为东八区时间
@@ -825,23 +993,59 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
     }
   }
 
+  void _openRouterInBrowser(RouterInfo router) {
+    final token = TokenStore.getToken() ?? '';
+    // proxyUrl 可能不带端口，补上 :880
+    var proxy = router.proxyUrl;
+    final uri = Uri.tryParse(proxy);
+    if (uri != null && (uri.port == 80 || uri.port == 443)) {
+      proxy = '${uri.scheme}://${uri.host}:880${uri.path}';
+    }
+    final url = '$proxy?Authorization=Bearer%20$token';
+    launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
+  void _showRouterEditModal({RouterInfo? router}) {
+    final api = ref.read(routerApiProvider);
+    if (api == null) return;
+    showDialog<bool>(
+      context: context,
+      builder: (_) => RouterEditModal(api: api, router: router),
+    ).then((saved) {
+      if (saved == true) ref.refresh(routersProvider);
+    });
+  }
+
   Widget _buildDevicesSection(List<Terminal> devices, {EdgeInsets? padding}) {
+    final routersAsync = ref.watch(routersProvider);
+    final routerApi = ref.watch(routerApiProvider);
+
     return Padding(
       padding: padding ?? const EdgeInsets.all(32),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Title bar with "新增路由器" button
           if (context.isPhone)
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  '关键设备状态',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        '关键设备状态',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    _buildAddRouterButton(compact: true),
+                    const SizedBox(width: 8),
+                    _buildDevicesRefreshButton(),
+                  ],
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '服务器 / 控制台 / 收银机',
+                  '服务器 / 控制台 / 收银机 / 路由器',
                   style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
                 ),
               ],
@@ -855,13 +1059,16 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  '服务器 / 控制台 / 收银机',
+                  '服务器 / 控制台 / 收银机 / 路由器',
                   style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
                 ),
+                const Spacer(),
+                _buildAddRouterButton(compact: false),
+                const SizedBox(width: 8),
+                _buildDevicesRefreshButton(),
               ],
             ),
           const SizedBox(height: 16),
-          // 使用响应式网格布局
           LayoutBuilder(
             builder: (context, constraints) {
               final width = constraints.maxWidth;
@@ -881,21 +1088,38 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
               final itemWidth = (width - (columns - 1) * gap) / columns;
               final itemHeight = isPhone ? 160.0 : 200.0;
 
+              // Get router list
+              final routers = routersAsync.valueOrNull ?? <RouterInfo>[];
+
               return Wrap(
                 spacing: gap,
                 runSpacing: gap,
                 children: [
-                  // 关键设备卡片 (使用 TerminalCard 样式)
+                  // 1) Key device cards (servers, consoles, cashiers)
                   ...devices.map(
                     (d) => SizedBox(
                       width: itemWidth,
-                      height: itemHeight, // 固定高度
+                      height: itemHeight,
                       child: TerminalCard(
-                        terminal: d,
+                        terminal: _applyRealtimeStats(d),
                         screenshotBytes: _screenshotCache[d.seatId],
                         onTap: () => _openTerminalDetail(d),
                         onSecondaryTapDown: (details) =>
                             _showContextMenu(details, d),
+                      ),
+                    ),
+                  ),
+                  // 2) Router cards (always after devices)
+                  ...routers.map(
+                    (r) => SizedBox(
+                      width: itemWidth,
+                      height: itemHeight,
+                      child: RouterCard(
+                        router: r,
+                        api: routerApi,
+                        active: _devicesVisible,
+                        onTap: () => _openRouterInBrowser(r),
+                        onEdit: () => _showRouterEditModal(router: r),
                       ),
                     ),
                   ),
@@ -904,6 +1128,43 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
             },
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildAddRouterButton({required bool compact}) {
+    return SizedBox(
+      height: 32,
+      child: ElevatedButton.icon(
+        onPressed: () => _showRouterEditModal(),
+        icon: const Icon(LucideIcons.plus, size: 14),
+        label: Text(compact ? '路由器' : '新增路由器', style: const TextStyle(fontSize: 12)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF06B6D4),
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          elevation: 0,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDevicesRefreshButton() {
+    return SizedBox(
+      width: 32,
+      height: 32,
+      child: IconButton(
+        onPressed: () {
+          ref.refresh(terminalsProvider);
+          ref.refresh(routersProvider);
+        },
+        icon: const Icon(LucideIcons.refreshCw, size: 14),
+        style: IconButton.styleFrom(
+          backgroundColor: Colors.grey.shade200,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          padding: EdgeInsets.zero,
+        ),
       ),
     );
   }
@@ -1121,4 +1382,47 @@ class _MonitorPageState extends ConsumerState<MonitorPage> {
       ),
     );
   }
+}
+
+/// Listens to DefaultTabController and rebuilds with current tab index.
+class _MobileTabAwareBuilder extends StatefulWidget {
+  final Widget Function(BuildContext context, int tabIndex) builder;
+  final ValueChanged<int>? onTabChanged;
+  const _MobileTabAwareBuilder({required this.builder, this.onTabChanged});
+
+  @override
+  State<_MobileTabAwareBuilder> createState() => _MobileTabAwareBuilderState();
+}
+
+class _MobileTabAwareBuilderState extends State<_MobileTabAwareBuilder> {
+  TabController? _tabController;
+  int _index = 0;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final tc = DefaultTabController.of(context);
+    if (tc != _tabController) {
+      _tabController?.removeListener(_onTab);
+      _tabController = tc;
+      _tabController?.addListener(_onTab);
+      _index = tc.index;
+    }
+  }
+
+  void _onTab() {
+    if (_tabController != null && _tabController!.index != _index) {
+      setState(() => _index = _tabController!.index);
+      widget.onTabChanged?.call(_index);
+    }
+  }
+
+  @override
+  void dispose() {
+    _tabController?.removeListener(_onTab);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, _index);
 }

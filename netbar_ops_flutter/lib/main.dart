@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,6 +29,19 @@ void main(List<String> args) async {
     final data = jsonDecode(payload) as Map<String, dynamic>;
     final terminalId = data['terminalId'] as int? ?? 0;
     final initialTab = data['initialTab'] as String? ?? '远程控制';
+    // 从临时文件读取截图
+    Uint8List? initialScreenshot;
+    final screenshotPath = data['screenshotPath'] as String?;
+    if (screenshotPath != null) {
+      try {
+        final file = File(screenshotPath);
+        if (await file.exists()) {
+          initialScreenshot = await file.readAsBytes();
+          // 读取后删除临时文件
+          file.delete().ignore();
+        }
+      } catch (_) {}
+    }
 
     await WindowControl.initTerminalDetailWindowChrome();
 
@@ -36,6 +51,7 @@ void main(List<String> args) async {
           terminalId: terminalId,
           windowId: windowId,
           initialTab: initialTab,
+          initialScreenshot: initialScreenshot,
         ),
       ),
     );

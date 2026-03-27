@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/monitor/data/terminal_api.dart';
@@ -7,35 +10,43 @@ class TerminalDockItem {
   final Terminal terminal;
   final String lastTab;
   final int? windowId;
+  final Uint8List? screenshotBytes;
 
   const TerminalDockItem({
     required this.terminalId,
     required this.terminal,
     required this.lastTab,
     this.windowId,
+    this.screenshotBytes,
   });
 
   TerminalDockItem copyWith({
     Terminal? terminal,
     String? lastTab,
     int? windowId,
+    Uint8List? screenshotBytes,
   }) {
     return TerminalDockItem(
       terminalId: terminalId,
       terminal: terminal ?? this.terminal,
       lastTab: lastTab ?? this.lastTab,
       windowId: windowId ?? this.windowId,
+      screenshotBytes: screenshotBytes ?? this.screenshotBytes,
     );
   }
 
   factory TerminalDockItem.fromMessage(Map<String, dynamic> data) {
     final terminalJson = Map<String, dynamic>.from(data['terminal'] ?? {});
     final terminal = Terminal.fromJson(terminalJson);
+    final screenshotBase64 = data['screenshot'] as String?;
     return TerminalDockItem(
       terminalId: data['terminalId'] ?? terminal.id,
       terminal: terminal,
       lastTab: data['lastTab'] ?? '远程控制',
       windowId: data['windowId'],
+      screenshotBytes: screenshotBase64 != null
+          ? Uint8List.fromList(base64Decode(screenshotBase64))
+          : null,
     );
   }
 }

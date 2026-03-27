@@ -6,6 +6,7 @@
 #define DESKTOP_MULTI_WINDOW_WINDOWS_FLUTTER_WINDOW_H_
 
 #include <Windows.h>
+#include <commctrl.h>
 
 #include <flutter/flutter_view_controller.h>
 
@@ -56,9 +57,21 @@ class FlutterWindow : public BaseFlutterWindow {
 
   bool destroyed_ = false;
 
+  // Whether to permanently hide native title bar (via WM_NCCALCSIZE interception)
+  bool hide_chrome_ = false;
+
+  // Flutter child view handle (for subclass cleanup)
+  HWND child_view_handle_ = nullptr;
+
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
   static FlutterWindow *GetThisFromHandle(HWND window) noexcept;
+
+  // Subclass proc for Flutter child view: returns HTTRANSPARENT at border zone
+  // so that parent window receives WM_NCHITTEST for resize handling.
+  static LRESULT CALLBACK ChildHitTestSubclassProc(
+      HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
+      UINT_PTR uIdSubclass, DWORD_PTR dwRefData);
 
   LRESULT MessageHandler(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
 
