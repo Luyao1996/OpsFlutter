@@ -101,10 +101,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
     await TokenStore.clearAuth();
   }
 
-  /// 401/强制登出：只更新状态，不发起网络请求
-  Future<void> forceLogout() async {
+  /// 401/强制登出：只更新状态，触发路由跳转
+  /// token 清理由调用方（ApiClient 拦截器）负责，此处不重复调用 clearAuth
+  void forceLogout() {
     state = AuthState(isLoggedIn: false);
-    await TokenStore.clearAuth();
   }
 
   /// 加载当前用户
@@ -114,7 +114,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final user = await _authApi.getCurrentUser();
       state = AuthState(isLoggedIn: true, user: user);
     } catch (_) {
-      await forceLogout();
+      forceLogout();
     }
   }
 }
@@ -206,16 +206,18 @@ class CurrentNetbar {
   final String? name;
   final String? status;
   final String? subdomainFull; // 网吧完整域名，用于终端API请求
+  final String? groupName; // 网吧所属分组名称
   final int version; // 用于触发刷新
 
-  CurrentNetbar({this.id, this.name, this.status, this.subdomainFull, this.version = 0});
+  CurrentNetbar({this.id, this.name, this.status, this.subdomainFull, this.groupName, this.version = 0});
 
-  CurrentNetbar copyWith({int? id, String? name, String? status, String? subdomainFull, int? version}) {
+  CurrentNetbar copyWith({int? id, String? name, String? status, String? subdomainFull, String? groupName, int? version}) {
     return CurrentNetbar(
       id: id ?? this.id,
       name: name ?? this.name,
       status: status ?? this.status,
       subdomainFull: subdomainFull ?? this.subdomainFull,
+      groupName: groupName ?? this.groupName,
       version: version ?? this.version,
     );
   }
@@ -233,16 +235,18 @@ class CurrentNetbarNotifier extends StateNotifier<CurrentNetbar> {
       name: data['name'],
       status: data['status'],
       subdomainFull: data['subdomain_full'],
+      groupName: data['group_name'],
     );
   }
 
   /// 设置当前网吧
-  Future<void> setNetbar(int id, String name, String status, {String? subdomainFull}) async {
+  Future<void> setNetbar(int id, String name, String status, {String? subdomainFull, String? groupName}) async {
     final netbar = {
       'id': id,
       'name': name,
       'status': status,
       if (subdomainFull != null) 'subdomain_full': subdomainFull,
+      if (groupName != null) 'group_name': groupName,
     };
     await TokenStore.setCurrentNetbar(netbar);
     state = CurrentNetbar(
@@ -250,6 +254,7 @@ class CurrentNetbarNotifier extends StateNotifier<CurrentNetbar> {
       name: name,
       status: status,
       subdomainFull: subdomainFull,
+      groupName: groupName,
       version: state.version + 1,
     );
   }

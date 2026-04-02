@@ -53,15 +53,27 @@ class FlutterWindow : public BaseFlutterWindow {
 
   std::unique_ptr<WindowChannel> window_channel_;
 
+  // Per-window focus event channel (WM_ACTIVATE -> Dart)
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> focus_channel_;
+
   double scale_factor_;
 
   bool destroyed_ = false;
+
+  // Set to true on WM_CLOSE to prevent plugin message dispatch during destruction.
+  bool closing_ = false;
+
+  // Set to true after _prepareForClose has been sent, so that the second
+  // WM_CLOSE (posted from the callback) skips InvokeMethod and falls through
+  // to DefWindowProc -> DestroyWindow safely outside the engine callback stack.
+  bool prepare_close_sent_ = false;
 
   // Whether to permanently hide native title bar (via WM_NCCALCSIZE interception)
   bool hide_chrome_ = false;
 
   // Flutter child view handle (for subclass cleanup)
   HWND child_view_handle_ = nullptr;
+
 
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 

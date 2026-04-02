@@ -1373,14 +1373,20 @@ class _LoginPageState extends ConsumerState<LoginPage>
           color: Colors.white.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(12),
         ),
+        padding: const EdgeInsets.all(12),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(
-              _qrError ?? '创建失败',
-              style: const TextStyle(color: Colors.redAccent, fontSize: 14),
+            Flexible(
+              child: Text(
+                _qrError ?? '创建失败',
+                style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                textAlign: TextAlign.center,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             TextButton.icon(
               onPressed: _createQRSession,
               icon: const Icon(LucideIcons.refreshCw, size: 16),

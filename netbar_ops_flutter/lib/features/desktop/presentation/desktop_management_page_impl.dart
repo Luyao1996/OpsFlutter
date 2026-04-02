@@ -300,7 +300,7 @@ class _DesktopManagementPageImplState extends ConsumerState<DesktopManagementPag
           !normalizedDomain.startsWith('https://')) {
         // 如果包含非标准端口，使用 HTTP；否则使用 HTTPS
         if (normalizedDomain.contains(':') && !normalizedDomain.contains(':443')) {
-          normalizedDomain = 'http://$normalizedDomain';
+          normalizedDomain = 'https://$normalizedDomain';
         } else {
           normalizedDomain = 'https://$normalizedDomain';
         }

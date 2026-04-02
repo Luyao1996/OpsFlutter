@@ -128,9 +128,9 @@ class RouterApi {
   late final Dio _dio;
 
   RouterApi({required String subdomainFull}) {
-    // subdomainFull may already contain port (e.g. "xxx.net.hudd.cc:880")
+    // subdomainFull may already contain port (e.g. "xxx.frps.wwls.net")
     final hostOnly = subdomainFull.split(':').first;
-    final baseUrl = 'http://router-$hostOnly:880/api';
+    final baseUrl = 'https://router-$hostOnly/api';
     _dio = Dio(BaseOptions(
       baseUrl: baseUrl,
       connectTimeout: const Duration(seconds: 10),

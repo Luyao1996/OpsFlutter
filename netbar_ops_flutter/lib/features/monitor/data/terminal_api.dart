@@ -16,13 +16,13 @@ class TerminalApi {
   final ApiClient _client = ApiClient.instance;
 
   /// 构造网吧域名的完整 API URL
-  /// domain 示例: "xxx.net.hudd.cc:880"
+  /// domain 示例: "xxx.frps.wwls.net"
   /// path 示例: "/seatlist"
-  /// 结果: "http://xxx.net.hudd.cc:880/api/seatlist"
+  /// 结果: "https://xxx.frps.wwls.net/api/seatlist"
   String _buildUrl(String domain, String path) {
     String d = domain.trim();
     if (!d.startsWith('http://') && !d.startsWith('https://')) {
-      d = 'http://$d';
+      d = 'https://$d';
     }
     d = d.replaceAll(RegExp(r'/+$'), '');
     return '$d/api$path';
@@ -65,6 +65,7 @@ class TerminalApi {
         options: Options(
           headers: {
             'Content-Type': 'application/json',
+            'Host': domain.trim(),
             if (token != null) 'Authorization': 'Bearer $token',
           },
           receiveTimeout: const Duration(seconds: 30),
@@ -97,6 +98,7 @@ class TerminalApi {
 
     final headers = {
       'Content-Type': 'application/json',
+      'Host': domain.trim(),
       if (token != null) 'Authorization': 'Bearer $token',
     };
 

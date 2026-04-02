@@ -137,7 +137,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         // 无可用历史标签：打开第一个可访问网吧
         final target = netbars.first;
         await tabsNotifier.openTab(target.id, target.name, target.status, subdomainFull: target.subdomainFull);
-        await currentNotifier.setNetbar(target.id, target.name, target.status, subdomainFull: target.subdomainFull);
+        await currentNotifier.setNetbar(target.id, target.name, target.status, subdomainFull: target.subdomainFull, groupName: target.group);
         return;
       }
 
@@ -153,7 +153,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
           .toList();
       await tabsNotifier.replaceAll(NetbarTabsState(tabs: syncedTabs, activeTabId: activeId));
       final activeNetbar = byId[activeId]!;
-      await currentNotifier.setNetbar(activeNetbar.id, activeNetbar.name, activeNetbar.status, subdomainFull: activeNetbar.subdomainFull);
+      await currentNotifier.setNetbar(activeNetbar.id, activeNetbar.name, activeNetbar.status, subdomainFull: activeNetbar.subdomainFull, groupName: activeNetbar.group);
     } catch (_) {
       // 网络或数据错误时保持现状，避免阻塞 UI
     }
@@ -239,11 +239,11 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         insetPadding: EdgeInsets.all(isMobile ? 12 : 32),
         child: NetbarSelectorModal(
           selectedId: current.id,
-          onSelect: (id, name, status, {subdomainFull}) {
+          onSelect: (id, name, status, {subdomainFull, groupName}) {
             tabsNotifier.openTab(id, name, status, subdomainFull: subdomainFull);
             ref
                 .read(currentNetbarProvider.notifier)
-                .setNetbar(id, name, status, subdomainFull: subdomainFull);
+                .setNetbar(id, name, status, subdomainFull: subdomainFull, groupName: groupName);
           },
           isMobile: isMobile,
         ),

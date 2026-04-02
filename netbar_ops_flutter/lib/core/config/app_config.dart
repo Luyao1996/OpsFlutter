@@ -4,7 +4,7 @@ class AppConfig {
   // 后端实际路径前缀为 /api（非 /api/v1）
   static const String baseUrl = String.fromEnvironment(
     'BASE_URL',
-    defaultValue: 'http://net.hudd.cc:888/api',
+    defaultValue: 'https://admin.wwls.net/api',
   );
 
   // 应用名称

@@ -1,9 +1,14 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../features/desktop/data/desktop_api.dart';
 import '../../features/monitor/presentation/widgets/terminal_card.dart';
+import '../providers/app_providers.dart';
 import '../providers/terminal_dock_provider.dart';
 import '../services/terminal_dock_actions.dart';
 import '../services/terminal_window_bridge.dart';
@@ -101,6 +106,37 @@ class _TerminalDockIconState extends ConsumerState<TerminalDockIcon> {
   bool _isHovered = false;
   DateTime? _lastTapAt;
 
+  @override
+  void initState() {
+    super.initState();
+    _refreshScreenshot();
+  }
+
+  Future<void> _refreshScreenshot() async {
+    final netbar = ref.read(currentNetbarProvider);
+    final domain = netbar.subdomainFull;
+    if (domain == null || domain.isEmpty) return;
+
+    final seatId = widget.item.terminal.seatId;
+    if (seatId.isEmpty) return;
+
+    try {
+      final result = await ScreenshotApi().requestScreenshot(
+        domain: domain,
+        seatId: seatId,
+      );
+      Uint8List? bytes;
+      if (result.type == ScreenshotResultType.bytes && result.bytes != null) {
+        bytes = result.bytes;
+      } else if (result.type == ScreenshotResultType.base64 && result.base64Data != null) {
+        bytes = Uint8List.fromList(base64Decode(result.base64Data!));
+      }
+      if (bytes != null && mounted) {
+        ref.read(terminalDockProvider.notifier).updateScreenshot(widget.item.terminalId, bytes);
+      }
+    } catch (_) {}
+  }
+
   Widget _buildFallbackContent() {
     final t = widget.item.terminal;
     return Center(
@@ -152,6 +188,8 @@ class _TerminalDockIconState extends ConsumerState<TerminalDockIcon> {
             child: TerminalCard(
               terminal: widget.item.terminal,
               screenshotBytes: widget.item.screenshotBytes,
+              netbarName: widget.item.netbarName,
+              groupName: widget.item.groupName,
             ),
           ),
         ),

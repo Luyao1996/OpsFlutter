@@ -6,6 +6,7 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -13,7 +14,6 @@ import 'package:webrtc_remote/webrtc_remote.dart' as webrtc;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 import 'dart:ffi' as ffi hide Size;
-import 'package:ffi/ffi.dart';
 import 'package:win32/win32.dart' as win32;
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
@@ -84,11 +84,15 @@ class TerminalDetailPage extends ConsumerStatefulWidget {
 }
 
 class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
+  static const _focusChannel = MethodChannel('com.netbar/window_focus');
   // 当前选中的功能 Tab
   String _selectedTab = '远程控制';
   Terminal? _liveTerminal;
   bool _refreshing = false;
   bool _isMaximized = false;
+  bool _isWebRTCActive = false;
+  bool _isMinimizing = false;
+  Timer? _blurDebounceTimer;
   Timer? _heartbeatTimer;
 
   // 实时截图相关
@@ -132,6 +136,22 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           final wid = widget.windowId ?? 0;
           final maximized = await WindowControl.isMaximized(wid);
           if (mounted) setState(() => _isMaximized = maximized);
+        }
+      });
+      _focusChannel.setMethodCallHandler((call) async {
+        if (call.method == 'onBlur') {
+          _onWindowBlur();
+        } else if (call.method == 'onFocus') {
+          _onWindowFocus();
+        } else if (call.method == '_prepareForClose') {
+          // Pop WebRTC route so RemoteScreen.dispose() runs while the engine is
+          // still alive. This prevents a deadlock during window close:
+          // DestroyWindow blocks the main thread -> Dart dispose() needs main
+          // thread for platform channel calls -> deadlock.
+          if (_isWebRTCActive && mounted) {
+            Navigator.popUntil(context, (r) => r.isFirst);
+            await WidgetsBinding.instance.endOfFrame;
+          }
         }
       });
     }
@@ -588,18 +608,53 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   Future<void> _handleMinimize(Terminal terminal) async {
     if (!isDesktopPlatform) return;
+    final netbar = ref.read(currentNetbarProvider);
     await TerminalWindowBridge.sendToMain('terminal_minimize', {
       'terminalId': widget.terminalId,
       'terminal': terminal.toJson(),
       'lastTab': _selectedTab,
       'windowId': widget.windowId,
       if (_liveScreenshot != null) 'screenshot': base64Encode(_liveScreenshot!),
+      if (netbar.name != null) 'netbarName': netbar.name,
+      if (netbar.groupName != null) 'groupName': netbar.groupName,
     });
     if (widget.isStandaloneWindow && widget.windowId != null) {
       // Minimize-to-dock should keep window alive to avoid refresh on restore.
       await TerminalWindowBridge.hideWindowById(widget.windowId!);
     } else if (mounted) {
       context.pop();
+    }
+  }
+
+  void _onWindowBlur() {
+    if (_isWebRTCActive && isDesktopPlatform && !_isMinimizing) {
+      _blurDebounceTimer?.cancel();
+      _blurDebounceTimer = Timer(const Duration(milliseconds: 300), () {
+        _autoMinimizeFromWebRTC();
+      });
+    }
+  }
+
+  void _onWindowFocus() {
+    _blurDebounceTimer?.cancel();
+  }
+
+  Future<void> _autoMinimizeFromWebRTC() async {
+    if (_isMinimizing) return;
+    _isMinimizing = true;
+    try {
+      final terminal = _liveTerminal ??
+          ref.read(terminalDetailProvider(widget.terminalId)).valueOrNull;
+      if (terminal == null || !mounted) return;
+
+      // 如果处于全屏状态，先退出全屏
+      if (await windowManager.isFullScreen()) {
+        await windowManager.setFullScreen(false);
+      }
+
+      await _handleMinimize(terminal);
+    } finally {
+      _isMinimizing = false;
     }
   }
 
@@ -1049,6 +1104,10 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   @override
   void dispose() {
+    if (isDesktopPlatform && widget.isStandaloneWindow) {
+      _focusChannel.setMethodCallHandler(null);
+    }
+    _blurDebounceTimer?.cancel();
     _screenshotCancelled = true; // 标记取消
     _countdownTimer?.cancel(); // 停止倒计时
     _heartbeatTimer?.cancel();
@@ -1147,13 +1206,13 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     if (!isNarrow) {
       return Row(
         children: [
-          Expanded(child: _buildPowerCard('关机', LucideIcons.power, () => _remoteAction(terminal.seatId, 'shutdown'))),
+          Expanded(child: _buildPowerCard('关机', LucideIcons.power, () => _confirmAction('关机', () => _remoteAction(terminal.seatId, 'shutdown')))),
           const SizedBox(width: 12),
-          Expanded(child: _buildPowerCard('重启', LucideIcons.refreshCw, () => _remoteAction(terminal.seatId, 'reboot'))),
+          Expanded(child: _buildPowerCard('重启', LucideIcons.refreshCw, () => _confirmAction('重启', () => _remoteAction(terminal.seatId, 'reboot')))),
           const SizedBox(width: 12),
-          Expanded(child: _buildPowerCard('注销', LucideIcons.logOut, () => _remoteAction(terminal.seatId, 'logoff'))),
+          Expanded(child: _buildPowerCard('注销', LucideIcons.logOut, () => _confirmAction('注销', () => _remoteAction(terminal.seatId, 'logoff')))),
           const SizedBox(width: 12),
-          Expanded(child: _buildPowerCard('锁定', LucideIcons.lock, () => _remoteAction(terminal.seatId, 'lock'))),
+          Expanded(child: _buildPowerCard('锁定', LucideIcons.lock, () => _confirmAction('锁定', () => _remoteAction(terminal.seatId, 'lock')))),
         ],
       );
     }
@@ -1162,20 +1221,40 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       children: [
         Row(
           children: [
-            Expanded(child: _buildPowerCard('关机', LucideIcons.power, () => _remoteAction(terminal.seatId, 'shutdown'), compact: true)),
+            Expanded(child: _buildPowerCard('关机', LucideIcons.power, () => _confirmAction('关机', () => _remoteAction(terminal.seatId, 'shutdown')), compact: true)),
             const SizedBox(width: 12),
-            Expanded(child: _buildPowerCard('重启', LucideIcons.refreshCw, () => _remoteAction(terminal.seatId, 'reboot'), compact: true)),
+            Expanded(child: _buildPowerCard('重启', LucideIcons.refreshCw, () => _confirmAction('重启', () => _remoteAction(terminal.seatId, 'reboot')), compact: true)),
           ],
         ),
         const SizedBox(height: 10),
         Row(
           children: [
-            Expanded(child: _buildPowerCard('注销', LucideIcons.logOut, () => _remoteAction(terminal.seatId, 'logoff'), compact: true)),
+            Expanded(child: _buildPowerCard('注销', LucideIcons.logOut, () => _confirmAction('注销', () => _remoteAction(terminal.seatId, 'logoff')), compact: true)),
             const SizedBox(width: 12),
-            Expanded(child: _buildPowerCard('锁定', LucideIcons.lock, () => _remoteAction(terminal.seatId, 'lock'), compact: true)),
+            Expanded(child: _buildPowerCard('锁定', LucideIcons.lock, () => _confirmAction('锁定', () => _remoteAction(terminal.seatId, 'lock')), compact: true)),
           ],
         ),
       ],
+    );
+  }
+
+  void _confirmAction(String actionName, VoidCallback onConfirm) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(actionName),
+        content: Text('确定要对该终端执行「$actionName」操作吗？'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              onConfirm();
+            },
+            child: const Text('继续'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1318,19 +1397,22 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         final peerId = '${terminal.seatId}-$subdomain';
         final wsUrl = 'wss://webrtc.03kan.com:443/ws?Peer=$peerId&type=Client';
 
-        Navigator.push(
+        _isWebRTCActive = true;
+        await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => _WebRTCWindowWrapper(
-              title: 'WebRTC ${terminal.name}',
-              windowId: widget.windowId ?? 0,
-              isStandaloneWindow: widget.isStandaloneWindow,
-              onMinimize: () => _handleMinimize(terminal),
-              childBuilder: (toggleFullscreen, isFullscreen) => Theme(
-                data: Theme.of(context).copyWith(
-                  textTheme: Theme.of(context).textTheme.apply(fontFamily: 'Segoe UI'),
-                ),
-                child: webrtc.RemoteScreen(
+            builder: (ctx) => Theme(
+              data: Theme.of(context).copyWith(
+                textTheme: Theme.of(context).textTheme.apply(fontFamily: 'Segoe UI'),
+              ),
+              child: _WebRTCWindowWrapper(
+                title: 'WebRTC ${terminal.name}',
+                windowId: widget.windowId ?? 0,
+                isStandaloneWindow: widget.isStandaloneWindow,
+                onMinimize: widget.isStandaloneWindow
+                    ? () => _handleMinimize(terminal)
+                    : null,
+                childBuilder: (toggleFullscreen, isFullscreen) => webrtc.RemoteScreen(
                   server: webrtc.ServerConfig(
                     id: 'webrtc_${terminal.id}',
                     name: 'WebRTC ${terminal.name}',
@@ -1338,12 +1420,13 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                     port: 443,
                     wsUrl: wsUrl,
                   ),
-                  onDisconnect: () => Navigator.pop(context),
+                  onDisconnect: () => Navigator.pop(ctx),
                 ),
               ),
             ),
           ),
         );
+        _isWebRTCActive = false;
       } else {
         if (mounted) {
           showTopNotice(context, '远程连接失败：未返回有效标识', level: NoticeLevel.error);
@@ -1393,7 +1476,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         // 格式: {protocol}//{host}/noVnc/vnc.html?host={seatId}-{subdomain}&port=880&path=websockify&autoconnect=true&encrypt=0&password=hudd416
         final subdomain = domain.split(':')[0]; // 去掉端口
         final vncUrl = Uri.parse(
-          'http://net.hudd.cc:888/noVnc/vnc.html'
+          'https://admin.wwls.net/noVnc/vnc.html'
           '?host=${terminal.seatId}-$subdomain'
           '&port=880'
           '&path=websockify'
@@ -1656,14 +1739,11 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
   bool _isMaximized = false;
   bool _isFullscreen = false;
   Timer? _fullscreenPollTimer;
-  bool _showExitHint = false;
-  Timer? _hoverTimer;
-  bool _exitBtnHovered = false;
 
-  // Win32: saved window placement before fullscreen
-  int _savedStyle = 0;
-  int _savedExStyle = 0;
-  final _savedRect = calloc<win32.RECT>();
+  // 标题栏 hover 显示/隐藏
+  bool _showTitleBar = false;
+  Timer? _titleBarTimer;
+
   int _hwnd = 0;
 
   // 进入 Wrapper 前的原始窗口样式（用于退出时恢复原生标题栏）
@@ -1681,7 +1761,6 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
       _hideNativeChrome();
       _initWindowManager();
       if (widget.isStandaloneWindow) _checkMaximized();
-      // Poll fullscreen state to sync with RemoteScreen's F11 / floating button
       _fullscreenPollTimer = Timer.periodic(
         const Duration(milliseconds: 300),
         (_) => _pollFullscreenState(),
@@ -1694,7 +1773,6 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
     if (_hwnd == 0) return;
     _originalStyle = win32.GetWindowLongPtr(
         _hwnd, win32.WINDOW_LONG_PTR_INDEX.GWL_STYLE);
-    // 检测是否有原生标题栏
     if ((_originalStyle & win32.WINDOW_STYLE.WS_CAPTION) != 0) {
       final newStyle = _originalStyle &
           ~(win32.WINDOW_STYLE.WS_CAPTION |
@@ -1738,40 +1816,41 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
   @override
   void dispose() {
     _fullscreenPollTimer?.cancel();
-    _hoverTimer?.cancel();
+    _titleBarTimer?.cancel();
     if (isDesktopPlatform) _restoreNativeChrome();
-    calloc.free(_savedRect);
     super.dispose();
   }
 
   void _pollFullscreenState() {
     if (_hwnd == 0 || !mounted) return;
 
-    // 检测最小化恢复 → 强制重绘防止白屏
+    // 检测最小化恢复 → 强制重绘
     final isMinimized = win32.IsIconic(_hwnd) != 0;
     if (_wasMinimized && !isMinimized) {
       _forceRepaint();
     }
     _wasMinimized = isMinimized;
 
-    final style = win32.GetWindowLongPtr(_hwnd, win32.WINDOW_LONG_PTR_INDEX.GWL_STYLE);
-    final isNowFullscreen = (style & win32.WINDOW_STYLE.WS_OVERLAPPEDWINDOW) == 0;
+    // 同步全屏状态：同时支持 IsZoomed（SW_MAXIMIZE）和 style 检测（windowManager.setFullScreen）
+    final isZoomed = win32.IsZoomed(_hwnd) != 0;
+    final style = win32.GetWindowLongPtr(
+        _hwnd, win32.WINDOW_LONG_PTR_INDEX.GWL_STYLE);
+    final isStyleFullscreen =
+        (style & win32.WINDOW_STYLE.WS_OVERLAPPEDWINDOW) == 0;
+    final isNowFullscreen = isZoomed || isStyleFullscreen;
     if (isNowFullscreen != _isFullscreen) {
       setState(() => _isFullscreen = isNowFullscreen);
     }
   }
 
-  /// 强制窗口重绘 —— 解决全屏/最小化恢复后黑屏/白屏问题
-  /// 多级延迟确保至少一次落在 ANGLE swap chain 重建完成之后
+  /// 强制窗口重绘 —— 解决全屏/最小化恢复后黑屏问题
+  /// 延迟确保 ANGLE swap chain 重建完成后再触发
   void _forceRepaint() {
-    // 1. Win32: 令客户区无效，触发 WM_PAINT
     win32.InvalidateRect(_hwnd, ffi.nullptr, 1);
-    // 2. Flutter: 调度新帧
     WidgetsBinding.instance.scheduleFrame();
-    // 3. 多级递增延迟重绘，覆盖 surface 重建的不确定耗时
     for (final ms in [50, 150, 500]) {
       Future.delayed(Duration(milliseconds: ms), () {
-        if (!mounted) return;
+        if (!mounted || _hwnd == 0) return;
         win32.InvalidateRect(_hwnd, ffi.nullptr, 1);
         WidgetsBinding.instance.scheduleFrame();
         setState(() {});
@@ -1792,7 +1871,9 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
 
   void _handleFullscreen() {
     if (!isDesktopPlatform || _hwnd == 0) return;
-    if (_isFullscreen) {
+    // 用 IsZoomed 判断当前实际窗口状态，不依赖 _isFullscreen
+    final isZoomed = win32.IsZoomed(_hwnd) != 0;
+    if (isZoomed) {
       _exitFullscreen();
     } else {
       _enterFullscreen();
@@ -1800,47 +1881,21 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
   }
 
   void _enterFullscreen() {
-    // Save current window style and position
-    _savedStyle = win32.GetWindowLongPtr(_hwnd, win32.WINDOW_LONG_PTR_INDEX.GWL_STYLE);
-    _savedExStyle = win32.GetWindowLongPtr(_hwnd, win32.WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE);
-    win32.GetWindowRect(_hwnd, _savedRect);
-
-    // Remove title bar and borders
-    win32.SetWindowLongPtr(_hwnd, win32.WINDOW_LONG_PTR_INDEX.GWL_STYLE,
-        _savedStyle & ~win32.WINDOW_STYLE.WS_OVERLAPPEDWINDOW);
-
-    // Get monitor info for full coverage
-    final monitor = win32.MonitorFromWindow(_hwnd, win32.MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
-    final mi = calloc<win32.MONITORINFO>();
-    mi.ref.cbSize = ffi.sizeOf<win32.MONITORINFO>();
-    win32.GetMonitorInfo(monitor, mi);
-    final rc = mi.ref.rcMonitor;
-
-    win32.SetWindowPos(_hwnd, win32.HWND_TOP, rc.left, rc.top,
-        rc.right - rc.left, rc.bottom - rc.top,
-        win32.SET_WINDOW_POS_FLAGS.SWP_FRAMECHANGED | win32.SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER);
-    calloc.free(mi);
-
-    setState(() => _isFullscreen = true);
+    // 只做 Win32 原生最大化，不设 _isFullscreen，不调 setState
+    // 标题栏显隐由 _pollFullscreenState 延迟驱动（此时 ANGLE 已稳定）
+    win32.ShowWindow(_hwnd, win32.SHOW_WINDOW_CMD.SW_MAXIMIZE);
     _forceRepaint();
   }
 
   void _exitFullscreen() {
-    // 全部走 Win32 API 恢复，不经过 windowManager（windowManager 会恢复 WS_CAPTION）
-    win32.SetWindowLongPtr(_hwnd, win32.WINDOW_LONG_PTR_INDEX.GWL_STYLE, _savedStyle);
-    win32.SetWindowLongPtr(_hwnd, win32.WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE, _savedExStyle);
-    win32.SetWindowPos(_hwnd, 0,
-        _savedRect.ref.left, _savedRect.ref.top,
-        _savedRect.ref.right - _savedRect.ref.left,
-        _savedRect.ref.bottom - _savedRect.ref.top,
-        win32.SET_WINDOW_POS_FLAGS.SWP_FRAMECHANGED | win32.SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER | win32.SET_WINDOW_POS_FLAGS.SWP_NOZORDER);
-
-    setState(() => _isFullscreen = false);
+    win32.ShowWindow(_hwnd, win32.SHOW_WINDOW_CMD.SW_RESTORE);
     _forceRepaint();
   }
 
   void _handleClose() {
-    if (_isFullscreen) _exitFullscreen();
+    if (_hwnd != 0 && win32.IsZoomed(_hwnd) != 0) {
+      win32.ShowWindow(_hwnd, win32.SHOW_WINDOW_CMD.SW_RESTORE);
+    }
     Navigator.pop(context);
   }
 
@@ -1852,169 +1907,114 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
       backgroundColor: const Color(0xFF0A0A0C),
       body: Stack(
         children: [
-          Column(
-            children: [
-              // Title bar - hidden in fullscreen
-              if (!_isFullscreen)
-                Container(
-                  height: 40,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              decoration: const BoxDecoration(
-                color: Color(0xFF1a1a2e),
-                border: Border(bottom: BorderSide(color: Color(0xFF2a2a3e))),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.connected_tv, size: 14, color: Colors.blue.shade300),
-                  const SizedBox(width: 8),
-                  Text(
-                    widget.title,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white70),
-                  ),
-                  const SizedBox(width: 16),
-                  // Drag area
-                  Expanded(
-                    child: MouseRegion(
-                      cursor: widget.isStandaloneWindow ? SystemMouseCursors.move : MouseCursor.defer,
-                      child: Listener(
-                        behavior: HitTestBehavior.translucent,
-                        onPointerDown: widget.isStandaloneWindow
-                            ? (event) {
-                                if ((event.buttons & kPrimaryButton) == 0) return;
-                                WindowControl.startDragging(widget.windowId);
-                              }
-                            : null,
-                        child: const SizedBox.expand(),
-                      ),
+          // 视频内容：永远铺满整个窗口，全屏切换不影响布局
+          Positioned.fill(
+            child: widget.childBuilder(_handleFullscreen, _isFullscreen),
+          ),
+
+          // 刘海热区：顶部居中窄条，hover 1秒触发标题栏
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: MouseRegion(
+                hitTestBehavior: HitTestBehavior.deferToChild,
+                onEnter: (_) {
+                  _titleBarTimer?.cancel();
+                  _titleBarTimer = Timer(const Duration(seconds: 1), () {
+                    if (mounted) setState(() => _showTitleBar = true);
+                  });
+                },
+                onExit: (_) {
+                  if (!_showTitleBar) _titleBarTimer?.cancel();
+                },
+                child: Container(
+                  width: 120,
+                  height: 25,
+                  color: Colors.transparent,
+                  alignment: Alignment.bottomCenter,
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.10),
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
-                  // Minimize button
-                  if (widget.onMinimize != null)
-                    _windowButton(
-                      icon: LucideIcons.minus,
-                      tooltip: '最小化到 Dock',
-                      onPressed: widget.onMinimize!,
-                    ),
-                  // Fullscreen button
-                  _windowButton(
-                    icon: LucideIcons.maximize,
-                    tooltip: 'Fullscreen (F11)',
-                    onPressed: _handleFullscreen,
-                  ),
-                  // Close button
-                  _windowButton(
-                    icon: LucideIcons.x,
-                    tooltip: 'Close',
-                    onPressed: _handleClose,
-                    hoverColor: Colors.red.withOpacity(0.2),
-                  ),
-                ],
+                ),
               ),
             ),
-          // Content
-          Expanded(
-            child: Stack(
-              children: [
-                widget.childBuilder(_handleFullscreen, _isFullscreen),
-                // Chrome-style fullscreen exit: hover top edge to reveal button
-                if (_isFullscreen) ...[
-                  // 顶部热区：鼠标悬停 400ms 后显示退出按钮
-                  Positioned(
-                    top: 0, left: 0, right: 0, height: 6,
-                    child: MouseRegion(
-                      onEnter: (_) {
-                        _hoverTimer?.cancel();
-                        _hoverTimer = Timer(const Duration(milliseconds: 400), () {
-                          if (mounted) setState(() => _showExitHint = true);
-                        });
-                      },
-                      onExit: (_) {
-                        _hoverTimer?.cancel();
-                      },
-                    ),
+          ),
+
+          // 标题栏：hover 显示的半透明浮动层
+          AnimatedPositioned(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              top: _showTitleBar ? 0 : -44,
+              left: 0, right: 0,
+              child: MouseRegion(
+                onExit: (_) {
+                  _titleBarTimer?.cancel();
+                  _titleBarTimer = Timer(const Duration(milliseconds: 500), () {
+                    if (mounted) setState(() => _showTitleBar = false);
+                  });
+                },
+                onEnter: (_) {
+                  _titleBarTimer?.cancel();
+                },
+                child: Container(
+                  height: 40,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: const BoxDecoration(
+                    color: Color(0xCC1a1a2e),
+                    border: Border(bottom: BorderSide(color: Color(0x882a2a3e))),
                   ),
-                  // 退出全屏按钮：从顶部滑入
-                  AnimatedPositioned(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOut,
-                    top: _showExitHint ? 0 : -44,
-                    left: 0, right: 0,
-                    child: Center(
-                      child: MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        onEnter: (_) => setState(() => _exitBtnHovered = true),
-                        onExit: (_) {
-                          setState(() => _exitBtnHovered = false);
-                          Future.delayed(const Duration(milliseconds: 400), () {
-                            if (mounted && !_exitBtnHovered) {
-                              setState(() => _showExitHint = false);
-                            }
-                          });
-                        },
-                        child: GestureDetector(
-                          onTap: () {
-                            _exitFullscreen();
-                            setState(() {
-                              _showExitHint = false;
-                              _exitBtnHovered = false;
-                            });
-                          },
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 150),
-                            height: 40,
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            decoration: BoxDecoration(
-                              color: _exitBtnHovered
-                                  ? const Color(0xFF4A4A4A)
-                                  : const Color(0xE6282828),
-                              borderRadius: const BorderRadius.only(
-                                bottomLeft: Radius.circular(10),
-                                bottomRight: Radius.circular(10),
-                              ),
-                              border: Border.all(
-                                color: _exitBtnHovered
-                                    ? const Color(0xFF666666)
-                                    : const Color(0xFF444444),
-                                width: 0.5,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(_exitBtnHovered ? 0.6 : 0.4),
-                                  blurRadius: _exitBtnHovered ? 12 : 8,
-                                  offset: const Offset(0, 3),
-                                ),
-                              ],
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.fullscreen_exit,
-                                  size: 18,
-                                  color: _exitBtnHovered ? Colors.white : Colors.white70,
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  '退出全屏',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500,
-                                    color: _exitBtnHovered ? Colors.white : Colors.white70,
-                                  ),
-                                ),
-                              ],
-                            ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.connected_tv, size: 14, color: Colors.blue.shade300),
+                      const SizedBox(width: 8),
+                      Text(
+                        widget.title,
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white70),
+                      ),
+                      const SizedBox(width: 16),
+                      // Drag area
+                      Expanded(
+                        child: MouseRegion(
+                          cursor: widget.isStandaloneWindow ? SystemMouseCursors.move : MouseCursor.defer,
+                          child: Listener(
+                            behavior: HitTestBehavior.translucent,
+                            onPointerDown: widget.isStandaloneWindow
+                                ? (event) {
+                                    if ((event.buttons & kPrimaryButton) == 0) return;
+                                    WindowControl.startDragging(widget.windowId);
+                                  }
+                                : null,
+                            child: const SizedBox.expand(),
                           ),
                         ),
                       ),
-                    ),
+                      // Minimize button
+                      if (widget.onMinimize != null)
+                        _windowButton(
+                          icon: LucideIcons.minus,
+                          tooltip: '最小化到 Dock',
+                          onPressed: widget.onMinimize!,
+                        ),
+                      // Close button
+                      _windowButton(
+                        icon: LucideIcons.x,
+                        tooltip: 'Close',
+                        onPressed: _handleClose,
+                        hoverColor: Colors.red.withOpacity(0.2),
+                      ),
+                    ],
                   ),
-                ],
-              ],
+                ),
+              ),
             ),
-          ),
-            ],
-          ),
+
         ],
       ),
     );

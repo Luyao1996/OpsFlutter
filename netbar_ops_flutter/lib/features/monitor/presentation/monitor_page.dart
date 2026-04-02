@@ -995,12 +995,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
 
   void _openRouterInBrowser(RouterInfo router) {
     final token = TokenStore.getToken() ?? '';
-    // proxyUrl 可能不带端口，补上 :880
     var proxy = router.proxyUrl;
-    final uri = Uri.tryParse(proxy);
-    if (uri != null && (uri.port == 80 || uri.port == 443)) {
-      proxy = '${uri.scheme}://${uri.host}:880${uri.path}';
-    }
     final url = '$proxy?Authorization=Bearer%20$token';
     launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }

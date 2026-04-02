@@ -266,7 +266,7 @@ class ScreenshotApi {
         !normalizedDomain.startsWith('https://')) {
       // 如果包含非标准端口，使用 HTTP；否则使用 HTTPS
       if (normalizedDomain.contains(':') && !normalizedDomain.contains(':443')) {
-        normalizedDomain = 'http://$normalizedDomain';
+        normalizedDomain = 'https://$normalizedDomain';
       } else {
         normalizedDomain = 'https://$normalizedDomain';
       }
@@ -433,9 +433,9 @@ class ScreenshotResult {
 
 enum ScreenshotResultType { bytes, base64, url, error }
 
-/// 文件API - 使用 http://net.hudd.cc:888/api/file/view 接口
+/// 文件API - 使用 https://admin.wwls.net/api/file/view 接口
 class FileApi {
-  static const String _baseUrl = 'http://net.hudd.cc:888/api/file/view';
+  static const String _baseUrl = 'https://admin.wwls.net/api/file/view';
 
   /// 处理响应，检查 code 是否为 401
   List<dynamic> _parseResponse(dynamic data) {

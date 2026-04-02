@@ -60,8 +60,10 @@ class ApiClient {
             if (code == 401) {
               final ignoreUnauthorized = response.requestOptions.extra['ignoreUnauthorized'] == true;
               if (!ignoreUnauthorized) {
-                await TokenStore.clearAuth();
+                // 先触发登出状态变更（同步设 isLoggedIn=false → 路由立即跳转登录页）
+                // 再异步清理 token/子窗口，避免 clearAuth 阻塞跳转
                 onUnauthorized?.call();
+                TokenStore.clearAuth();
               }
               return handler.reject(
                 DioException(
@@ -94,10 +96,9 @@ class ApiClient {
         onError: (error, handler) async {
           final ignoreUnauthorized = error.requestOptions.extra['ignoreUnauthorized'] == true;
           if (!ignoreUnauthorized && error.response?.statusCode == 401) {
-            // 清除认证数据
-            await TokenStore.clearAuth();
-            // 触发跳转登录
+            // 先触发登出（同步），再异步清理
             onUnauthorized?.call();
+            TokenStore.clearAuth();
           }
           return handler.next(error);
         },

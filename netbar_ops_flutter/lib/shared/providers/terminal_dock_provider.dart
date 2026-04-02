@@ -11,6 +11,8 @@ class TerminalDockItem {
   final String lastTab;
   final int? windowId;
   final Uint8List? screenshotBytes;
+  final String? netbarName;
+  final String? groupName;
 
   const TerminalDockItem({
     required this.terminalId,
@@ -18,6 +20,8 @@ class TerminalDockItem {
     required this.lastTab,
     this.windowId,
     this.screenshotBytes,
+    this.netbarName,
+    this.groupName,
   });
 
   TerminalDockItem copyWith({
@@ -25,6 +29,8 @@ class TerminalDockItem {
     String? lastTab,
     int? windowId,
     Uint8List? screenshotBytes,
+    String? netbarName,
+    String? groupName,
   }) {
     return TerminalDockItem(
       terminalId: terminalId,
@@ -32,6 +38,8 @@ class TerminalDockItem {
       lastTab: lastTab ?? this.lastTab,
       windowId: windowId ?? this.windowId,
       screenshotBytes: screenshotBytes ?? this.screenshotBytes,
+      netbarName: netbarName ?? this.netbarName,
+      groupName: groupName ?? this.groupName,
     );
   }
 
@@ -47,6 +55,8 @@ class TerminalDockItem {
       screenshotBytes: screenshotBase64 != null
           ? Uint8List.fromList(base64Decode(screenshotBase64))
           : null,
+      netbarName: data['netbarName'],
+      groupName: data['groupName'],
     );
   }
 }
@@ -104,6 +114,13 @@ class TerminalDockNotifier extends StateNotifier<TerminalDockState> {
 
   String lastTabFor(int terminalId) {
     return state.lastTabs[terminalId] ?? '远程控制';
+  }
+
+  void updateScreenshot(int terminalId, Uint8List bytes) {
+    if (!state.minimized.containsKey(terminalId)) return;
+    final minimized = Map<int, TerminalDockItem>.from(state.minimized);
+    minimized[terminalId] = minimized[terminalId]!.copyWith(screenshotBytes: bytes);
+    state = state.copyWith(minimized: minimized);
   }
 
   void clearMinimized() {

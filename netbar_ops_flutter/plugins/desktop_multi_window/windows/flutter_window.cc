@@ -6,9 +6,11 @@
 #include "../../../windows/runner/virtual_clipboard.h"
 
 #include "flutter_windows.h"
+#include <flutter/method_result_functions.h>
 
 #include "tchar.h"
 #include <windowsx.h>
+#include <dwmapi.h>
 
 #include <iostream>
 #include <utility>
@@ -35,7 +37,7 @@ void RegisterWindowClass(WNDPROC wnd_proc) {
     window_class.hInstance = GetModuleHandle(nullptr);
     window_class.hIcon =
         LoadIcon(window_class.hInstance, IDI_APPLICATION);
-    window_class.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    window_class.hbrBackground = 0;
     window_class.lpszMenuName = nullptr;
     window_class.lpfnWndProc = wnd_proc;
     RegisterClass(&window_class);
@@ -116,6 +118,11 @@ FlutterWindow::FlutterWindow(
       Scale(1280, scale_factor_), Scale(720, scale_factor_),
       nullptr, nullptr, GetModuleHandle(nullptr), this);
 
+  // Disable DWM maximize/restore animation to prevent multi-frame flicker
+  BOOL disable_transitions = TRUE;
+  DwmSetWindowAttribute(window_handle, DWMWA_TRANSITIONS_FORCEDISABLED,
+                        &disable_transitions, sizeof(disable_transitions));
+
   RECT frame;
   GetClientRect(window_handle, &frame);
   flutter::DartProject project(L"data");
@@ -143,6 +150,12 @@ FlutterWindow::FlutterWindow(
       flutter_controller_->engine()->GetRegistrarForPlugin("DesktopMultiWindowPlugin"));
   window_channel_ = WindowChannel::RegisterWithRegistrar(
       flutter_controller_->engine()->GetRegistrarForPlugin("DesktopMultiWindowPlugin"), id_);
+
+  // Per-window focus channel for WM_ACTIVATE -> Dart notification
+  focus_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(),
+      "com.netbar/window_focus",
+      &flutter::StandardMethodCodec::GetInstance());
 
   if (_g_window_created_callback) {
     _g_window_created_callback(flutter_controller_.get());
@@ -257,13 +270,29 @@ LRESULT FlutterWindow::MessageHandler(HWND hwnd, UINT message, WPARAM wparam, LP
         MINMAXINFO* mmi = reinterpret_cast<MINMAXINFO*>(lparam);
         mmi->ptMinTrackSize.x = static_cast<LONG>(400 * scale_factor_);
         mmi->ptMinTrackSize.y = static_cast<LONG>(300 * scale_factor_);
+        HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO monInfo = {};
+        monInfo.cbSize = sizeof(MONITORINFO);
+        if (GetMonitorInfo(hMon, &monInfo)) {
+          mmi->ptMaxPosition.x = monInfo.rcMonitor.left;
+          mmi->ptMaxPosition.y = monInfo.rcMonitor.top;
+          mmi->ptMaxSize.x = monInfo.rcMonitor.right - monInfo.rcMonitor.left;
+          mmi->ptMaxSize.y = monInfo.rcMonitor.bottom - monInfo.rcMonitor.top;
+        }
         return 0;
       }
     }
   }
 
+  // Prevent background erase -- avoids black flash during resize/maximize.
+  // With hbrBackground=0 this is belt-and-suspenders defense.
+  if (message == WM_ERASEBKGND) {
+    return TRUE;
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
-  if (flutter_controller_) {
+  // Skip during close/destroy to avoid sending platform messages to a dying engine.
+  if (flutter_controller_ && !closing_) {
     std::optional<LRESULT> result = flutter_controller_->HandleTopLevelWindowProc(hwnd, message, wparam, lparam);
     if (result) {
       return *result;
@@ -278,7 +307,16 @@ LRESULT FlutterWindow::MessageHandler(HWND hwnd, UINT message, WPARAM wparam, LP
       break;
     }
     case WM_DESTROY: {
+      // Clean up Flutter resources. Do NOT remove from window map here --
+      // DestroyWindow still dispatches WM_NCDESTROY after this, and the
+      // FlutterWindow must stay alive to handle it.
       Destroy();
+      return 0;
+    }
+    case WM_NCDESTROY: {
+      // WM_NCDESTROY is the very last message a window receives.
+      // Safe to remove ourselves from the map (destroying this object) here.
+      SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
       if (!destroyed_) {
         destroyed_ = true;
         if (auto callback = callback_.lock()) {
@@ -288,9 +326,40 @@ LRESULT FlutterWindow::MessageHandler(HWND hwnd, UINT message, WPARAM wparam, LP
       return 0;
     }
     case WM_CLOSE: {
-      if (auto callback = callback_.lock()) {
-        callback->OnWindowClose(id_);
+      if (!closing_) {
+        closing_ = true;
+        if (auto callback = callback_.lock()) {
+          callback->OnWindowClose(id_);
+        }
       }
+      // Two-step close: first WM_CLOSE sends _prepareForClose to let Dart
+      // clean up WebRTC/native resources. The callback posts a second WM_CLOSE
+      // via PostMessage so that DestroyWindow runs in the next message-loop
+      // iteration, safely outside the engine's BinaryMessenger callback stack.
+      // Calling DestroyWindow directly from the InvokeMethod callback would
+      // destroy the engine while still inside its own message dispatch,
+      // causing a use-after-free that intermittently triggers abort().
+      if (focus_channel_ && !prepare_close_sent_) {
+        prepare_close_sent_ = true;
+        const HWND hwnd_to_close = hwnd;
+        focus_channel_->InvokeMethod(
+            "_prepareForClose", nullptr,
+            std::make_unique<flutter::MethodResultFunctions<flutter::EncodableValue>>(
+                [hwnd_to_close](const flutter::EncodableValue*) {
+                  if (IsWindow(hwnd_to_close)) PostMessage(hwnd_to_close, WM_CLOSE, 0, 0);
+                },
+                [hwnd_to_close](const std::string&, const std::string&,
+                                const flutter::EncodableValue*) {
+                  if (IsWindow(hwnd_to_close)) PostMessage(hwnd_to_close, WM_CLOSE, 0, 0);
+                },
+                [hwnd_to_close]() {
+                  if (IsWindow(hwnd_to_close)) PostMessage(hwnd_to_close, WM_CLOSE, 0, 0);
+                }));
+        return 0;  // Wait for Dart cleanup; second WM_CLOSE arrives via PostMessage.
+      }
+      // Second WM_CLOSE (posted from callback above) or no focus_channel_:
+      // fall through to DefWindowProc which calls DestroyWindow safely,
+      // outside the engine's callback stack.
       break;
     }
     case WM_DPICHANGED: {
@@ -305,7 +374,7 @@ LRESULT FlutterWindow::MessageHandler(HWND hwnd, UINT message, WPARAM wparam, LP
     }
     case WM_SIZE: {
       RECT rect;
-      GetClientRect(window_handle_, &rect);
+      GetClientRect(hwnd, &rect);
       if (child_content_ != nullptr) {
         MoveWindow(child_content_, rect.left, rect.top, rect.right - rect.left,
                    rect.bottom - rect.top, TRUE);
@@ -314,8 +383,17 @@ LRESULT FlutterWindow::MessageHandler(HWND hwnd, UINT message, WPARAM wparam, LP
     }
 
     case WM_ACTIVATE: {
-      if (child_content_ != nullptr) {
-        SetFocus(child_content_);
+      if (!closing_ && !destroyed_) {
+        if (LOWORD(wparam) != WA_INACTIVE && child_content_ != nullptr) {
+          SetFocus(child_content_);
+        }
+        if (focus_channel_) {
+          if (LOWORD(wparam) == WA_INACTIVE) {
+            focus_channel_->InvokeMethod("onBlur", nullptr);
+          } else {
+            focus_channel_->InvokeMethod("onFocus", nullptr);
+          }
+        }
       }
       return 0;
     }
@@ -344,10 +422,13 @@ LRESULT FlutterWindow::MessageHandler(HWND hwnd, UINT message, WPARAM wparam, LP
     default: break;
   }
 
-  return DefWindowProc(window_handle_, message, wparam, lparam);
+  return DefWindowProc(hwnd, message, wparam, lparam);
 }
 
 void FlutterWindow::Destroy() {
+  if (focus_channel_) {
+    focus_channel_.reset();
+  }
   if (window_channel_) {
     window_channel_ = nullptr;
   }
@@ -359,10 +440,11 @@ void FlutterWindow::Destroy() {
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
-  if (window_handle_) {
-    DestroyWindow(window_handle_);
-    window_handle_ = nullptr;
-  }
+  // Destroy() is only called from WM_DESTROY, meaning the window is already
+  // being destroyed by the system. Do NOT call DestroyWindow again here --
+  // it would re-enter WM_DESTROY while window_handle_ is still non-null,
+  // causing infinite recursion and a stack overflow (program hangs).
+  window_handle_ = nullptr;
 }
 
 FlutterWindow::~FlutterWindow() {

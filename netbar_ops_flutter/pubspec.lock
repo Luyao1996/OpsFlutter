@@ -1409,7 +1409,7 @@ packages:
     description:
       path: "examples/FlutterUi"
       ref: "feature/andriod"
-      resolved-ref: c735513166ec168fc92ca7b316a6fd871b076c8f
+      resolved-ref: "50dd843746c7ed52e0b753de4165c548b132c72e"
       url: "https://github.com/Luyao1996/WebRtcGo.git"
     source: git
     version: "1.0.0+1"

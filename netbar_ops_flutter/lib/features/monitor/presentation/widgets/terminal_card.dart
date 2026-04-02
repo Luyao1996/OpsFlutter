@@ -10,6 +10,8 @@ class TerminalCard extends StatefulWidget {
   final VoidCallback? onTap;
   final void Function(TapDownDetails)? onSecondaryTapDown;
   final Uint8List? screenshotBytes; // 实时截图数据
+  final String? netbarName; // 网吧名称（顶部信息栏）
+  final String? groupName; // 网吧分组（顶部信息栏）
 
   const TerminalCard({
     super.key,
@@ -17,6 +19,8 @@ class TerminalCard extends StatefulWidget {
     this.onTap,
     this.onSecondaryTapDown,
     this.screenshotBytes,
+    this.netbarName,
+    this.groupName,
   });
 
   @override
@@ -80,6 +84,8 @@ class _TerminalCardState extends State<TerminalCard> {
                     : const ColorFilter.mode(Colors.transparent, BlendMode.multiply),
                 child: Column(
                   children: [
+                    // 顶部信息栏（网吧名称 + 分组）
+                    if (widget.netbarName != null) _buildTopInfoBar(),
                     // 屏幕图片区域 (aspect-video: 16:9)
                     Expanded(child: _buildScreenArea()),
                     // 设备名称底栏
@@ -228,6 +234,27 @@ class _TerminalCardState extends State<TerminalCard> {
       width: 1,
       height: 20,
       color: Colors.white.withValues(alpha: 0.2),
+    );
+  }
+
+  /// 顶部信息栏（网吧名称 + 分组）
+  Widget _buildTopInfoBar() {
+    final group = widget.groupName ?? '';
+    final label = group.isNotEmpty ? '${widget.netbarName} $group' : widget.netbarName ?? '';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      color: const Color(0xFF1F2937), // bg-gray-800
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+        textAlign: TextAlign.center,
+        overflow: TextOverflow.ellipsis,
+      ),
     );
   }
 

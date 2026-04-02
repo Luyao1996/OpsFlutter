@@ -91,7 +91,7 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
         insetPadding: const EdgeInsets.all(40),
         child: NetbarSelectorModal(
           selectedId: ref.read(netbarTabsProvider).activeTabId,
-          onSelect: (id, name, status, {String? subdomainFull}) {
+          onSelect: (id, name, status, {String? subdomainFull, String? groupName}) {
             ref.read(netbarTabsProvider.notifier).openTab(id, name, status, subdomainFull: subdomainFull);
           },
         ),

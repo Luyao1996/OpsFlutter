@@ -21,7 +21,8 @@
       "Bash(git merge:*)",
       "Bash(flutter analyze:*)",
       "Bash(grep:*)",
-      "WebSearch"
+      "WebSearch",
+      "Skill(sk-deep-debugger)"
     ]
   }
 }
