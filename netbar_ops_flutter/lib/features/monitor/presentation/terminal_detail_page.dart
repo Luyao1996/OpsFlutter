@@ -93,8 +93,6 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   bool _refreshing = false;
   bool _isMaximized = false;
   bool _isWebRTCActive = false;
-  bool _isMinimizing = false;
-  Timer? _blurDebounceTimer;
   Timer? _heartbeatTimer;
 
   // 实时截图相关
@@ -664,34 +662,17 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   }
 
   void _onWindowBlur() {
-    if (_isWebRTCActive && isDesktopPlatform && !_isMinimizing) {
-      _blurDebounceTimer?.cancel();
-      _blurDebounceTimer = Timer(const Duration(milliseconds: 300), () {
-        _autoMinimizeFromWebRTC();
-      });
-    }
+    // 不再自动最小化，允许多窗口并存
   }
 
   void _onWindowFocus() {
-    _blurDebounceTimer?.cancel();
-  }
-
-  Future<void> _autoMinimizeFromWebRTC() async {
-    if (_isMinimizing) return;
-    _isMinimizing = true;
-    try {
-      final terminal = _liveTerminal ??
-          ref.read(terminalDetailProvider(widget.terminalId)).valueOrNull;
-      if (terminal == null || !mounted) return;
-
-      // 如果处于全屏状态，先退出全屏
-      if (await windowManager.isFullScreen()) {
-        await windowManager.setFullScreen(false);
+    // 窗口恢复焦点时立即触发重绘，避免最小化恢复后黑屏
+    if (_isWebRTCActive && isDesktopPlatform) {
+      final hwnd = win32.GetForegroundWindow();
+      if (hwnd != 0) {
+        win32.InvalidateRect(hwnd, ffi.nullptr, 1);
+        WidgetsBinding.instance.scheduleFrame();
       }
-
-      await _handleMinimize(terminal);
-    } finally {
-      _isMinimizing = false;
     }
   }
 
@@ -1150,7 +1131,6 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     if (isDesktopPlatform && widget.isStandaloneWindow) {
       _focusChannel.setMethodCallHandler(null);
     }
-    _blurDebounceTimer?.cancel();
     _screenshotCancelled = true; // 标记取消
     _countdownTimer?.cancel(); // 停止倒计时
     _heartbeatTimer?.cancel();
@@ -1441,6 +1421,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         final wsUrl = 'wss://webrtc.03kan.com:443/ws?Peer=$peerId&type=Client';
 
         _isWebRTCActive = true;
+        // 进入 WebRTC 时暂停截图和心跳（远程桌面已有实时画面，无需后台刷新）
+        _stopScreenshotTimer();
+        _heartbeatTimer?.cancel();
         await Navigator.push(
           context,
           MaterialPageRoute(
@@ -1449,7 +1432,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                 textTheme: Theme.of(context).textTheme.apply(fontFamily: 'Segoe UI'),
               ),
               child: _WebRTCWindowWrapper(
-                title: 'WebRTC ${terminal.name}',
+                title: '$_netbarName - $_groupName - ${terminal.name}',
                 windowId: widget.windowId ?? 0,
                 isStandaloneWindow: widget.isStandaloneWindow,
                 onMinimize: widget.isStandaloneWindow
@@ -1470,6 +1453,10 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           ),
         );
         _isWebRTCActive = false;
+        // 退出 WebRTC，恢复心跳定时器
+        _heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+          _refreshHeartbeat(widget.terminalId, silent: true);
+        });
       } else {
         if (mounted) {
           showTopNotice(context, '远程连接失败：未返回有效标识', level: NoticeLevel.error);
@@ -1783,9 +1770,6 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
   bool _isFullscreen = false;
   Timer? _fullscreenPollTimer;
 
-  // 标题栏 hover 显示/隐藏
-  bool _showTitleBar = false;
-  Timer? _titleBarTimer;
 
   int _hwnd = 0;
 
@@ -1805,7 +1789,7 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
       _initWindowManager();
       if (widget.isStandaloneWindow) _checkMaximized();
       _fullscreenPollTimer = Timer.periodic(
-        const Duration(milliseconds: 300),
+        const Duration(seconds: 1),
         (_) => _pollFullscreenState(),
       );
     }
@@ -1859,7 +1843,6 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
   @override
   void dispose() {
     _fullscreenPollTimer?.cancel();
-    _titleBarTimer?.cancel();
     if (isDesktopPlatform) _restoreNativeChrome();
     super.dispose();
   }
@@ -1948,116 +1931,62 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0C),
-      body: Stack(
+      body: Column(
         children: [
-          // 视频内容：永远铺满整个窗口，全屏切换不影响布局
-          Positioned.fill(
-            child: widget.childBuilder(_handleFullscreen, _isFullscreen),
-          ),
-
-          // 刘海热区：顶部居中窄条，hover 1秒触发标题栏
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: MouseRegion(
-                hitTestBehavior: HitTestBehavior.deferToChild,
-                onEnter: (_) {
-                  _titleBarTimer?.cancel();
-                  _titleBarTimer = Timer(const Duration(seconds: 1), () {
-                    if (mounted) setState(() => _showTitleBar = true);
-                  });
-                },
-                onExit: (_) {
-                  if (!_showTitleBar) _titleBarTimer?.cancel();
-                },
-                child: Container(
-                  width: 120,
-                  height: 25,
-                  color: Colors.transparent,
-                  alignment: Alignment.bottomCenter,
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.10),
-                      borderRadius: BorderRadius.circular(2),
+          // 标题栏：常驻显示，不遮挡视频
+          Container(
+            height: 40,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: const BoxDecoration(
+              color: Color(0xCC1a1a2e),
+              border: Border(bottom: BorderSide(color: Color(0x882a2a3e))),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.connected_tv, size: 14, color: Colors.blue.shade300),
+                const SizedBox(width: 8),
+                Text(
+                  widget.title,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white70),
+                ),
+                const SizedBox(width: 16),
+                // Drag area
+                Expanded(
+                  child: MouseRegion(
+                    cursor: widget.isStandaloneWindow ? SystemMouseCursors.move : MouseCursor.defer,
+                    child: Listener(
+                      behavior: HitTestBehavior.translucent,
+                      onPointerDown: widget.isStandaloneWindow
+                          ? (event) {
+                              if ((event.buttons & kPrimaryButton) == 0) return;
+                              WindowControl.startDragging(widget.windowId);
+                            }
+                          : null,
+                      child: const SizedBox.expand(),
                     ),
                   ),
                 ),
-              ),
+                // Minimize button
+                if (widget.onMinimize != null)
+                  _windowButton(
+                    icon: LucideIcons.minus,
+                    tooltip: '最小化到 Dock',
+                    onPressed: widget.onMinimize!,
+                  ),
+                // Close button
+                _windowButton(
+                  icon: LucideIcons.x,
+                  tooltip: 'Close',
+                  onPressed: _handleClose,
+                  hoverColor: Colors.red.withOpacity(0.2),
+                ),
+              ],
             ),
           ),
-
-          // 标题栏：hover 显示的半透明浮动层
-          AnimatedPositioned(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOut,
-              top: _showTitleBar ? 0 : -44,
-              left: 0, right: 0,
-              child: MouseRegion(
-                onExit: (_) {
-                  _titleBarTimer?.cancel();
-                  _titleBarTimer = Timer(const Duration(milliseconds: 500), () {
-                    if (mounted) setState(() => _showTitleBar = false);
-                  });
-                },
-                onEnter: (_) {
-                  _titleBarTimer?.cancel();
-                },
-                child: Container(
-                  height: 40,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: const BoxDecoration(
-                    color: Color(0xCC1a1a2e),
-                    border: Border(bottom: BorderSide(color: Color(0x882a2a3e))),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.connected_tv, size: 14, color: Colors.blue.shade300),
-                      const SizedBox(width: 8),
-                      Text(
-                        widget.title,
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white70),
-                      ),
-                      const SizedBox(width: 16),
-                      // Drag area
-                      Expanded(
-                        child: MouseRegion(
-                          cursor: widget.isStandaloneWindow ? SystemMouseCursors.move : MouseCursor.defer,
-                          child: Listener(
-                            behavior: HitTestBehavior.translucent,
-                            onPointerDown: widget.isStandaloneWindow
-                                ? (event) {
-                                    if ((event.buttons & kPrimaryButton) == 0) return;
-                                    WindowControl.startDragging(widget.windowId);
-                                  }
-                                : null,
-                            child: const SizedBox.expand(),
-                          ),
-                        ),
-                      ),
-                      // Minimize button
-                      if (widget.onMinimize != null)
-                        _windowButton(
-                          icon: LucideIcons.minus,
-                          tooltip: '最小化到 Dock',
-                          onPressed: widget.onMinimize!,
-                        ),
-                      // Close button
-                      _windowButton(
-                        icon: LucideIcons.x,
-                        tooltip: 'Close',
-                        onPressed: _handleClose,
-                        hoverColor: Colors.red.withOpacity(0.2),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
+          // 视频内容：填充剩余空间
+          Expanded(
+            child: widget.childBuilder(_handleFullscreen, _isFullscreen),
+          ),
         ],
       ),
     );
