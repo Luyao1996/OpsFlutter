@@ -7,6 +7,7 @@ import '../../features/monitor/data/terminal_api.dart';
 
 class TerminalDockItem {
   final int terminalId;
+  final int netbarId;
   final Terminal terminal;
   final String lastTab;
   final int? windowId;
@@ -16,6 +17,7 @@ class TerminalDockItem {
 
   const TerminalDockItem({
     required this.terminalId,
+    required this.netbarId,
     required this.terminal,
     required this.lastTab,
     this.windowId,
@@ -23,6 +25,9 @@ class TerminalDockItem {
     this.netbarName,
     this.groupName,
   });
+
+  /// 复合唯一键：网吧ID_终端ID，避免不同网吧同 ID 终端碰撞
+  String get uniqueKey => '${netbarId}_$terminalId';
 
   TerminalDockItem copyWith({
     Terminal? terminal,
@@ -34,6 +39,7 @@ class TerminalDockItem {
   }) {
     return TerminalDockItem(
       terminalId: terminalId,
+      netbarId: netbarId,
       terminal: terminal ?? this.terminal,
       lastTab: lastTab ?? this.lastTab,
       windowId: windowId ?? this.windowId,
@@ -49,6 +55,7 @@ class TerminalDockItem {
     final screenshotBase64 = data['screenshot'] as String?;
     return TerminalDockItem(
       terminalId: data['terminalId'] ?? terminal.id,
+      netbarId: data['netbarId'] ?? 0,
       terminal: terminal,
       lastTab: data['lastTab'] ?? '远程控制',
       windowId: data['windowId'],
@@ -62,8 +69,8 @@ class TerminalDockItem {
 }
 
 class TerminalDockState {
-  final Map<int, TerminalDockItem> minimized;
-  final Map<int, String> lastTabs;
+  final Map<String, TerminalDockItem> minimized;
+  final Map<String, String> lastTabs;
 
   const TerminalDockState({
     this.minimized = const {},
@@ -71,8 +78,8 @@ class TerminalDockState {
   });
 
   TerminalDockState copyWith({
-    Map<int, TerminalDockItem>? minimized,
-    Map<int, String>? lastTabs,
+    Map<String, TerminalDockItem>? minimized,
+    Map<String, String>? lastTabs,
   }) {
     return TerminalDockState(
       minimized: minimized ?? this.minimized,
@@ -85,41 +92,42 @@ class TerminalDockNotifier extends StateNotifier<TerminalDockState> {
   TerminalDockNotifier() : super(const TerminalDockState());
 
   void addMinimized(TerminalDockItem item) {
-    final minimized = Map<int, TerminalDockItem>.from(state.minimized);
-    minimized[item.terminalId] = item;
+    final key = item.uniqueKey;
+    final minimized = Map<String, TerminalDockItem>.from(state.minimized);
+    minimized[key] = item;
 
-    final lastTabs = Map<int, String>.from(state.lastTabs);
-    lastTabs[item.terminalId] = item.lastTab;
+    final lastTabs = Map<String, String>.from(state.lastTabs);
+    lastTabs[key] = item.lastTab;
 
     state = state.copyWith(minimized: minimized, lastTabs: lastTabs);
   }
 
-  void removeMinimized(int terminalId) {
-    final minimized = Map<int, TerminalDockItem>.from(state.minimized);
-    minimized.remove(terminalId);
+  void removeMinimized(String uniqueKey) {
+    final minimized = Map<String, TerminalDockItem>.from(state.minimized);
+    minimized.remove(uniqueKey);
     state = state.copyWith(minimized: minimized);
   }
 
-  void setLastTab(int terminalId, String tab) {
-    final lastTabs = Map<int, String>.from(state.lastTabs);
-    lastTabs[terminalId] = tab;
+  void setLastTab(String uniqueKey, String tab) {
+    final lastTabs = Map<String, String>.from(state.lastTabs);
+    lastTabs[uniqueKey] = tab;
     state = state.copyWith(lastTabs: lastTabs);
 
-    if (state.minimized.containsKey(terminalId)) {
-      final minimized = Map<int, TerminalDockItem>.from(state.minimized);
-      minimized[terminalId] = minimized[terminalId]!.copyWith(lastTab: tab);
+    if (state.minimized.containsKey(uniqueKey)) {
+      final minimized = Map<String, TerminalDockItem>.from(state.minimized);
+      minimized[uniqueKey] = minimized[uniqueKey]!.copyWith(lastTab: tab);
       state = state.copyWith(minimized: minimized);
     }
   }
 
-  String lastTabFor(int terminalId) {
-    return state.lastTabs[terminalId] ?? '远程控制';
+  String lastTabFor(String uniqueKey) {
+    return state.lastTabs[uniqueKey] ?? '远程控制';
   }
 
-  void updateScreenshot(int terminalId, Uint8List bytes) {
-    if (!state.minimized.containsKey(terminalId)) return;
-    final minimized = Map<int, TerminalDockItem>.from(state.minimized);
-    minimized[terminalId] = minimized[terminalId]!.copyWith(screenshotBytes: bytes);
+  void updateScreenshot(String uniqueKey, Uint8List bytes) {
+    if (!state.minimized.containsKey(uniqueKey)) return;
+    final minimized = Map<String, TerminalDockItem>.from(state.minimized);
+    minimized[uniqueKey] = minimized[uniqueKey]!.copyWith(screenshotBytes: bytes);
     state = state.copyWith(minimized: minimized);
   }
 

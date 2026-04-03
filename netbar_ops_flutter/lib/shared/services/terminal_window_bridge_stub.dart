@@ -10,9 +10,13 @@ class TerminalWindowBridge {
 
   static Future<int?> openTerminalWindow({
     required int terminalId,
+    required int netbarId,
     required String initialTab,
     Terminal? terminalSnapshot,
     Uint8List? screenshotBytes,
+    String? netbarName,
+    String? groupName,
+    String? subdomainFull,
   }) async {
     return null;
   }

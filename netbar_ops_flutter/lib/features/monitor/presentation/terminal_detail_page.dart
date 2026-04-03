@@ -12,6 +12,7 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:webrtc_remote/webrtc_remote.dart' as webrtc;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:window_manager/window_manager.dart';
 import 'dart:ffi' as ffi hide Size;
 import 'package:win32/win32.dart' as win32;
@@ -25,6 +26,7 @@ import '../../../../shared/services/terminal_window_bridge.dart';
 import '../../../../shared/services/window_control.dart';
 import '../../../../shared/utils/platform_utils.dart';
 import '../../../../shared/utils/top_notice.dart';
+import '../../netbar/data/netbar_api.dart' as netbar_api;
 
 import 'widgets/file_manager_tab.dart';
 import 'widgets/process_manager_tab.dart';
@@ -105,6 +107,10 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   int _screenshotCountdown = _screenshotInterval; // 倒计时剩余秒数
   bool _screenshotCancelled = false; // 用于标记请求是否被取消
 
+  // 网吧信息（通过 API 获取）
+  String _netbarName = '-';
+  String _groupName = '-';
+
   final List<Map<String, dynamic>> _tabs = [
     {'icon': LucideIcons.gamepad2, 'label': '远程控制'},
     {'icon': LucideIcons.fileText, 'label': '文件管理'},
@@ -156,6 +162,35 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       });
     }
 
+    _fetchNetbarInfo();
+  }
+
+  /// 通过 subdomain 获取当前终端所属网吧的名称和分组
+  Future<void> _fetchNetbarInfo() async {
+    final domain = ref.read(currentNetbarProvider).subdomainFull;
+    if (domain == null || domain.isEmpty) return;
+    // subdomainFull 格式为 "xxx.frps.wwls.net"，subdomain 是第一段
+    final subdomain = domain.split('.').first;
+    try {
+      final netbar = await netbar_api.NetbarApi().getBySubdomain(subdomain);
+      if (netbar != null && mounted) {
+        setState(() {
+          _netbarName = netbar.name.isNotEmpty ? netbar.name : '-';
+          _groupName = netbar.group.isNotEmpty ? netbar.group : '-';
+        });
+        // 更新窗口标题
+        if (isDesktopPlatform) {
+          final terminalName = _liveTerminal?.name ??
+              ref.read(terminalDetailProvider(widget.terminalId)).valueOrNull?.name ?? '';
+          final title = '终端详情 - $_netbarName - $_groupName - $terminalName';
+          if (widget.isStandaloneWindow && widget.windowId != null) {
+            WindowController.fromWindowId(widget.windowId!).setTitle(title);
+          } else {
+            windowManager.setTitle(title);
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   /// 开始自动获取截图
@@ -400,8 +435,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  '终端详情 - ${terminal.name}',
+                  '终端详情 - $_netbarName - $_groupName - ${terminal.name}',
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+                  overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
                 Row(
@@ -528,7 +564,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '终端详情 - ${terminal.name}',
+                      '终端详情 - $_netbarName - $_groupName - ${terminal.name}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
@@ -611,12 +647,13 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     final netbar = ref.read(currentNetbarProvider);
     await TerminalWindowBridge.sendToMain('terminal_minimize', {
       'terminalId': widget.terminalId,
+      'netbarId': netbar.id ?? 0,
       'terminal': terminal.toJson(),
       'lastTab': _selectedTab,
       'windowId': widget.windowId,
       if (_liveScreenshot != null) 'screenshot': base64Encode(_liveScreenshot!),
-      if (netbar.name != null) 'netbarName': netbar.name,
-      if (netbar.groupName != null) 'groupName': netbar.groupName,
+      'netbarName': _netbarName,
+      'groupName': _groupName,
     });
     if (widget.isStandaloneWindow && widget.windowId != null) {
       // Minimize-to-dock should keep window alive to avoid refresh on restore.
@@ -660,8 +697,10 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   Future<void> _handleClose() async {
     if (isDesktopPlatform) {
+      final netbar = ref.read(currentNetbarProvider);
       await TerminalWindowBridge.sendToMain('terminal_close', {
         'terminalId': widget.terminalId,
+        'netbarId': netbar.id ?? 0,
       });
       if (widget.isStandaloneWindow && widget.windowId != null) {
         await TerminalWindowBridge.closeWindowById(widget.windowId!);
@@ -1037,13 +1076,17 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   void _selectTab(String label) {
     setState(() => _selectedTab = label);
 
+    final netbarId = ref.read(currentNetbarProvider).id ?? 0;
+    final uniqueKey = '${netbarId}_${widget.terminalId}';
+
     if (widget.isStandaloneWindow && isDesktopPlatform) {
       TerminalWindowBridge.sendToMain('terminal_tab_changed', {
         'terminalId': widget.terminalId,
+        'netbarId': netbarId,
         'lastTab': label,
       });
     } else {
-      ref.read(terminalDockProvider.notifier).setLastTab(widget.terminalId, label);
+      ref.read(terminalDockProvider.notifier).setLastTab(uniqueKey, label);
     }
   }
 

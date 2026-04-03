@@ -10,6 +10,7 @@ import 'core/network/api_client.dart';
 import 'core/theme/app_theme.dart';
 import 'app/router.dart';
 import 'features/monitor/presentation/terminal_detail_window_app.dart';
+import 'shared/providers/app_providers.dart';
 import 'shared/services/window_control.dart';
 
 void main(List<String> args) async {
@@ -28,6 +29,10 @@ void main(List<String> args) async {
     final payload = args.length > 2 ? args[2] : '{}';
     final data = jsonDecode(payload) as Map<String, dynamic>;
     final terminalId = data['terminalId'] as int? ?? 0;
+    final netbarId = data['netbarId'] as int? ?? 0;
+    final netbarName = data['netbarName'] as String?;
+    final groupName = data['groupName'] as String?;
+    final subdomainFull = data['subdomainFull'] as String?;
     final initialTab = data['initialTab'] as String? ?? '远程控制';
     // 从临时文件读取截图
     Uint8List? initialScreenshot;
@@ -45,8 +50,21 @@ void main(List<String> args) async {
 
     await WindowControl.initTerminalDetailWindowChrome();
 
+    final container = ProviderContainer();
+    // 初始化子窗口的 currentNetbarProvider，确保终端详情能正确获取网吧信息
+    if (netbarId > 0) {
+      await container.read(currentNetbarProvider.notifier).setNetbar(
+        netbarId,
+        netbarName ?? '',
+        'online',
+        subdomainFull: subdomainFull,
+        groupName: groupName,
+      );
+    }
+
     runApp(
-      ProviderScope(
+      UncontrolledProviderScope(
+        container: container,
         child: TerminalDetailWindowApp(
           terminalId: terminalId,
           windowId: windowId,

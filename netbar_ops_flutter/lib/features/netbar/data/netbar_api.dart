@@ -273,6 +273,21 @@ class NetbarApi {
     return fullResponse.merchants;
   }
 
+  /// 通过 subdomain 查询商户（用于终端详情页获取所属网吧信息）
+  Future<Netbar?> getBySubdomain(String subdomain) async {
+    try {
+      final response = await _client.get('/merchant', queryParameters: {'subdomain': subdomain});
+      final data = response.data;
+      if (data is Map<String, dynamic>) {
+        final merchants = data['merchants'] as List?;
+        if (merchants != null && merchants.isNotEmpty) {
+          return Netbar.fromJson(merchants[0] as Map<String, dynamic>);
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   /// 获取商户详情
   Future<Netbar> getById(int id) async {
     final response = await _client.get('/merchant/$id');

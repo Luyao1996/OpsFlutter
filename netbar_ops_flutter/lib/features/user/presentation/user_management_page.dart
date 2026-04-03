@@ -70,9 +70,7 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
     try {
       // 使用 /api/group 接口获取分组列表（包含用户）
       final groupApi = ref.read(groupApiProvider);
-      final groups = await groupApi.getList(
-        keyword: _searchQuery.isNotEmpty ? _searchQuery : null,
-      );
+      final groups = await groupApi.getList();
 
       setState(() {
         _groups = groups;
@@ -365,6 +363,19 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
     }
   }
 
+  Future<void> _handleRefreshTtlChanged(User user, double hours) async {
+    try {
+      final ttlSeconds = (hours * 3600).round();
+      final api = ref.read(userApiProvider);
+      await api.setTokenRefreshTtl(user.id, ttlSeconds: ttlSeconds);
+      if (!mounted) return;
+      showTopNotice(context, '登录有效时长已更新', level: NoticeLevel.success);
+      _loadData();
+    } catch (e) {
+      _showApiError('修改登录有效时长', e);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_isAdmin) {
@@ -432,6 +443,8 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
                   onBind2FA: _handleBind2FA,
                   onBindMiniProgram: _handleBindMiniProgram,
                   onUnbindMiniProgram: _handleUnbindMiniProgram,
+                  isAdmin: _isAdmin,
+                  onRefreshTtlChanged: _handleRefreshTtlChanged,
                 ),
               ),
             ],

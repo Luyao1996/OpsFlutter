@@ -795,9 +795,13 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
 
   void _openTerminalDetail(Terminal terminal) {
     if (isDesktopPlatform) {
+      final netbar = ref.read(currentNetbarProvider);
+      final netbarId = netbar.id ?? 0;
+      final uniqueKey = '${netbarId}_${terminal.id}';
+
       // 先检查 Dock 中是否有该终端的最小化记录
       final dockState = ref.read(terminalDockProvider);
-      final dockItem = dockState.minimized[terminal.id];
+      final dockItem = dockState.minimized[uniqueKey];
       if (dockItem != null) {
         TerminalWindowBridge.restoreFromDock(ref, dockItem);
         return;
@@ -805,12 +809,16 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
 
       final lastTab = ref
           .read(terminalDockProvider.notifier)
-          .lastTabFor(terminal.id);
+          .lastTabFor(uniqueKey);
       TerminalWindowBridge.openTerminalWindow(
         terminalId: terminal.id,
+        netbarId: netbarId,
         initialTab: lastTab,
         terminalSnapshot: terminal,
         screenshotBytes: _screenshotCache[terminal.seatId],
+        netbarName: netbar.name,
+        groupName: netbar.groupName,
+        subdomainFull: netbar.subdomainFull,
       );
       return;
     }

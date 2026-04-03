@@ -10,9 +10,11 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../core/storage/token_store.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../dashboard/presentation/dashboard_page.dart';
+import '../../channel/presentation/platform_helper.dart';
 import '../../monitor/presentation/monitor_page.dart';
 
 // 小程序配置
@@ -95,7 +97,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
   Timer? _qrPollTimer;
   Timer? _qrRefreshTimer; // 二维码刷新定时器
   int _qrCountdown = 30; // 二维码刷新倒计时（秒）
-  static const int _qrRefreshInterval = 30; // 二维码刷新间隔（秒）
+  static const int _qrRefreshInterval = 60; // 二维码刷新间隔（秒）
 
   List<SavedUser> _savedUsers = [];
 
@@ -135,9 +137,8 @@ class _LoginPageState extends ConsumerState<LoginPage>
 
   /// 检测是否为移动端并初始化登录方式
   void _detectMobileAndInit() {
-    final screenWidth = MediaQuery.of(context).size.width;
-    // 屏幕宽度小于 600 认为是移动端
-    _isMobile = screenWidth < 600;
+    // 基于物理平台判断，而非屏幕宽度，确保折叠屏展开后仍能跳转微信
+    _isMobile = platformHelper.isMobile;
 
     if (_isMobile) {
       // 移动端：显示微信登录按钮（初始状态为 idle，显示按钮）
@@ -354,11 +355,14 @@ class _LoginPageState extends ConsumerState<LoginPage>
       _startQRPolling();
       _startQRRefreshCountdown();
     } catch (e) {
-      setState(() {
-        _qrStatus = 'error';
-        _qrError = e.toString();
-        _qrImageBytes = null;
-      });
+      // 创建失败时自动重试（常见于 token 过期跳回登录页时旧 token 未清理完）
+      if (mounted) {
+        Future.delayed(const Duration(seconds: 1), () {
+          if (mounted && _qrStatus == 'loading') {
+            _createQRSession();
+          }
+        });
+      }
     }
   }
 
@@ -377,8 +381,9 @@ class _LoginPageState extends ConsumerState<LoginPage>
 
       if (_qrCountdown <= 0) {
         _qrRefreshTimer?.cancel();
-        // 自动刷新二维码
-        _createQRSession();
+        if (_qrStatus == 'pending') {
+          _createQRSession();
+        }
       }
     });
   }
@@ -413,14 +418,17 @@ class _LoginPageState extends ConsumerState<LoginPage>
           _qrRefreshTimer?.cancel();
           setState(() => _qrStatus = 'confirmed');
 
-          // 使用token登录
-          final authNotifier = ref.read(authNotifierProvider.notifier);
-          await authNotifier.loginWithToken(tokenResponse.accessToken);
+          // 1. 先存 token（不触发路由跳转）
+          await TokenStore.setToken(tokenResponse.accessToken);
 
-          // 刷新相关的 provider，避免显示旧的错误状态
+          // 2. 清除旧的 error 状态（避免 dashboard 闪现上次 401 错误）
           ref.invalidate(dashboardStatsProvider);
           ref.invalidate(dashboardTrendProvider);
           ref.invalidate(terminalsProvider);
+
+          // 3. 完成登录（获取用户信息 + 设 isLoggedIn → 触发路由跳转）
+          final authNotifier = ref.read(authNotifierProvider.notifier);
+          await authNotifier.loginWithToken(tokenResponse.accessToken);
 
           if (mounted) context.go('/dashboard');
         }

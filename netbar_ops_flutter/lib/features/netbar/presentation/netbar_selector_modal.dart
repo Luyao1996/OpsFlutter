@@ -8,10 +8,10 @@ import '../data/netbar_api.dart';
 import 'group_picker.dart';
 import 'edit_netbar_modal.dart';
 
-/// 网吧列表 Provider
-final netbarListProvider = FutureProvider.autoDispose<List<Netbar>>((ref) async {
+/// 网吧列表 Provider（返回完整响应，包含 merchants + groups）
+final netbarListProvider = FutureProvider.autoDispose<NetbarListResponse>((ref) async {
   final api = NetbarApi();
-  return api.getList();
+  return api.getListFull();
 });
 
 /// 网吧选择弹窗 - 对应 Vue 的 NetbarSelectorModal.vue
@@ -106,7 +106,8 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
 
   @override
   Widget build(BuildContext context) {
-    final netbarsAsync = ref.watch(netbarListProvider);
+    final responseAsync = ref.watch(netbarListProvider);
+    final netbarsAsync = responseAsync.whenData((r) => r.merchants);
     final size = MediaQuery.of(context).size;
 
     if (widget.isMobile) {
@@ -118,7 +119,7 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
               _buildHeader(),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                child: _buildSearchOnly(),
+                child: _buildMobileFilter(responseAsync),
               ),
               Expanded(
                 child: _buildMobileList(netbarsAsync),
@@ -233,8 +234,56 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
     );
   }
 
-  Widget _buildSearchOnly() {
-    return _buildSearchField();
+  Widget _buildMobileFilter(AsyncValue<NetbarListResponse> responseAsync) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSearchField(),
+        const SizedBox(height: 8),
+        _buildGroupChips(responseAsync),
+      ],
+    );
+  }
+
+  Widget _buildGroupChips(AsyncValue<NetbarListResponse> responseAsync) {
+    return responseAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (response) {
+        final groupNames = response.groups.map((g) => g.name).toList();
+        final allGroups = ['全部分组', ...groupNames];
+        return SizedBox(
+          height: 34,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: allGroups.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (context, index) {
+              final group = allGroups[index];
+              final isSelected = _selectedGroup == group;
+              return GestureDetector(
+                onTap: () => setState(() => _selectedGroup = group),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isSelected ? AppColors.iosBlue : const Color(0xFFF3F4F6),
+                    borderRadius: BorderRadius.circular(17),
+                  ),
+                  child: Text(
+                    group,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                      color: isSelected ? Colors.white : Colors.grey.shade700,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildSearchField() {

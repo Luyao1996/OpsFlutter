@@ -11,6 +11,8 @@ class UserCard extends StatefulWidget {
   final VoidCallback onBind2FA;
   final VoidCallback onBindMiniProgram;
   final VoidCallback onUnbindMiniProgram;
+  final bool isAdmin;
+  final Function(User user, double hours)? onRefreshTtlChanged;
 
   const UserCard({
     super.key,
@@ -19,6 +21,8 @@ class UserCard extends StatefulWidget {
     required this.onBind2FA,
     required this.onBindMiniProgram,
     required this.onUnbindMiniProgram,
+    this.isAdmin = false,
+    this.onRefreshTtlChanged,
   });
 
   @override
@@ -27,6 +31,39 @@ class UserCard extends StatefulWidget {
 
 class _UserCardState extends State<UserCard> {
   bool _isHovered = false;
+  late TextEditingController _ttlController;
+
+  @override
+  void initState() {
+    super.initState();
+    _ttlController = TextEditingController(
+      text: widget.user.refreshTtlHours?.toString() ?? '',
+    );
+  }
+
+  @override
+  void didUpdateWidget(UserCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.user.tokenRefreshTtl != widget.user.tokenRefreshTtl) {
+      _ttlController.text = widget.user.refreshTtlHours?.toString() ?? '';
+    }
+  }
+
+  @override
+  void dispose() {
+    _ttlController.dispose();
+    super.dispose();
+  }
+
+  void _handleTtlSubmit() {
+    final text = _ttlController.text.trim();
+    if (text.isEmpty) return;
+    final hours = double.tryParse(text);
+    if (hours == null || hours <= 0) return;
+    // 避免值未变化时重复提交
+    if (widget.user.refreshTtlHours != null && hours == widget.user.refreshTtlHours) return;
+    widget.onRefreshTtlChanged?.call(widget.user, hours);
+  }
 
   Color _getAvatarColor(String name) {
     final colors = [
@@ -242,6 +279,57 @@ class _UserCardState extends State<UserCard> {
                 ],
               ),
             ),
+            // Footer - 登录有效时长（仅管理员可见）
+            if (widget.isAdmin)
+              Container(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  children: [
+                    Icon(LucideIcons.clock, size: 14, color: Colors.grey.shade400),
+                    const SizedBox(width: 4),
+                    Text(
+                      '登录有效时长(小时)',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                    ),
+                    const Spacer(),
+                    SizedBox(
+                      width: 64,
+                      height: 28,
+                      child: TextField(
+                        controller: _ttlController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 12),
+                        decoration: InputDecoration(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(6),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(6),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(6),
+                            borderSide: const BorderSide(color: AppColors.iosBlue),
+                          ),
+                        ),
+                        onEditingComplete: _handleTtlSubmit,
+                        onTapOutside: (_) {
+                          FocusScope.of(context).unfocus();
+                          _handleTtlSubmit();
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      '小时',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),

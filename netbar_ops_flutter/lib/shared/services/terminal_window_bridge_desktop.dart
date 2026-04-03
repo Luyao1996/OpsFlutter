@@ -13,8 +13,8 @@ import '../utils/platform_utils.dart';
 
 class TerminalWindowBridge {
   static bool _initializedMainHandler = false;
-  // Track open windows: terminalId -> windowId
-  static final Map<int, int> _openWindows = {};
+  // Track open windows: uniqueKey (netbarId_terminalId) -> windowId
+  static final Map<String, int> _openWindows = {};
 
   static void initMainWindowHandler(ProviderContainer container) {
     if (!isDesktopPlatform || _initializedMainHandler) return;
@@ -28,19 +28,25 @@ class TerminalWindowBridge {
 
         switch (call.method) {
           case 'terminal_minimize':
-            notifier.addMinimized(TerminalDockItem.fromMessage(args));
+            final item = TerminalDockItem.fromMessage(args);
+            notifier.addMinimized(item);
             break;
           case 'terminal_close':
             final id = args['terminalId'] as int?;
+            final netbarId = args['netbarId'] as int? ?? 0;
             if (id != null) {
-              notifier.removeMinimized(id);
-              _openWindows.remove(id);
+              final key = '${netbarId}_$id';
+              notifier.removeMinimized(key);
+              _openWindows.remove(key);
             }
             break;
           case 'terminal_tab_changed':
             final id = args['terminalId'] as int?;
+            final netbarId = args['netbarId'] as int? ?? 0;
             final tab = args['lastTab'] as String?;
-            if (id != null && tab != null) notifier.setLastTab(id, tab);
+            if (id != null && tab != null) {
+              notifier.setLastTab('${netbarId}_$id', tab);
+            }
             break;
         }
       },
@@ -49,14 +55,20 @@ class TerminalWindowBridge {
 
   static Future<int?> openTerminalWindow({
     required int terminalId,
+    required int netbarId,
     required String initialTab,
     Terminal? terminalSnapshot,
     Uint8List? screenshotBytes,
+    String? netbarName,
+    String? groupName,
+    String? subdomainFull,
   }) async {
     if (!isDesktopPlatform) return null;
 
-    // Check if window already open for this terminal
-    final existingWid = _openWindows[terminalId];
+    final uniqueKey = '${netbarId}_$terminalId';
+
+    // Check if window already open for this terminal in this netbar
+    final existingWid = _openWindows[uniqueKey];
     if (existingWid != null) {
       try {
         final ids = await DesktopMultiWindow.getAllSubWindowIds();
@@ -68,7 +80,7 @@ class TerminalWindowBridge {
         }
       } catch (_) {}
       // Window no longer exists, clean up
-      _openWindows.remove(terminalId);
+      _openWindows.remove(uniqueKey);
     }
 
     // 截图通过临时文件传递（命令行参数有长度限制，无法直接传 base64）
@@ -76,7 +88,7 @@ class TerminalWindowBridge {
     if (screenshotBytes != null) {
       try {
         final tempDir = await getTemporaryDirectory();
-        final file = File('${tempDir.path}/terminal_screenshot_$terminalId.png');
+        final file = File('${tempDir.path}/terminal_screenshot_${netbarId}_$terminalId.png');
         await file.writeAsBytes(screenshotBytes);
         screenshotTempPath = file.path;
       } catch (_) {}
@@ -84,27 +96,40 @@ class TerminalWindowBridge {
 
     final payload = jsonEncode({
       'terminalId': terminalId,
+      'netbarId': netbarId,
       'initialTab': initialTab,
       'hideNativeChrome': true,
       if (terminalSnapshot != null) 'terminal': terminalSnapshot.toJson(),
       if (screenshotTempPath != null) 'screenshotPath': screenshotTempPath,
+      if (netbarName != null) 'netbarName': netbarName,
+      if (groupName != null) 'groupName': groupName,
+      if (subdomainFull != null) 'subdomainFull': subdomainFull,
     });
 
     final controller = await DesktopMultiWindow.createWindow(payload);
     controller
       ..setTitle(
-          terminalSnapshot != null ? '终端详情 - ${terminalSnapshot.name}' : '终端详情')
+          _buildWindowTitle(terminalSnapshot, netbarName, groupName))
       ..center()
       ..show();
 
-    _openWindows[terminalId] = controller.windowId;
+    _openWindows[uniqueKey] = controller.windowId;
     return controller.windowId;
+  }
+
+  static String _buildWindowTitle(Terminal? terminal, String? netbarName, String? groupName) {
+    final parts = <String>['终端详情'];
+    if (netbarName != null && netbarName.isNotEmpty) parts.add(netbarName);
+    if (groupName != null && groupName.isNotEmpty) parts.add(groupName);
+    if (terminal != null) parts.add(terminal.name);
+    return parts.join(' - ');
   }
 
   static Future<void> restoreFromDock(
     WidgetRef ref,
     TerminalDockItem item,
   ) async {
+    final uniqueKey = item.uniqueKey;
     // Prefer restoring the existing hidden window to avoid rebuilding state.
     final wid = item.windowId;
     if (wid != null) {
@@ -113,7 +138,7 @@ class TerminalWindowBridge {
         if (ids.contains(wid)) {
           final controller = WindowController.fromWindowId(wid);
           await controller.show();
-          ref.read(terminalDockProvider.notifier).removeMinimized(item.terminalId);
+          ref.read(terminalDockProvider.notifier).removeMinimized(uniqueKey);
           return;
         }
       } catch (_) {
@@ -123,10 +148,13 @@ class TerminalWindowBridge {
 
     await openTerminalWindow(
       terminalId: item.terminalId,
+      netbarId: item.netbarId,
       initialTab: item.lastTab,
       terminalSnapshot: item.terminal,
+      netbarName: item.netbarName,
+      groupName: item.groupName,
     );
-    ref.read(terminalDockProvider.notifier).removeMinimized(item.terminalId);
+    ref.read(terminalDockProvider.notifier).removeMinimized(uniqueKey);
   }
 
   static Future<void> closeWindowById(int windowId) async {

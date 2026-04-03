@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/utils/platform_utils.dart';
 import '../../data/router_api.dart';
 
 class RouterCard extends StatefulWidget {
@@ -128,8 +129,8 @@ class _RouterCardState extends State<RouterCard> {
                   final iconRadius = isCompact ? 6.0 : 8.0;
                   final nameSize = isCompact ? 12.0 : 14.0;
                   final hostSize = isCompact ? 10.0 : 11.0;
-                  // Mobile: always show edit button; Desktop: hover only
-                  final showEdit = widget.onEdit != null && (_isHovered || isCompact);
+                  // 触屏平台（Android/iOS）始终显示编辑按钮；桌面平台 hover 时显示
+                  final showEdit = widget.onEdit != null && (_isHovered || !isDesktopPlatform);
 
                   return Stack(
                     children: [

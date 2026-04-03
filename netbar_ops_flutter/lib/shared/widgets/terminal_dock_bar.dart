@@ -132,7 +132,7 @@ class _TerminalDockIconState extends ConsumerState<TerminalDockIcon> {
         bytes = Uint8List.fromList(base64Decode(result.base64Data!));
       }
       if (bytes != null && mounted) {
-        ref.read(terminalDockProvider.notifier).updateScreenshot(widget.item.terminalId, bytes);
+        ref.read(terminalDockProvider.notifier).updateScreenshot(widget.item.uniqueKey, bytes);
       }
     } catch (_) {}
   }
