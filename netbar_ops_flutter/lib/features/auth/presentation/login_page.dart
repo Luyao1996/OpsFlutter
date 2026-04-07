@@ -13,9 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../core/storage/token_store.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
-import '../../dashboard/presentation/dashboard_page.dart';
 import '../../channel/presentation/platform_helper.dart';
-import '../../monitor/presentation/monitor_page.dart';
 
 // 小程序配置
 const String _wxMiniAppId = 'wxd10d1fac349fe344';
@@ -421,14 +419,15 @@ class _LoginPageState extends ConsumerState<LoginPage>
           // 1. 先存 token（不触发路由跳转）
           await TokenStore.setToken(tokenResponse.accessToken);
 
-          // 2. 清除旧的 error 状态（避免 dashboard 闪现上次 401 错误）
-          ref.invalidate(dashboardStatsProvider);
-          ref.invalidate(dashboardTrendProvider);
-          ref.invalidate(terminalsProvider);
-
-          // 3. 完成登录（获取用户信息 + 设 isLoggedIn → 触发路由跳转）
+          // 2. 完成登录（获取用户信息 + 设 isLoggedIn → 触发路由跳转）
+          // 注意：不在此处 invalidate dashboard provider，
+          // 由 MainLayout._initializeNetbarTabs 完成网吧上下文初始化后再刷新
           final authNotifier = ref.read(authNotifierProvider.notifier);
-          await authNotifier.loginWithToken(tokenResponse.accessToken);
+          await authNotifier.loginWithToken(
+            tokenResponse.accessToken,
+            expireIn: tokenResponse.expireIn,
+            createIn: tokenResponse.createIn,
+          );
 
           if (mounted) context.go('/dashboard');
         }

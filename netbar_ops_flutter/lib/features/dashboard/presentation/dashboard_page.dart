@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/responsive/responsive.dart';
+import '../../../shared/providers/app_providers.dart';
 import '../data/dashboard_api.dart';
 import 'widgets/stat_card.dart';
 import 'widgets/trend_chart.dart';
@@ -16,13 +18,23 @@ final dashboardRangeProvider = StateProvider.autoDispose<TimeRange>(
 );
 
 /// 统计数据 Provider（不使用 autoDispose，让顶栏状态栏能持续访问）
+/// 监听 currentNetbarProvider：网吧未就绪时保持 loading，就绪后自动加载，切换网吧时自动刷新
 final dashboardStatsProvider = FutureProvider<DashboardStats>((ref) async {
+  final netbar = ref.watch(currentNetbarProvider);
+  if (netbar.id == null || netbar.id == 0) {
+    // 网吧上下文未就绪，保持 loading 状态（Completer 永不完成，切换网吧时 Riverpod 自动取消并重新执行）
+    await Completer<void>().future;
+  }
   final api = ref.read(dashboardApiProvider);
   return api.getStats();
 });
 
 /// 趋势数据 Provider
 final dashboardTrendProvider = FutureProvider.autoDispose<TrendData>((ref) async {
+  final netbar = ref.watch(currentNetbarProvider);
+  if (netbar.id == null || netbar.id == 0) {
+    await Completer<void>().future;
+  }
   final api = ref.read(dashboardApiProvider);
   return api.getTrendData();
 });

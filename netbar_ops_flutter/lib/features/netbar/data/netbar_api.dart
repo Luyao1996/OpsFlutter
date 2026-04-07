@@ -1,5 +1,13 @@
 import '../../../core/network/api_client.dart';
 
+/// 安全转换为 int（兼容后端返回 String 或 int）
+int _toInt(dynamic v) {
+  if (v is int) return v;
+  if (v is String) return int.tryParse(v) ?? 0;
+  if (v is double) return v.toInt();
+  return 0;
+}
+
 /// 分组简要信息
 class GroupBrief {
   final int id;
@@ -9,7 +17,7 @@ class GroupBrief {
 
   factory GroupBrief.fromJson(Map<String, dynamic> json) {
     return GroupBrief(
-      id: json['id'] ?? 0,
+      id: _toInt(json['id']),
       name: json['name'] ?? '',
     );
   }
@@ -24,7 +32,7 @@ class UserBrief {
 
   factory UserBrief.fromJson(Map<String, dynamic> json) {
     return UserBrief(
-      id: json['id'] ?? 0,
+      id: _toInt(json['id']),
       nickname: json['nickname'] ?? '',
     );
   }
@@ -81,11 +89,11 @@ class Netbar {
 
   factory Netbar.fromJson(Map<String, dynamic> json) {
     return Netbar(
-      id: json['id'] ?? 0,
+      id: _toInt(json['id']),
       name: json['name'] ?? '',
       token: json['token'] ?? '',
-      terminalCount: json['terminal_count'] ?? json['terminalCount'] ?? 0,
-      terminalAvg: json['terminal_avg'] ?? 0,
+      terminalCount: _toInt(json['terminal_count'] ?? json['terminalCount']),
+      terminalAvg: _toInt(json['terminal_avg']),
       isOnline: json['is_online'] == true || json['is_online'] == 1,
       subdomain: json['subdomain'],
       subdomainFull: json['subdomain_full'],
@@ -133,8 +141,8 @@ class NetbarSummary {
 
   factory NetbarSummary.fromJson(Map<String, dynamic> json) {
     return NetbarSummary(
-      onlineCount: json['online_count'] ?? 0,
-      offlineCount: json['offline_count'] ?? 0,
+      onlineCount: _toInt(json['online_count']),
+      offlineCount: _toInt(json['offline_count']),
     );
   }
 }
@@ -181,11 +189,11 @@ class NetbarServerMetrics {
 
   factory NetbarServerMetrics.fromJson(Map<String, dynamic> json) {
     return NetbarServerMetrics(
-      cpuUsage: json['cpuUsage'] ?? 0,
-      ramUsage: json['ramUsage'] ?? 0,
-      diskUsage: json['diskUsage'] ?? 0,
-      networkUp: json['networkUp'] ?? 0,
-      networkDown: json['networkDown'] ?? 0,
+      cpuUsage: _toInt(json['cpuUsage']),
+      ramUsage: _toInt(json['ramUsage']),
+      diskUsage: _toInt(json['diskUsage']),
+      networkUp: _toInt(json['networkUp']),
+      networkDown: _toInt(json['networkDown']),
     );
   }
 }
@@ -200,7 +208,7 @@ class NetbarAlert {
   factory NetbarAlert.fromJson(Map<String, dynamic> json) {
     return NetbarAlert(
       type: json['type'] ?? '',
-      count: json['count'] ?? 0,
+      count: _toInt(json['count']),
       message: json['message'] ?? '',
     );
   }

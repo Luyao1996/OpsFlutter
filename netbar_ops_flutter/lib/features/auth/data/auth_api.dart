@@ -258,9 +258,10 @@ class AuthApi {
     }, options: Options(extra: {'ignoreUnauthorized': true}));
   }
 
-  /// 刷新Token
+  /// 刷新Token（ignoreUnauthorized 防止 401 死循环）
   Future<TokenResponse> refreshToken() async {
-    final response = await _client.post('/passport/refresh');
+    final response = await _client.post('/passport/refresh',
+        options: Options(extra: {'ignoreUnauthorized': true}));
     return TokenResponse.fromJson(response.data ?? {});
   }
 

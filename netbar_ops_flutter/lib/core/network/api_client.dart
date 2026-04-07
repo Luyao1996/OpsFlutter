@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:dio/dio.dart';
 import '../config/app_config.dart';
 import '../storage/token_store.dart';
@@ -21,6 +22,9 @@ class ApiClient {
 
   // 用于401时跳转登录的回调
   static Function? onUnauthorized;
+
+  // Token 刷新并发锁：多个请求同时 401 时只刷新一次
+  Completer<bool>? _refreshCompleter;
 
   ApiClient._internal() {
     _dio = Dio(
@@ -60,8 +64,16 @@ class ApiClient {
             if (code == 401) {
               final ignoreUnauthorized = response.requestOptions.extra['ignoreUnauthorized'] == true;
               if (!ignoreUnauthorized) {
-                // 先触发登出状态变更（同步设 isLoggedIn=false → 路由立即跳转登录页）
-                // 再异步清理 token/子窗口，避免 clearAuth 阻塞跳转
+                // 尝试刷新 Token 并重放请求
+                final refreshed = await _tryRefreshToken();
+                if (refreshed) {
+                  // 刷新成功，用新 token 重放原请求
+                  final opts = response.requestOptions;
+                  opts.headers['Authorization'] = 'Bearer ${TokenStore.getToken()}';
+                  final retryResponse = await _dio.fetch(opts);
+                  return handler.resolve(retryResponse);
+                }
+                // 刷新失败，登出
                 onUnauthorized?.call();
                 TokenStore.clearAuth();
               }
@@ -96,7 +108,18 @@ class ApiClient {
         onError: (error, handler) async {
           final ignoreUnauthorized = error.requestOptions.extra['ignoreUnauthorized'] == true;
           if (!ignoreUnauthorized && error.response?.statusCode == 401) {
-            // 先触发登出（同步），再异步清理
+            // 尝试刷新 Token 并重放请求
+            final refreshed = await _tryRefreshToken();
+            if (refreshed) {
+              final opts = error.requestOptions;
+              opts.headers['Authorization'] = 'Bearer ${TokenStore.getToken()}';
+              try {
+                final retryResponse = await _dio.fetch(opts);
+                return handler.resolve(retryResponse);
+              } on DioException catch (e) {
+                return handler.next(e);
+              }
+            }
             onUnauthorized?.call();
             TokenStore.clearAuth();
           }
@@ -184,6 +207,54 @@ class ApiClient {
       );
     } on DioException catch (e) {
       throw _handleError(e);
+    }
+  }
+
+  /// 尝试刷新 Token（带并发锁，多个 401 只刷新一次）
+  /// 直接用独立 Dio 实例调刷新接口，避免经过拦截器造成死循环
+  Future<bool> _tryRefreshToken() async {
+    // 如果已有刷新请求在进行，等待其结果
+    if (_refreshCompleter != null) {
+      return _refreshCompleter!.future;
+    }
+    _refreshCompleter = Completer<bool>();
+    try {
+      final token = TokenStore.getToken();
+      if (token == null) {
+        _refreshCompleter!.complete(false);
+        return false;
+      }
+      // 用独立 Dio 实例，不经过拦截器
+      final refreshDio = Dio(BaseOptions(baseUrl: AppConfig.baseUrl));
+      final response = await refreshDio.post(
+        '/passport/refresh',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      final data = response.data;
+      if (data is Map<String, dynamic>) {
+        final innerData = data['data'] ?? data;
+        final accessToken = innerData['access_token'] ?? '';
+        if (accessToken.toString().isNotEmpty) {
+          await TokenStore.setToken(accessToken);
+          final expireIn = innerData['expire_in'] as int?;
+          final createIn = innerData['create_in'] as int?;
+          if (expireIn != null && expireIn > 0) {
+            final baseMs = (createIn != null && createIn > 0)
+                ? createIn * 1000
+                : DateTime.now().millisecondsSinceEpoch;
+            await TokenStore.setTokenExpireAt(baseMs + expireIn * 1000);
+          }
+          _refreshCompleter!.complete(true);
+          return true;
+        }
+      }
+      _refreshCompleter!.complete(false);
+      return false;
+    } catch (_) {
+      _refreshCompleter!.complete(false);
+      return false;
+    } finally {
+      _refreshCompleter = null;
     }
   }
 
