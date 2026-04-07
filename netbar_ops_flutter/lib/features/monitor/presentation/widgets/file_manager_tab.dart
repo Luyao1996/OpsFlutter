@@ -289,13 +289,13 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
       final bytes = await api.downloadFile(widget.seatId, file.path, domain: domain);
 
       // 使用平台相关的下载方法
-      await download_helper.downloadFile(bytes, file.name);
+      final savePath = await download_helper.downloadFile(bytes, file.name);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('已下载: ${file.name}'),
-            backgroundColor: Colors.green,
+            content: Text(savePath != null ? '已下载到: $savePath' : '下载已取消'),
+            backgroundColor: savePath != null ? Colors.green : Colors.orange,
           ),
         );
       }

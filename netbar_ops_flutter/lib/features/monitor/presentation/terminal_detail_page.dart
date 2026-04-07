@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform, Process;
 import 'dart:typed_data';
 import 'dart:ui';
 
@@ -1521,11 +1522,14 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         }
 
         // 打开浏览器
-        if (await canLaunchUrl(vncUrl)) {
+        try {
           await launchUrl(vncUrl, mode: LaunchMode.externalApplication);
-        } else {
-          if (mounted) {
-            showTopNotice(context, '无法打开浏览器', level: NoticeLevel.error);
+        } catch (_) {
+          // Windows 桌面端 url_launcher channel 可能不可用，用 shell 兜底
+          if (Platform.isWindows) {
+            await Process.run('cmd', ['/c', 'start', '', vncUrl.toString()]);
+          } else {
+            rethrow;
           }
         }
       } else {

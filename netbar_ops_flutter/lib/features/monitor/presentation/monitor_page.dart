@@ -41,6 +41,7 @@ class MonitorPage extends ConsumerStatefulWidget {
 
 class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingObserver {
   String _searchQuery = '';
+  final TextEditingController _searchController = TextEditingController();
   bool _isListView = false;
   String _filterStatus = 'all'; // all, busy, online_idle, offline
   int _sortColumnIndex = 0;
@@ -99,6 +100,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
 
   @override
   void dispose() {
+    _searchController.dispose();
     _realtimeTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _routeListenable?.removeListener(_onRouteChanged);
@@ -284,6 +286,17 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
 
   @override
   Widget build(BuildContext context) {
+    // 切换网吧时重置搜索和筛选状态
+    ref.listen<CurrentNetbar>(currentNetbarProvider, (prev, next) {
+      if (prev?.id != next.id) {
+        setState(() {
+          _searchQuery = '';
+          _filterStatus = 'all';
+          _searchController.clear();
+        });
+      }
+    });
+
     final terminalsAsync = ref.watch(terminalsProvider);
 
     return GestureDetector(
@@ -1364,6 +1377,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
+              controller: _searchController,
               onChanged: (v) => setState(() => _searchQuery = v),
               decoration: InputDecoration(
                 filled: false,
