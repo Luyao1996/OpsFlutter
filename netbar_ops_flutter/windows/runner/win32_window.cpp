@@ -198,10 +198,10 @@ Win32Window::MessageHandler(HWND hwnd,
                             LPARAM const lparam) noexcept {
   switch (message) {
     case WM_DESTROY:
-      g_isShuttingDown = true;
       window_handle_ = nullptr;
       Destroy();
       if (quit_on_close_) {
+        g_isShuttingDown = true;
         PostQuitMessage(0);
       }
       return 0;

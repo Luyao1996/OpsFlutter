@@ -847,11 +847,15 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
       final netbarId = netbar.id ?? 0;
       final uniqueKey = '${netbarId}_${terminal.id}';
 
-      // 先检查 Dock 中是否有该终端的最小化记录
+      // 先检查 Dock 中是否已有该终端（已打开则聚焦，已最小化则恢复）
       final dockState = ref.read(terminalDockProvider);
-      final dockItem = dockState.minimized[uniqueKey];
+      final dockItem = dockState.items[uniqueKey];
       if (dockItem != null) {
-        TerminalWindowBridge.restoreFromDock(ref, dockItem);
+        if (dockItem.isMinimized) {
+          TerminalWindowBridge.restoreFromDock(ref, dockItem);
+        } else {
+          TerminalWindowBridge.focusWindow(dockItem);
+        }
         return;
       }
 

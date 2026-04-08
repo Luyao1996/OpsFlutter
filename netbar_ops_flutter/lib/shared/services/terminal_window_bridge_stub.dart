@@ -26,6 +26,8 @@ class TerminalWindowBridge {
     TerminalDockItem item,
   ) async {}
 
+  static Future<void> focusWindow(TerminalDockItem item) async {}
+
   static Future<void> closeWindowById(int windowId) async {}
 
   static Future<void> hideWindowById(int windowId) async {}

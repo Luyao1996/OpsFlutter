@@ -20,8 +20,8 @@ class TerminalDockActions {
     TerminalDockState state,
     TerminalDockNotifier notifier,
   ) async {
-    final items = state.minimized.values.toList();
-    for (final item in items) {
+    final minimizedItems = state.minimized.values.toList();
+    for (final item in minimizedItems) {
       final wid = item.windowId;
       if (wid != null) {
         try {
@@ -30,6 +30,31 @@ class TerminalDockActions {
       }
     }
     notifier.clearMinimized();
+  }
+
+  static Future<void> closeAllWithRef(WidgetRef ref) async {
+    final state = ref.read(terminalDockProvider);
+    final notifier = ref.read(terminalDockProvider.notifier);
+    final allItems = state.items.values.toList();
+    for (final item in allItems) {
+      final wid = item.windowId;
+      if (wid != null) {
+        try {
+          await TerminalWindowBridge.closeWindowById(wid);
+        } catch (_) {}
+      }
+    }
+    notifier.clearAll();
+  }
+
+  static Future<void> closeSingleWithRef(WidgetRef ref, TerminalDockItem item) async {
+    final wid = item.windowId;
+    if (wid != null) {
+      try {
+        await TerminalWindowBridge.closeWindowById(wid);
+      } catch (_) {}
+    }
+    ref.read(terminalDockProvider.notifier).remove(item.uniqueKey);
   }
 }
 

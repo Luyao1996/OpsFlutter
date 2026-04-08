@@ -15,10 +15,12 @@ class TerminalWindowBridge {
   static bool _initializedMainHandler = false;
   // Track open windows: uniqueKey (netbarId_terminalId) -> windowId
   static final Map<String, int> _openWindows = {};
+  static ProviderContainer? _container;
 
   static void initMainWindowHandler(ProviderContainer container) {
     if (!isDesktopPlatform || _initializedMainHandler) return;
     _initializedMainHandler = true;
+    _container = container;
 
     DesktopMultiWindow.setMethodHandler(
       (MethodCall call, int fromWindowId) async {
@@ -36,7 +38,7 @@ class TerminalWindowBridge {
             final netbarId = args['netbarId'] as int? ?? 0;
             if (id != null) {
               final key = '${netbarId}_$id';
-              notifier.removeMinimized(key);
+              notifier.remove(key);
               _openWindows.remove(key);
             }
             break;
@@ -114,6 +116,23 @@ class TerminalWindowBridge {
       ..show();
 
     _openWindows[uniqueKey] = controller.windowId;
+
+    // Sync to dock provider
+    if (_container != null && terminalSnapshot != null) {
+      _container!.read(terminalDockProvider.notifier).addOpened(
+            TerminalDockItem(
+              terminalId: terminalId,
+              netbarId: netbarId,
+              terminal: terminalSnapshot,
+              lastTab: initialTab,
+              windowId: controller.windowId,
+              screenshotBytes: screenshotBytes,
+              netbarName: netbarName,
+              groupName: groupName,
+            ),
+          );
+    }
+
     return controller.windowId;
   }
 
@@ -130,6 +149,7 @@ class TerminalWindowBridge {
     TerminalDockItem item,
   ) async {
     final uniqueKey = item.uniqueKey;
+    final notifier = ref.read(terminalDockProvider.notifier);
     // Prefer restoring the existing hidden window to avoid rebuilding state.
     final wid = item.windowId;
     if (wid != null) {
@@ -138,7 +158,7 @@ class TerminalWindowBridge {
         if (ids.contains(wid)) {
           final controller = WindowController.fromWindowId(wid);
           await controller.show();
-          ref.read(terminalDockProvider.notifier).removeMinimized(uniqueKey);
+          notifier.markOpened(uniqueKey);
           return;
         }
       } catch (_) {
@@ -146,6 +166,7 @@ class TerminalWindowBridge {
       }
     }
 
+    // openTerminalWindow will call addOpened internally
     await openTerminalWindow(
       terminalId: item.terminalId,
       netbarId: item.netbarId,
@@ -154,7 +175,19 @@ class TerminalWindowBridge {
       netbarName: item.netbarName,
       groupName: item.groupName,
     );
-    ref.read(terminalDockProvider.notifier).removeMinimized(uniqueKey);
+  }
+
+  /// Bring an open terminal window to front
+  static Future<void> focusWindow(TerminalDockItem item) async {
+    final wid = item.windowId;
+    if (wid == null) return;
+    try {
+      final ids = await DesktopMultiWindow.getAllSubWindowIds();
+      if (ids.contains(wid)) {
+        final controller = WindowController.fromWindowId(wid);
+        await controller.show();
+      }
+    } catch (_) {}
   }
 
   static Future<void> closeWindowById(int windowId) async {
@@ -180,6 +213,7 @@ class TerminalWindowBridge {
       }
     } catch (_) {}
     _openWindows.clear();
+    _container?.read(terminalDockProvider.notifier).clearAll();
   }
 
   static Future<void> sendToMain(

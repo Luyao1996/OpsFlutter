@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../features/monitor/data/terminal_api.dart';
 
+enum DockItemStatus { open, minimized }
+
 class TerminalDockItem {
   final int terminalId;
   final int netbarId;
@@ -14,6 +16,7 @@ class TerminalDockItem {
   final Uint8List? screenshotBytes;
   final String? netbarName;
   final String? groupName;
+  final DockItemStatus status;
 
   const TerminalDockItem({
     required this.terminalId,
@@ -24,10 +27,13 @@ class TerminalDockItem {
     this.screenshotBytes,
     this.netbarName,
     this.groupName,
+    this.status = DockItemStatus.open,
   });
 
   /// 复合唯一键：网吧ID_终端ID，避免不同网吧同 ID 终端碰撞
   String get uniqueKey => '${netbarId}_$terminalId';
+
+  bool get isMinimized => status == DockItemStatus.minimized;
 
   TerminalDockItem copyWith({
     Terminal? terminal,
@@ -36,6 +42,7 @@ class TerminalDockItem {
     Uint8List? screenshotBytes,
     String? netbarName,
     String? groupName,
+    DockItemStatus? status,
   }) {
     return TerminalDockItem(
       terminalId: terminalId,
@@ -46,6 +53,7 @@ class TerminalDockItem {
       screenshotBytes: screenshotBytes ?? this.screenshotBytes,
       netbarName: netbarName ?? this.netbarName,
       groupName: groupName ?? this.groupName,
+      status: status ?? this.status,
     );
   }
 
@@ -64,25 +72,36 @@ class TerminalDockItem {
           : null,
       netbarName: data['netbarName'],
       groupName: data['groupName'],
+      status: DockItemStatus.minimized,
     );
   }
 }
 
 class TerminalDockState {
-  final Map<String, TerminalDockItem> minimized;
+  final Map<String, TerminalDockItem> items;
   final Map<String, String> lastTabs;
 
   const TerminalDockState({
-    this.minimized = const {},
+    this.items = const {},
     this.lastTabs = const {},
   });
 
+  /// 向后兼容：只返回最小化的
+  Map<String, TerminalDockItem> get minimized => Map.fromEntries(
+        items.entries.where((e) => e.value.isMinimized),
+      );
+
+  /// 只返回已打开的
+  Map<String, TerminalDockItem> get opened => Map.fromEntries(
+        items.entries.where((e) => !e.value.isMinimized),
+      );
+
   TerminalDockState copyWith({
-    Map<String, TerminalDockItem>? minimized,
+    Map<String, TerminalDockItem>? items,
     Map<String, String>? lastTabs,
   }) {
     return TerminalDockState(
-      minimized: minimized ?? this.minimized,
+      items: items ?? this.items,
       lastTabs: lastTabs ?? this.lastTabs,
     );
   }
@@ -91,21 +110,50 @@ class TerminalDockState {
 class TerminalDockNotifier extends StateNotifier<TerminalDockState> {
   TerminalDockNotifier() : super(const TerminalDockState());
 
-  void addMinimized(TerminalDockItem item) {
+  void addOpened(TerminalDockItem item) {
     final key = item.uniqueKey;
-    final minimized = Map<String, TerminalDockItem>.from(state.minimized);
-    minimized[key] = item;
+    final items = Map<String, TerminalDockItem>.from(state.items);
+    items[key] = item.copyWith(status: DockItemStatus.open);
 
     final lastTabs = Map<String, String>.from(state.lastTabs);
     lastTabs[key] = item.lastTab;
 
-    state = state.copyWith(minimized: minimized, lastTabs: lastTabs);
+    state = state.copyWith(items: items, lastTabs: lastTabs);
+  }
+
+  void addMinimized(TerminalDockItem item) {
+    final key = item.uniqueKey;
+    final items = Map<String, TerminalDockItem>.from(state.items);
+    items[key] = item.copyWith(status: DockItemStatus.minimized);
+
+    final lastTabs = Map<String, String>.from(state.lastTabs);
+    lastTabs[key] = item.lastTab;
+
+    state = state.copyWith(items: items, lastTabs: lastTabs);
+  }
+
+  void markMinimized(String uniqueKey) {
+    if (!state.items.containsKey(uniqueKey)) return;
+    final items = Map<String, TerminalDockItem>.from(state.items);
+    items[uniqueKey] = items[uniqueKey]!.copyWith(status: DockItemStatus.minimized);
+    state = state.copyWith(items: items);
+  }
+
+  void markOpened(String uniqueKey) {
+    if (!state.items.containsKey(uniqueKey)) return;
+    final items = Map<String, TerminalDockItem>.from(state.items);
+    items[uniqueKey] = items[uniqueKey]!.copyWith(status: DockItemStatus.open);
+    state = state.copyWith(items: items);
+  }
+
+  void remove(String uniqueKey) {
+    final items = Map<String, TerminalDockItem>.from(state.items);
+    items.remove(uniqueKey);
+    state = state.copyWith(items: items);
   }
 
   void removeMinimized(String uniqueKey) {
-    final minimized = Map<String, TerminalDockItem>.from(state.minimized);
-    minimized.remove(uniqueKey);
-    state = state.copyWith(minimized: minimized);
+    remove(uniqueKey);
   }
 
   void setLastTab(String uniqueKey, String tab) {
@@ -113,10 +161,10 @@ class TerminalDockNotifier extends StateNotifier<TerminalDockState> {
     lastTabs[uniqueKey] = tab;
     state = state.copyWith(lastTabs: lastTabs);
 
-    if (state.minimized.containsKey(uniqueKey)) {
-      final minimized = Map<String, TerminalDockItem>.from(state.minimized);
-      minimized[uniqueKey] = minimized[uniqueKey]!.copyWith(lastTab: tab);
-      state = state.copyWith(minimized: minimized);
+    if (state.items.containsKey(uniqueKey)) {
+      final items = Map<String, TerminalDockItem>.from(state.items);
+      items[uniqueKey] = items[uniqueKey]!.copyWith(lastTab: tab);
+      state = state.copyWith(items: items);
     }
   }
 
@@ -125,14 +173,20 @@ class TerminalDockNotifier extends StateNotifier<TerminalDockState> {
   }
 
   void updateScreenshot(String uniqueKey, Uint8List bytes) {
-    if (!state.minimized.containsKey(uniqueKey)) return;
-    final minimized = Map<String, TerminalDockItem>.from(state.minimized);
-    minimized[uniqueKey] = minimized[uniqueKey]!.copyWith(screenshotBytes: bytes);
-    state = state.copyWith(minimized: minimized);
+    if (!state.items.containsKey(uniqueKey)) return;
+    final items = Map<String, TerminalDockItem>.from(state.items);
+    items[uniqueKey] = items[uniqueKey]!.copyWith(screenshotBytes: bytes);
+    state = state.copyWith(items: items);
   }
 
   void clearMinimized() {
-    state = state.copyWith(minimized: const {});
+    final items = Map<String, TerminalDockItem>.from(state.items);
+    items.removeWhere((_, v) => v.isMinimized);
+    state = state.copyWith(items: items);
+  }
+
+  void clearAll() {
+    state = state.copyWith(items: const {});
   }
 
   void reset() {
