@@ -383,49 +383,72 @@ class _TerminalDockIconState extends ConsumerState<TerminalDockIcon> {
         curve: Curves.easeOutCubic,
         child: GestureDetector(
           onTap: _handleTap,
-          child: Opacity(
-            opacity: isMin ? 0.55 : 1.0,
-            child: Container(
-              width: 52,
-              height: 52,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade50,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: isMin
-                      ? Colors.grey.shade400
-                      : statusColor.withValues(alpha: 0.6),
-                  width: 2,
+          child: SizedBox(
+            width: 52,
+            height: 52,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: statusColor.withValues(alpha: 0.6),
+                      width: 2,
+                    ),
+                    boxShadow: AppShadows.sm,
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: widget.item.screenshotBytes != null
+                        ? Image.memory(
+                            widget.item.screenshotBytes!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              color: Colors.grey.shade50,
+                              child: _buildFallbackContent(),
+                            ),
+                          )
+                        : Image.network(
+                            t.desktopThumbnailUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              color: Colors.grey.shade50,
+                              child: _buildFallbackContent(),
+                            ),
+                            loadingBuilder: (context, child, progress) {
+                              if (progress == null) return child;
+                              return Container(
+                                color: Colors.grey.shade50,
+                                child: _buildFallbackContent(),
+                              );
+                            },
+                          ),
+                  ),
                 ),
-                boxShadow: isMin ? null : AppShadows.sm,
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: widget.item.screenshotBytes != null
-                    ? Image.memory(
-                        widget.item.screenshotBytes!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
-                          color: Colors.grey.shade50,
-                          child: _buildFallbackContent(),
-                        ),
-                      )
-                    : Image.network(
-                        t.desktopThumbnailUrl,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
-                          color: Colors.grey.shade50,
-                          child: _buildFallbackContent(),
-                        ),
-                        loadingBuilder: (context, child, progress) {
-                          if (progress == null) return child;
-                          return Container(
-                            color: Colors.grey.shade50,
-                            child: _buildFallbackContent(),
-                          );
-                        },
+                if (isMin)
+                  Positioned(
+                    right: -4,
+                    bottom: -4,
+                    child: Container(
+                      width: 18,
+                      height: 18,
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade600,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 1.5),
                       ),
-              ),
+                      child: const Icon(
+                        LucideIcons.minus,
+                        size: 10,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
