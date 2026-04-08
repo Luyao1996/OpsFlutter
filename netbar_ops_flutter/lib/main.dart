@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,8 +15,37 @@ import 'features/monitor/presentation/terminal_detail_window_app.dart';
 import 'shared/providers/app_providers.dart';
 import 'shared/services/window_control.dart';
 
+Future<void> _writeCrashLog(String error, String stack) async {
+  try {
+    final exeDir = File(Platform.resolvedExecutable).parent;
+    final logDir = Directory('${exeDir.path}\\crash_logs');
+    if (!logDir.existsSync()) logDir.createSync(recursive: true);
+    final now = DateTime.now();
+    final ts =
+        '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}'
+        '_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
+    final file = File('${logDir.path}\\dart_crash_$ts.log');
+    final content = 'Time: $now\n\nError:\n$error\n\nStack Trace:\n$stack\n';
+    await file.writeAsString(content);
+  } catch (_) {}
+}
+
 void main(List<String> args) async {
-  WidgetsFlutterBinding.ensureInitialized();
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+
+    FlutterError.onError = (details) {
+      FlutterError.presentError(details);
+      _writeCrashLog(
+        details.exceptionAsString(),
+        details.stack?.toString() ?? 'no stack',
+      );
+    };
+
+    PlatformDispatcher.instance.onError = (error, stack) {
+      _writeCrashLog(error.toString(), stack.toString());
+      return true;
+    };
 
   // 初始化存储
   await TokenStore.init();
@@ -77,6 +108,9 @@ void main(List<String> args) async {
   }
 
   runApp(const ProviderScope(child: NetbarOpsApp()));
+  }, (error, stack) {
+    _writeCrashLog(error.toString(), stack.toString());
+  });
 }
 
 class NetbarOpsApp extends ConsumerWidget {
