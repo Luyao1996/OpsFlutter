@@ -441,6 +441,38 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     );
   }
 
+  Widget _buildNetbarHeader({EdgeInsets padding = EdgeInsets.zero}) {
+    final netbar = ref.watch(currentNetbarProvider);
+    final group = netbar.groupName;
+    final name = netbar.name ?? '';
+    if (name.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: padding,
+      child: Row(
+        children: [
+          if (group != null && group.isNotEmpty) ...[
+            Text(
+              group,
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Icon(LucideIcons.chevronRight, size: 14, color: Colors.grey.shade400),
+            ),
+          ],
+          Flexible(
+            child: Text(
+              name,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildContent(List<Terminal> terminals) {
     // 空列表：显示暂无终端提示
     if (terminals.isEmpty) {
@@ -511,11 +543,12 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     if (context.isPhone) {
       return DefaultTabController(
         length: 2,
-        initialIndex: 0, // 默认“关键设备状态”
+        initialIndex: 0, // 默认”关键设备状态”
         child: Column(
           children: [
+            _buildNetbarHeader(padding: const EdgeInsets.fromLTRB(16, 12, 16, 0)),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               child: Container(
                 height: 40,
                 padding: const EdgeInsets.all(4),
@@ -626,6 +659,8 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
 
     return CustomScrollView(
       slivers: [
+        // 当前网吧标题
+        SliverToBoxAdapter(child: _buildNetbarHeader(padding: const EdgeInsets.fromLTRB(32, 24, 32, 0))),
         // 关键设备区域
         SliverToBoxAdapter(child: _buildDevicesSection(devices)),
         // 工具栏

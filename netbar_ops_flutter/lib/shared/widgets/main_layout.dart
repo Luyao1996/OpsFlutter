@@ -99,7 +99,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           ref
               .read(currentNetbarProvider.notifier)
-              .setNetbar(activeTab.id, activeTab.name, activeTab.status, subdomainFull: activeTab.subdomainFull);
+              .setNetbar(activeTab.id, activeTab.name, activeTab.status, subdomainFull: activeTab.subdomainFull, groupName: activeTab.groupName);
         });
       }
     }
@@ -136,7 +136,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
       if (keptTabs.isEmpty) {
         // 无可用历史标签：打开第一个可访问网吧
         final target = netbars.first;
-        await tabsNotifier.openTab(target.id, target.name, target.status, subdomainFull: target.subdomainFull);
+        await tabsNotifier.openTab(target.id, target.name, target.status, subdomainFull: target.subdomainFull, groupName: target.group);
         await currentNotifier.setNetbar(target.id, target.name, target.status, subdomainFull: target.subdomainFull, groupName: target.group);
         return;
       }
@@ -148,6 +148,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
                 name: byId[t.id]!.name,
                 status: byId[t.id]!.status,
                 subdomainFull: byId[t.id]!.subdomainFull,
+                groupName: byId[t.id]!.group,
                 openedAt: t.openedAt,
               ))
           .toList();
@@ -240,7 +241,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         child: NetbarSelectorModal(
           selectedId: current.id,
           onSelect: (id, name, status, {subdomainFull, groupName}) {
-            tabsNotifier.openTab(id, name, status, subdomainFull: subdomainFull);
+            tabsNotifier.openTab(id, name, status, subdomainFull: subdomainFull, groupName: groupName);
             ref
                 .read(currentNetbarProvider.notifier)
                 .setNetbar(id, name, status, subdomainFull: subdomainFull, groupName: groupName);

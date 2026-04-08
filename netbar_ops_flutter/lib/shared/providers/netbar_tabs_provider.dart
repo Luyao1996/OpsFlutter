@@ -8,6 +8,7 @@ class OpenedNetbarTab {
   final String name;
   final String status;
   final String? subdomainFull;
+  final String? groupName;
   final DateTime openedAt;
 
   OpenedNetbarTab({
@@ -15,6 +16,7 @@ class OpenedNetbarTab {
     required this.name,
     required this.status,
     this.subdomainFull,
+    this.groupName,
     required this.openedAt,
   });
 
@@ -37,6 +39,7 @@ class OpenedNetbarTab {
     'name': name,
     'status': status,
     'subdomainFull': subdomainFull,
+    'groupName': groupName,
     'openedAt': openedAt.toIso8601String(),
   };
 
@@ -46,6 +49,7 @@ class OpenedNetbarTab {
       name: json['name'],
       status: json['status'],
       subdomainFull: json['subdomainFull'],
+      groupName: json['groupName'],
       openedAt: DateTime.parse(json['openedAt']),
     );
   }
@@ -113,7 +117,7 @@ class NetbarTabsNotifier extends StateNotifier<NetbarTabsState> {
   }
 
   /// 打开新标签页（如果已存在则激活）
-  Future<void> openTab(int id, String name, String status, {String? subdomainFull}) async {
+  Future<void> openTab(int id, String name, String status, {String? subdomainFull, String? groupName}) async {
     final existingIndex = state.tabs.indexWhere((t) => t.id == id);
     if (existingIndex >= 0) {
       // 已存在，只激活
@@ -125,6 +129,7 @@ class NetbarTabsNotifier extends StateNotifier<NetbarTabsState> {
         name: name,
         status: status,
         subdomainFull: subdomainFull,
+        groupName: groupName,
         openedAt: DateTime.now(),
       );
       state = NetbarTabsState(
@@ -147,6 +152,47 @@ class NetbarTabsNotifier extends StateNotifier<NetbarTabsState> {
       newActiveId = tabs.isNotEmpty ? tabs.last.id : null;
     }
     state = NetbarTabsState(tabs: tabs, activeTabId: newActiveId);
+    await _saveToStorage();
+  }
+
+  /// 关闭指定 tab 右侧的所有标签
+  Future<void> closeTabsToTheRight(int id) async {
+    final idx = state.tabs.indexWhere((t) => t.id == id);
+    if (idx < 0 || idx >= state.tabs.length - 1) return;
+    final kept = state.tabs.sublist(0, idx + 1);
+    final newActiveId = kept.any((t) => t.id == state.activeTabId)
+        ? state.activeTabId
+        : kept.last.id;
+    state = NetbarTabsState(tabs: kept, activeTabId: newActiveId);
+    await _saveToStorage();
+  }
+
+  /// 关闭指定 tab 左侧的所有标签
+  Future<void> closeTabsToTheLeft(int id) async {
+    final idx = state.tabs.indexWhere((t) => t.id == id);
+    if (idx <= 0) return;
+    final kept = state.tabs.sublist(idx);
+    final newActiveId = kept.any((t) => t.id == state.activeTabId)
+        ? state.activeTabId
+        : kept.first.id;
+    state = NetbarTabsState(tabs: kept, activeTabId: newActiveId);
+    await _saveToStorage();
+  }
+
+  /// 关闭除指定 tab 外的所有标签
+  Future<void> closeOtherTabs(int id) async {
+    final target = state.tabs.where((t) => t.id == id).toList();
+    if (target.isEmpty || state.tabs.length <= 1) return;
+    state = NetbarTabsState(tabs: target, activeTabId: id);
+    await _saveToStorage();
+  }
+
+  /// 在指定 tab 之后插入新标签
+  Future<void> insertTabAfter(int afterId, OpenedNetbarTab newTab) async {
+    final idx = state.tabs.indexWhere((t) => t.id == afterId);
+    final tabs = List<OpenedNetbarTab>.from(state.tabs);
+    tabs.insert(idx + 1, newTab);
+    state = NetbarTabsState(tabs: tabs, activeTabId: newTab.id);
     await _saveToStorage();
   }
 

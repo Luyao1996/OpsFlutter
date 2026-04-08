@@ -1,10 +1,28 @@
 import 'dart:async';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../core/theme/app_theme.dart';
 import '../../features/netbar/presentation/netbar_selector_modal.dart';
 import '../providers/netbar_tabs_provider.dart';
+
+/// 分组颜色调色板 — 根据 groupName 的 hashCode 稳定映射
+const _groupColors = <Color>[
+  Color(0xFF3B82F6), // blue
+  Color(0xFFF59E0B), // amber
+  Color(0xFF10B981), // emerald
+  Color(0xFFEF4444), // red
+  Color(0xFF8B5CF6), // violet
+  Color(0xFFEC4899), // pink
+  Color(0xFF06B6D4), // cyan
+  Color(0xFFF97316), // orange
+];
+
+Color _groupColor(String? groupName) {
+  if (groupName == null || groupName.isEmpty) return const Color(0xFF9CA3AF); // grey
+  return _groupColors[groupName.hashCode.abs() % _groupColors.length];
+}
 
 /// 网吧选项卡栏 - 类似浏览器标签页
 class NetbarTabBar extends ConsumerStatefulWidget {
@@ -92,7 +110,7 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
         child: NetbarSelectorModal(
           selectedId: ref.read(netbarTabsProvider).activeTabId,
           onSelect: (id, name, status, {String? subdomainFull, String? groupName}) {
-            ref.read(netbarTabsProvider.notifier).openTab(id, name, status, subdomainFull: subdomainFull);
+            ref.read(netbarTabsProvider.notifier).openTab(id, name, status, subdomainFull: subdomainFull, groupName: groupName);
           },
         ),
       ),
@@ -111,59 +129,40 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
       children: [
         // 左箭头
         if (_showLeftArrow) _buildScrollButton(isLeft: true),
-        // 标签页列表（可滚动，内部Tab可缩小）
+        // 标签页列表（始终可滚动，支持鼠标滚轮）
         Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final tabCount = tabsState.tabs.length;
-              final addButtonWidth = 36.0; // 添加按钮宽度
-              final availableWidth = constraints.maxWidth - addButtonWidth;
-              final minTabWidth = 130.0;
-              final totalMinWidth = tabCount * (minTabWidth + 2); // 2 for margin
-
-              // 如果空间足够所有Tab以最小宽度显示，不需要滚动
-              final needsScroll = totalMinWidth > availableWidth;
-
-              if (!needsScroll && tabCount > 0) {
-                // 不需要滚动，Tab可以压缩或扩展
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    ...tabsState.tabs.map((tab) => Flexible(
-                      child: _buildTab(
-                        tab,
-                        tabsState.activeTabId,
-                        flexible: true,
-                        canClose: tabsState.tabs.length > 1,
-                      ),
-                    )),
-                    _buildAddButton(),
-                  ],
+          child: Listener(
+            onPointerSignal: (event) {
+              if (event is PointerScrollEvent && _scrollController.hasClients) {
+                final offset = (_scrollController.offset + event.scrollDelta.dy).clamp(
+                  0.0,
+                  _scrollController.position.maxScrollExtent,
                 );
+                _scrollController.jumpTo(offset);
               }
-
-              // 需要滚动
-              return SingleChildScrollView(
-                controller: _scrollController,
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    ...tabsState.tabs.map((tab) => _buildTab(
-                      tab,
-                      tabsState.activeTabId,
-                      flexible: false,
-                      canClose: tabsState.tabs.length > 1,
-                    )),
-                    _buildAddButton(),
-                  ],
-                ),
-              );
             },
+            child: SingleChildScrollView(
+              controller: _scrollController,
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  ...tabsState.tabs.map((tab) => _buildTab(
+                    tab,
+                    tabsState.activeTabId,
+                    canClose: tabsState.tabs.length > 1,
+                  )),
+                ],
+              ),
+            ),
           ),
         ),
         // 右箭头
         if (_showRightArrow) _buildScrollButton(isLeft: false),
+        // "+"按钮 — 固定在视图按钮左侧
+        _buildAddButton(),
+        // 视图按钮 — 打开分组总览弹层
+        if (tabsState.tabs.length > 1) _buildViewButton(tabsState),
       ],
     );
   }
@@ -175,16 +174,105 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
     );
   }
 
-  Widget _buildTab(OpenedNetbarTab tab, int? activeTabId, {bool flexible = false, required bool canClose}) {
+  Widget _buildViewButton(NetbarTabsState tabsState) {
+    return _HoverableViewButton(
+      onTap: () => _showTabOverview(tabsState),
+    );
+  }
+
+  void _showTabOverview(NetbarTabsState tabsState) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.3),
+      builder: (ctx) => _TabOverviewDialog(
+        tabsState: tabsState,
+        onSwitch: (id) {
+          Navigator.of(ctx).pop();
+          ref.read(netbarTabsProvider.notifier).switchToTab(id);
+        },
+        onClose: (id) {
+          ref.read(netbarTabsProvider.notifier).closeTab(id);
+        },
+      ),
+    );
+  }
+
+  Widget _buildTab(OpenedNetbarTab tab, int? activeTabId, {required bool canClose}) {
     final isActive = tab.id == activeTabId;
 
     return _HoverableTab(
       isActive: isActive,
       onTap: () => ref.read(netbarTabsProvider.notifier).switchToTab(tab.id),
       onClose: () => ref.read(netbarTabsProvider.notifier).closeTab(tab.id),
+      onContextMenu: (offset) => _showTabContextMenu(offset, tab),
       tab: tab,
-      flexible: flexible,
       canClose: canClose,
+    );
+  }
+
+  void _showTabContextMenu(Offset position, OpenedNetbarTab tab) {
+    final notifier = ref.read(netbarTabsProvider.notifier);
+    final tabs = ref.read(netbarTabsProvider).tabs;
+    final idx = tabs.indexWhere((t) => t.id == tab.id);
+    final hasRight = idx < tabs.length - 1;
+    final hasLeft = idx > 0;
+    final hasOthers = tabs.length > 1;
+
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      items: [
+        PopupMenuItem(value: 'close_right', enabled: hasRight, child: const Text('关闭右侧所有标签')),
+        PopupMenuItem(value: 'close_left', enabled: hasLeft, child: const Text('关闭左侧所有标签')),
+        PopupMenuItem(value: 'close_others', enabled: hasOthers, child: const Text('关闭其他标签')),
+        PopupMenuItem(value: 'close_current', enabled: hasOthers, child: const Text('关闭当前标签')),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'insert_after', child: Text('在当前标签后新增')),
+      ],
+    ).then((value) {
+      if (value == null) return;
+      switch (value) {
+        case 'close_right':
+          notifier.closeTabsToTheRight(tab.id);
+        case 'close_left':
+          notifier.closeTabsToTheLeft(tab.id);
+        case 'close_others':
+          notifier.closeOtherTabs(tab.id);
+        case 'close_current':
+          notifier.closeTab(tab.id);
+        case 'insert_after':
+          _openNewTabAfter(tab.id);
+      }
+    });
+  }
+
+  void _openNewTabAfter(int afterId) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(40),
+        child: NetbarSelectorModal(
+          selectedId: ref.read(netbarTabsProvider).activeTabId,
+          onSelect: (id, name, status, {String? subdomainFull, String? groupName}) {
+            final existing = ref.read(netbarTabsProvider).tabs;
+            if (existing.any((t) => t.id == id)) {
+              // 已存在，直接切换
+              ref.read(netbarTabsProvider.notifier).switchToTab(id);
+            } else {
+              final newTab = OpenedNetbarTab(
+                id: id,
+                name: name,
+                status: status,
+                subdomainFull: subdomainFull,
+                groupName: groupName,
+                openedAt: DateTime.now(),
+              );
+              ref.read(netbarTabsProvider.notifier).insertTabAfter(afterId, newTab);
+            }
+          },
+        ),
+      ),
     );
   }
 
@@ -247,16 +335,16 @@ class _HoverableTab extends StatefulWidget {
   final bool isActive;
   final VoidCallback onTap;
   final VoidCallback onClose;
+  final ValueChanged<Offset>? onContextMenu;
   final OpenedNetbarTab tab;
-  final bool flexible;
   final bool canClose;
 
   const _HoverableTab({
     required this.isActive,
     required this.onTap,
     required this.onClose,
+    this.onContextMenu,
     required this.tab,
-    this.flexible = false,
     this.canClose = true,
   });
 
@@ -269,7 +357,6 @@ class _HoverableTabState extends State<_HoverableTab> {
   bool _isCloseHovered = false;
 
   static const Color _activeTabColor = Color(0xFF07C160);
-  static const double _minTabWidth = 130.0;
 
   @override
   Widget build(BuildContext context) {
@@ -285,32 +372,52 @@ class _HoverableTabState extends State<_HoverableTab> {
       bgColor = _isHovered ? Colors.grey.shade200 : Colors.grey.shade100;
     }
 
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          margin: const EdgeInsets.only(right: 2),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          constraints: BoxConstraints(minWidth: widget.flexible ? _minTabWidth : 0),
-          decoration: BoxDecoration(
-            color: bgColor,
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(8),
-              topRight: Radius.circular(8),
+    final groupColor = _groupColor(widget.tab.groupName);
+    final tooltipText = widget.tab.groupName != null && widget.tab.groupName!.isNotEmpty
+        ? '${widget.tab.groupName} · ${widget.tab.name}'
+        : widget.tab.name;
+
+    return Tooltip(
+      message: tooltipText,
+      waitDuration: const Duration(milliseconds: 400),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() => _isHovered = false),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          onSecondaryTapUp: widget.onContextMenu != null
+              ? (details) => widget.onContextMenu!(details.globalPosition)
+              : null,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            margin: const EdgeInsets.only(right: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(8),
+                topRight: Radius.circular(8),
+              ),
+              border: isActive ? null : Border.all(color: Colors.grey.shade200),
+              boxShadow: isActive || _isHovered ? AppShadows.sm : null,
             ),
-            border: isActive ? null : Border.all(color: Colors.grey.shade200),
-            boxShadow: isActive || _isHovered ? AppShadows.sm : null,
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 网吧名称
-              Flexible(
-                child: Text(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 分组色标
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: isActive ? Colors.white.withValues(alpha: 0.8) : groupColor,
+                    shape: BoxShape.circle,
+                    border: isActive ? Border.all(color: groupColor, width: 1.5) : null,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                // 网吧名称
+                Text(
                   widget.tab.name,
                   style: TextStyle(
                     fontSize: 13,
@@ -320,7 +427,6 @@ class _HoverableTabState extends State<_HoverableTab> {
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,
                 ),
-              ),
               const SizedBox(width: 6),
               // 打开时长标签
               Container(
@@ -370,7 +476,8 @@ class _HoverableTabState extends State<_HoverableTab> {
                   ),
                 ),
               ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -416,6 +523,353 @@ class _HoverableAddButtonState extends State<_HoverableAddButton> {
             LucideIcons.plus,
             size: 16,
             color: _isHovered ? Colors.grey.shade700 : Colors.grey.shade500,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 带 Hover 效果的视图按钮
+class _HoverableViewButton extends StatefulWidget {
+  final VoidCallback onTap;
+
+  const _HoverableViewButton({required this.onTap});
+
+  @override
+  State<_HoverableViewButton> createState() => _HoverableViewButtonState();
+}
+
+class _HoverableViewButtonState extends State<_HoverableViewButton> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: '标签总览',
+      waitDuration: const Duration(milliseconds: 400),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() => _isHovered = false),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            width: 32,
+            height: 32,
+            margin: const EdgeInsets.only(left: 4),
+            decoration: BoxDecoration(
+              color: _isHovered ? Colors.grey.shade200 : Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: _isHovered ? Colors.grey.shade300 : Colors.grey.shade200,
+              ),
+              boxShadow: _isHovered ? AppShadows.sm : null,
+            ),
+            child: Icon(
+              LucideIcons.layoutGrid,
+              size: 16,
+              color: _isHovered ? Colors.grey.shade700 : Colors.grey.shade500,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 标签总览弹层 — 按分组展示所有已开网吧，支持搜索
+class _TabOverviewDialog extends StatefulWidget {
+  final NetbarTabsState tabsState;
+  final ValueChanged<int> onSwitch;
+  final ValueChanged<int> onClose;
+
+  const _TabOverviewDialog({
+    required this.tabsState,
+    required this.onSwitch,
+    required this.onClose,
+  });
+
+  @override
+  State<_TabOverviewDialog> createState() => _TabOverviewDialogState();
+}
+
+class _TabOverviewDialogState extends State<_TabOverviewDialog> {
+  String _query = '';
+
+  Map<String, List<OpenedNetbarTab>> _buildGrouped() {
+    final grouped = <String, List<OpenedNetbarTab>>{};
+    final q = _query.toLowerCase();
+    for (final tab in widget.tabsState.tabs) {
+      final group = tab.groupName ?? '未分组';
+      if (q.isNotEmpty &&
+          !tab.name.toLowerCase().contains(q) &&
+          !group.toLowerCase().contains(q)) {
+        continue;
+      }
+      grouped.putIfAbsent(group, () => []).add(tab);
+    }
+    return grouped;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final grouped = _buildGrouped();
+    final sortedGroups = grouped.keys.toList()..sort();
+    final matchCount = grouped.values.fold<int>(0, (s, l) => s + l.length);
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 80, vertical: 60),
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 480, maxHeight: 520),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: AppShadows.xl,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 标题栏
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
+              child: Row(
+                children: [
+                  Icon(LucideIcons.layoutGrid, size: 18, color: Colors.grey.shade600),
+                  const SizedBox(width: 8),
+                  Text(
+                    '已打开 ${widget.tabsState.tabs.length} 个网吧',
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: Icon(LucideIcons.x, size: 18, color: Colors.grey.shade400),
+                    splashRadius: 16,
+                  ),
+                ],
+              ),
+            ),
+            // 搜索框
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Container(
+                height: 36,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 10),
+                    Icon(LucideIcons.search, size: 14, color: Colors.grey.shade400),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        autofocus: true,
+                        onChanged: (v) => setState(() => _query = v),
+                        decoration: InputDecoration(
+                          hintText: '搜索网吧名称或分组...',
+                          hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.zero,
+                          isDense: true,
+                        ),
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Divider(height: 1, color: Colors.grey.shade100),
+            // 分组列表
+            if (sortedGroups.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 32),
+                child: Text(
+                  '无匹配结果',
+                  style: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+                ),
+              )
+            else
+              Flexible(
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  shrinkWrap: true,
+                  itemCount: sortedGroups.length,
+                  itemBuilder: (context, gi) {
+                    final group = sortedGroups[gi];
+                    final tabs = grouped[group]!;
+                    final groupColor = _groupColor(group);
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // 分组标题
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 10, 20, 6),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: groupColor,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                group,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.grey.shade500,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '(${tabs.length})',
+                                style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
+                              ),
+                            ],
+                          ),
+                        ),
+                        // 网吧列表
+                        ...tabs.map((tab) {
+                          final isActive = tab.id == widget.tabsState.activeTabId;
+                          return _OverviewTabItem(
+                            tab: tab,
+                            isActive: isActive,
+                            groupColor: groupColor,
+                            canClose: widget.tabsState.tabs.length > 1,
+                            onTap: () => widget.onSwitch(tab.id),
+                            onClose: () => widget.onClose(tab.id),
+                          );
+                        }),
+                      ],
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 弹层中的单个网吧条目
+class _OverviewTabItem extends StatefulWidget {
+  final OpenedNetbarTab tab;
+  final bool isActive;
+  final Color groupColor;
+  final bool canClose;
+  final VoidCallback onTap;
+  final VoidCallback onClose;
+
+  const _OverviewTabItem({
+    required this.tab,
+    required this.isActive,
+    required this.groupColor,
+    required this.canClose,
+    required this.onTap,
+    required this.onClose,
+  });
+
+  @override
+  State<_OverviewTabItem> createState() => _OverviewTabItemState();
+}
+
+class _OverviewTabItemState extends State<_OverviewTabItem> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 1),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: widget.isActive
+                ? widget.groupColor.withValues(alpha: 0.08)
+                : _isHovered
+                    ? Colors.grey.shade50
+                    : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            border: widget.isActive
+                ? Border.all(color: widget.groupColor.withValues(alpha: 0.3))
+                : null,
+          ),
+          child: Row(
+            children: [
+              // 色标
+              Container(
+                width: 4,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: widget.groupColor,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // 名称
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.tab.name,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: widget.isActive ? FontWeight.w600 : FontWeight.w500,
+                        color: widget.isActive ? widget.groupColor : Colors.grey.shade800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '已打开 ${widget.tab.formattedDuration}',
+                      style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
+                    ),
+                  ],
+                ),
+              ),
+              // 当前标记
+              if (widget.isActive)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: widget.groupColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '当前',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: widget.groupColor,
+                    ),
+                  ),
+                ),
+              // 关闭按钮
+              if (widget.canClose && _isHovered) ...[
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: widget.onClose,
+                  child: Icon(LucideIcons.x, size: 14, color: Colors.grey.shade400),
+                ),
+              ],
+            ],
           ),
         ),
       ),
