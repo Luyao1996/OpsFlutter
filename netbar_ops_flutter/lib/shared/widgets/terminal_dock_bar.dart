@@ -264,7 +264,7 @@ class _TerminalDockIconState extends ConsumerState<TerminalDockIcon> {
 
   void _showHoverCard() {
     if (_hoverEntry != null) return;
-    final overlay = Overlay.of(context);
+    final overlay = Navigator.of(context, rootNavigator: true).overlay!;
     final box = context.findRenderObject() as RenderBox?;
     if (box == null) return;
 

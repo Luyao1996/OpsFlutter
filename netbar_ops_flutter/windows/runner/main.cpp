@@ -89,8 +89,77 @@ static LONG WINAPI GlobalCrashHandler(EXCEPTION_POINTERS *exInfo) {
   return EXCEPTION_EXECUTE_HANDLER;
 }
 
+// Relaunch exe from an ASCII junction path if current path contains non-ASCII.
+// Returns true if relaunch was initiated (caller should exit immediately).
+static bool RelaunchFromAsciiPath() {
+  wchar_t exeFullPath[MAX_PATH];
+  GetModuleFileNameW(nullptr, exeFullPath, MAX_PATH);
+  std::wstring exePath(exeFullPath);
+  std::wstring exeDir = exePath.substr(0, exePath.find_last_of(L'\\'));
+  std::wstring exeName = exePath.substr(exePath.find_last_of(L'\\') + 1);
+
+  // Check for non-ASCII characters in path
+  bool hasNonAscii = false;
+  for (wchar_t ch : exeDir) {
+    if (ch > 127) { hasNonAscii = true; break; }
+  }
+  if (!hasNonAscii) return false;
+
+  // Fixed ASCII junction path
+  std::wstring junctionDir = L"C:\\ProgramData\\NetbarOps_run";
+
+  // Already running from junction - do not re-launch (prevent infinite loop)
+  if (exeDir.size() >= junctionDir.size() &&
+      _wcsnicmp(exeDir.c_str(), junctionDir.c_str(), junctionDir.size()) == 0) {
+    return false;
+  }
+
+  // Remove old junction (safe: RemoveDirectoryW on junction only removes the
+  // link, not the target; fails harmlessly on non-empty real directories)
+  RemoveDirectoryW(junctionDir.c_str());
+
+  // Create NTFS junction via cmd (no admin required)
+  std::wstring cmdLine = L"cmd.exe /c mklink /J \"" + junctionDir +
+                         L"\" \"" + exeDir + L"\"";
+  STARTUPINFOW si = {};
+  si.cb = sizeof(si);
+  si.dwFlags = STARTF_USESHOWWINDOW;
+  si.wShowWindow = SW_HIDE;
+  PROCESS_INFORMATION pi = {};
+  if (CreateProcessW(nullptr, &cmdLine[0], nullptr, nullptr, FALSE,
+                     CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+    WaitForSingleObject(pi.hProcess, 5000);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+  }
+
+  // Verify junction was created
+  if (GetFileAttributesW(junctionDir.c_str()) == INVALID_FILE_ATTRIBUTES) {
+    return false;
+  }
+
+  // Re-launch exe from the junction path
+  std::wstring newExe = junctionDir + L"\\" + exeName;
+  STARTUPINFOW si2 = {};
+  si2.cb = sizeof(si2);
+  PROCESS_INFORMATION pi2 = {};
+  if (CreateProcessW(newExe.c_str(), GetCommandLineW(), nullptr, nullptr, FALSE,
+                     0, nullptr, junctionDir.c_str(), &si2, &pi2)) {
+    CloseHandle(pi2.hThread);
+    CloseHandle(pi2.hProcess);
+    return true;
+  }
+
+  return false;
+}
+
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
+  // If exe path contains non-ASCII, relaunch from an ASCII junction
+  if (RelaunchFromAsciiPath()) {
+    return 0;
+  }
+
   SetUnhandledExceptionFilter(GlobalCrashHandler);
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
