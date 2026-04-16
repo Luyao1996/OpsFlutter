@@ -1,6 +1,6 @@
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/network/dio_helper.dart';
 import '../../../core/storage/token_store.dart';
 import '../../../shared/providers/app_providers.dart';
 
@@ -131,54 +131,23 @@ class RouterApi {
     // subdomainFull may already contain port (e.g. "xxx.frps.wwls.net")
     final hostOnly = subdomainFull.split(':').first;
     final baseUrl = 'https://router-$hostOnly/api';
-    _dio = Dio(BaseOptions(
+    _dio = createDio(BaseOptions(
       baseUrl: baseUrl,
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 10),
+      connectTimeout: const Duration(seconds: 30),
+      receiveTimeout: const Duration(seconds: 30),
       headers: {'Content-Type': 'application/json'},
       // Accept all HTTP status codes so we can handle them in _unwrap
       validateStatus: (_) => true,
     ));
 
+    // Token 注入拦截器（日志由 createDio 统一挂载的 HttpLogInterceptor 处理）
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) {
         final token = TokenStore.getToken();
         if (token != null) {
           options.headers['Authorization'] = 'Bearer $token';
         }
-        options.extra['_startTime'] = DateTime.now().millisecondsSinceEpoch;
-        debugPrint('[RouterApi] ========== 请求开始 ==========');
-        debugPrint('[RouterApi] ${options.method} ${options.uri}');
-        debugPrint('[RouterApi] Headers: ${options.headers}');
-        if (options.data != null) {
-          debugPrint('[RouterApi] Body: ${options.data}');
-        }
         handler.next(options);
-      },
-      onResponse: (response, handler) {
-        final start = response.requestOptions.extra['_startTime'] as int? ?? 0;
-        final elapsed = DateTime.now().millisecondsSinceEpoch - start;
-        debugPrint('[RouterApi] ========== 请求成功 ==========');
-        debugPrint('[RouterApi] 状态码: ${response.statusCode}');
-        debugPrint('[RouterApi] 耗时: ${elapsed}ms');
-        final resStr = response.data.toString();
-        for (var i = 0; i < resStr.length; i += 800) {
-          final end = (i + 800 < resStr.length) ? i + 800 : resStr.length;
-          debugPrint('[RouterApi] 响应[${i ~/ 800}]: ${resStr.substring(i, end)}');
-        }
-        handler.next(response);
-      },
-      onError: (error, handler) {
-        final start = error.requestOptions.extra['_startTime'] as int? ?? 0;
-        final elapsed = DateTime.now().millisecondsSinceEpoch - start;
-        debugPrint('[RouterApi] ========== 请求失败 ==========');
-        debugPrint('[RouterApi] ${error.requestOptions.method} ${error.requestOptions.uri}');
-        debugPrint('[RouterApi] 耗时: ${elapsed}ms');
-        debugPrint('[RouterApi] 错误类型: ${error.type}');
-        debugPrint('[RouterApi] 状态码: ${error.response?.statusCode}');
-        debugPrint('[RouterApi] 响应数据: ${error.response?.data}');
-        debugPrint('[RouterApi] 错误消息: ${error.message}');
-        handler.next(error);
       },
     ));
   }

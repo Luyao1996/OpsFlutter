@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../core/config/app_config.dart';
+import '../../../core/network/dio_helper.dart';
 import '../../../core/responsive/responsive.dart';
 import '../../../core/storage/token_store.dart';
 import '../../../core/theme/app_theme.dart';
@@ -310,7 +311,10 @@ class _DesktopManagementPageImplState extends ConsumerState<DesktopManagementPag
       final url = '$normalizedDomain/api/seatlist';
       final token = TokenStore.getToken();
 
-      final dio = Dio();
+      final dio = createDio(BaseOptions(
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+      ));
       final response = await dio.get(
         url,
         options: Options(

@@ -14,6 +14,6 @@ class AppConfig {
   static const String version = '2.5.0';
 
   // 请求超时时间（毫秒）
-  static const int connectTimeout = 10000;
-  static const int receiveTimeout = 10000;
+  static const int connectTimeout = 5000;
+  static const int receiveTimeout = 5000;
 }

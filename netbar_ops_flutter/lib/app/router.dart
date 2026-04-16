@@ -10,6 +10,7 @@ import '../features/netbar/presentation/netbar_list_page.dart';
 import '../features/resource/presentation/resource_management_page.dart';
 import '../features/user/presentation/user_management_page.dart';
 import '../features/logs/presentation/system_logs_page.dart';
+import '../features/logs/presentation/slow_request_logs_page.dart';
 import '../features/desktop/presentation/desktop_management_page.dart'; // Import DesktopManagementPage
 import '../shared/widgets/main_layout.dart';
 import '../features/monitor/presentation/terminal_detail_page.dart';
@@ -129,6 +130,16 @@ final routerProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
               child: const SystemLogsPage(),
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                return FadeTransition(opacity: animation, child: child);
+              },
+            ),
+          ),
+          GoRoute(
+            path: '/slow-request-logs',
+            pageBuilder: (context, state) => CustomTransitionPage(
+              key: state.pageKey,
+              child: const SlowRequestLogsPage(),
               transitionsBuilder: (context, animation, secondaryAnimation, child) {
                 return FadeTransition(opacity: animation, child: child);
               },

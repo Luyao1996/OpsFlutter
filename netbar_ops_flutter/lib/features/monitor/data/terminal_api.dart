@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/network/dio_helper.dart';
 import '../../../core/storage/token_store.dart';
 import 'terminal_mock_data.dart';
 import 'terminal_models.dart';
@@ -28,9 +29,13 @@ class TerminalApi {
     return '$d/api$path';
   }
 
-  /// 创建 Dio 实例
+  /// 创建 Dio 实例（带统一日志拦截器 + SSL 证书旁路 + 30s 超时）
   Dio _createProxiedDio() {
-    final dio = Dio();
+    final dio = createDio(BaseOptions(
+      connectTimeout: const Duration(seconds: 30),
+      receiveTimeout: const Duration(seconds: 30),
+      sendTimeout: const Duration(seconds: 30),
+    ));
 
     // 配置 SSL 证书校验（允许自签名证书）
     if (!kIsWeb) {
@@ -50,13 +55,7 @@ class TerminalApi {
   Future<Response> _netbarGet(String domain, String path, {Map<String, dynamic>? queryParameters}) async {
     final url = _buildUrl(domain, path);
     final token = TokenStore.getToken();
-
-    debugPrint('[TerminalApi._netbarGet] ========== 请求开始 ==========');
-    debugPrint('[TerminalApi._netbarGet] URL: $url');
-    debugPrint('[TerminalApi._netbarGet] Token: ${token != null ? "有" : "无"}');
-
     final dio = _createProxiedDio();
-    final sw = Stopwatch()..start();
 
     try {
       final response = await dio.get(
@@ -68,23 +67,11 @@ class TerminalApi {
             'Host': domain.trim(),
             if (token != null) 'Authorization': 'Bearer $token',
           },
-          receiveTimeout: const Duration(seconds: 30),
-          sendTimeout: const Duration(seconds: 30),
         ),
       );
-      sw.stop();
-
-      debugPrint('[TerminalApi._netbarGet] ========== 请求成功 ==========');
-      debugPrint('[TerminalApi._netbarGet] 状态码: ${response.statusCode}');
-      debugPrint('[TerminalApi._netbarGet] 耗时: ${sw.elapsedMilliseconds}ms');
       return response;
     } on DioException catch (e) {
-      debugPrint('[TerminalApi._netbarGet] ========== 请求失败 ==========');
-      debugPrint('[TerminalApi._netbarGet] 错误类型: ${e.type}');
-      debugPrint('[TerminalApi._netbarGet] 错误消息: ${e.message}');
-      debugPrint('[TerminalApi._netbarGet] 响应状态码: ${e.response?.statusCode}');
-      debugPrint('[TerminalApi._netbarGet] 响应数据: ${e.response?.data}');
-      rethrow;
+      throw _wrapDioError(e);
     } finally {
       dio.close();
     }
@@ -102,14 +89,6 @@ class TerminalApi {
       if (token != null) 'Authorization': 'Bearer $token',
     };
 
-    // 拼接完整 URL（含 query 参数）
-    final fullUri = Uri.parse(url).replace(queryParameters: queryParameters?.map((k, v) => MapEntry(k, v.toString())));
-    debugPrint('[TerminalApi._netbarPost] ========== POST 请求 ==========');
-    debugPrint('[TerminalApi._netbarPost] URL: $fullUri');
-    debugPrint('[TerminalApi._netbarPost] Headers: $headers');
-    debugPrint('[TerminalApi._netbarPost] Body: $data');
-
-    final sw = Stopwatch()..start();
     try {
       final response = await dio.post(
         url,
@@ -117,62 +96,44 @@ class TerminalApi {
         queryParameters: queryParameters,
         options: Options(headers: headers),
       );
-      sw.stop();
-      debugPrint('[TerminalApi._netbarPost] 响应状态码: ${response.statusCode}');
-      debugPrint('[TerminalApi._netbarPost] 耗时: ${sw.elapsedMilliseconds}ms');
-      // 分段打印避免 logcat 截断（每段800字符）
-      final resStr = response.data.toString();
-      for (var i = 0; i < resStr.length; i += 800) {
-        final end = (i + 800 < resStr.length) ? i + 800 : resStr.length;
-        debugPrint('[TerminalApi._netbarPost] 响应[${i ~/ 800}]: ${resStr.substring(i, end)}');
-      }
       return response;
     } on DioException catch (e) {
-      debugPrint('[TerminalApi._netbarPost] ========== 请求失败 ==========');
-      debugPrint('[TerminalApi._netbarPost] 错误类型: ${e.type}');
-      debugPrint('[TerminalApi._netbarPost] 状态码: ${e.response?.statusCode}');
-      debugPrint('[TerminalApi._netbarPost] 响应数据: ${e.response?.data}');
-      debugPrint('[TerminalApi._netbarPost] 错误消息: ${e.message}');
-      rethrow;
+      throw _wrapDioError(e);
     } finally {
       dio.close();
     }
+  }
+
+  /// 将 Dio 超时/连接异常转为友好的 ApiError
+  Object _wrapDioError(DioException e) {
+    if (e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.receiveTimeout ||
+        e.type == DioExceptionType.sendTimeout) {
+      return ApiError(code: e.response?.statusCode, message: '服务器繁忙，请稍后再试', raw: e);
+    }
+    if (e.type == DioExceptionType.connectionError) {
+      return ApiError(code: e.response?.statusCode, message: '网络连接失败，请检查网络', raw: e);
+    }
+    return e;
   }
 
   /// 解包网吧后端响应 {code, msg, data}
   /// 注意：ApiClient 的拦截器可能已经解包过，此方法需要兼容两种情况
   dynamic _unwrapResponse(Response response) {
     final raw = response.data;
-    debugPrint('[TerminalApi] _unwrapResponse raw type: ${raw.runtimeType}');
-    // 分段打印避免 logcat 截断
-    final rawStr = raw.toString();
-    for (var i = 0; i < rawStr.length; i += 800) {
-      final end = (i + 800 < rawStr.length) ? i + 800 : rawStr.length;
-      debugPrint('[TerminalApi] _unwrapResponse[${i ~/ 800}]: ${rawStr.substring(i, end)}');
-    }
     if (raw is Map<String, dynamic>) {
-      debugPrint('[TerminalApi] raw is Map, keys: ${raw.keys.toList()}');
-      // 检查是否为标准 API 响应格式 {code, data, msg?}
-      // 标准格式必须有 code 字段，且 code 是数字或数字字符串
       if (raw.containsKey('code')) {
         final code = raw['code'];
-        debugPrint('[TerminalApi] Found code field: $code');
-        // 验证 code 是有效的状态码（数字或数字字符串）
         final isValidCode = code is int ||
             (code is String && int.tryParse(code) != null);
         if (isValidCode) {
           if (code == 0 || code == '0' || code == 200) {
-            // 成功响应，返回 data 字段
-            debugPrint('[TerminalApi] Returning raw[data]');
             return raw['data'] ?? raw;
           }
           final msg = raw['msg'] ?? raw['message'] ?? '请求失败';
           throw ApiError(code: code, message: msg.toString(), raw: raw);
         }
       }
-      // 没有有效的 code 字段，说明这是直接返回的数据（如文件列表）
-      debugPrint('[TerminalApi] No valid code field, returning raw directly');
-      // 直接返回原始数据，不要尝试解包
       return raw;
     }
     return raw;
@@ -212,19 +173,14 @@ class TerminalApi {
     int? status,
     String? type,
   }) async {
-    debugPrint('[TerminalApi.getAll] 开始获取终端列表, domain=$domain');
     if (domain == null || domain.isEmpty) {
       debugPrint('[TerminalApi.getAll] domain 为空，返回空列表');
-      return []; // 无域名则无法请求
+      return [];
     }
 
     try {
-      final url = _buildUrl(domain, '/seatlist');
-      debugPrint('[TerminalApi.getAll] 请求URL: $url');
       final response = await _netbarGet(domain, '/seatlist');
-      debugPrint('[TerminalApi.getAll] 响应状态码: ${response.statusCode}');
       final data = _unwrapResponse(response);
-      debugPrint('[TerminalApi.getAll] 解包后数据类型: ${data.runtimeType}');
 
       List<Map<String, dynamic>> list = [];
       if (data is List) {
@@ -240,10 +196,6 @@ class TerminalApi {
         }
       }
 
-      if (list.isNotEmpty) {
-        debugPrint('[TerminalApi.getAll] 第一条原始数据字段: ${list.first.keys.toList()}');
-        debugPrint('[TerminalApi.getAll] 第一条原始数据: ${list.first}');
-      }
       return list.map((e) => Terminal.fromJson(e)).toList();
     } catch (e) {
       if (_shouldReturnEmpty(e)) return [];
@@ -253,18 +205,10 @@ class TerminalApi {
 
   /// 获取单个终端（通过座位列表查找）
   Future<Terminal> getById(int id, {String? domain}) async {
-    debugPrint('[TerminalApi.getById] 开始获取终端 id=$id, domain=$domain');
     final terminals = await getAll(domain: domain);
-    debugPrint('[TerminalApi.getById] 获取到 ${terminals.length} 个终端');
-    if (terminals.isEmpty) {
-      debugPrint('[TerminalApi.getById] 终端列表为空！');
-    } else {
-      debugPrint('[TerminalApi.getById] 终端ID列表: ${terminals.map((t) => t.id).toList()}');
-    }
     return terminals.firstWhere(
       (t) => t.id == id,
       orElse: () {
-        debugPrint('[TerminalApi.getById] 未找到 id=$id 的终端');
         throw ApiError(code: 404, message: '终端不存在');
       },
     );
@@ -339,19 +283,7 @@ class TerminalApi {
         data: {'fun': 'processTree', 'data': {}},
       );
       final data = _unwrapResponse(response);
-      debugPrint('[TerminalApi] getProcessTree data type: ${data.runtimeType}');
       if (data is Map<String, dynamic>) {
-        // 打印第一个进程的数据结构，用于调试
-        if (data.isNotEmpty) {
-          final firstKey = data.keys.first;
-          final firstProc = data[firstKey];
-          debugPrint('[TerminalApi] First process key: $firstKey');
-          debugPrint('[TerminalApi] First process data: $firstProc');
-          if (firstProc is Map) {
-            debugPrint('[TerminalApi] First process keys: ${firstProc.keys.toList()}');
-          }
-        }
-        // 将对象格式转换为树形列表
         return _parseProcessTree(data);
       }
       if (data is List) {
@@ -359,7 +291,6 @@ class TerminalApi {
       }
       return [];
     } catch (e) {
-      debugPrint('[TerminalApi] getProcessTree error: $e');
       if (_shouldReturnEmpty(e)) return [];
       rethrow;
     }
@@ -443,10 +374,7 @@ class TerminalApi {
           'data': {'path': cleanPath},
         },
       );
-      debugPrint('[TerminalApi] getFiles response.data: ${response.data}');
       final data = _unwrapResponse(response);
-      debugPrint('[TerminalApi] getFiles unwrapped data type: ${data.runtimeType}');
-      debugPrint('[TerminalApi] getFiles unwrapped data: $data');
 
       // cleanPath 为空时，返回磁盘列表
       if (cleanPath.isEmpty) {
@@ -487,7 +415,6 @@ class TerminalApi {
 
       // 普通目录
       if (data is Map<String, dynamic>) {
-        debugPrint('[TerminalApi] Parsing file list, entries count: ${data.length}');
         // 后端返回 {filename: {isfile, size, ctime, lwtime, version}, ...}
         final list = data.entries.map((e) {
           final info = e.value is Map<String, dynamic>
@@ -502,7 +429,6 @@ class TerminalApi {
           } else {
             fullPath = '$cleanPath\\${e.key}';
           }
-          debugPrint('[TerminalApi] File: ${e.key}, isfile: ${info['isfile']}, isDirectory: ${info['isfile'] != true}');
           return TerminalFile(
             name: e.key,
             path: fullPath,
@@ -513,7 +439,6 @@ class TerminalApi {
             version: info['version'] ?? '',
           );
         }).toList();
-        debugPrint('[TerminalApi] Parsed ${list.length} files');
         // 排序：文件夹在前，然后按名称排序
         list.sort((a, b) {
           if (a.isDirectory != b.isDirectory) {
@@ -524,16 +449,12 @@ class TerminalApi {
         return list;
       }
       if (data is List) {
-        debugPrint('[TerminalApi] Data is List, parsing...');
         return data.map((e) => TerminalFile.fromJson(e)).toList();
       }
-      debugPrint('[TerminalApi] Data is neither Map nor List, returning empty. Type: ${data.runtimeType}');
       return [];
     } catch (e, stack) {
-      debugPrint('[TerminalApi] getFiles ERROR: $e');
-      debugPrint('[TerminalApi] Stack: $stack');
+      debugPrint('[TerminalApi.getFiles] error: $e\n$stack');
       if (_shouldReturnEmpty(e)) {
-        debugPrint('[TerminalApi] Returning mock data due to error');
         return TerminalMockData.files(seatId.hashCode, path);
       }
       rethrow;
@@ -578,61 +499,35 @@ class TerminalApi {
 
   /// 获取硬件信息（静态 + 实时合并）
   Future<List<Map<String, dynamic>>> getHardwareInfo(String seatId, {required String domain}) async {
-    debugPrint('[TerminalApi.getHardwareInfo] ========== 开始 ==========');
-    debugPrint('[TerminalApi.getHardwareInfo] seatId=$seatId, domain=$domain');
-    if (domain.isEmpty) {
-      debugPrint('[TerminalApi.getHardwareInfo] domain 为空，无法请求');
-      return [];
-    }
-    if (seatId.isEmpty) {
-      debugPrint('[TerminalApi.getHardwareInfo] seatId 为空，无法请求');
-      return [];
-    }
+    if (domain.isEmpty || seatId.isEmpty) return [];
     try {
-      final url = _buildUrl(domain, '/task');
-      debugPrint('[TerminalApi.getHardwareInfo] 请求静态信息 URL: $url');
       final infoResponse = await _netbarPost(
         domain,
         '/task',
         queryParameters: {'seat': seatId},
         data: {'fun': 'hwinfo', 'data': {'type': 'info'}},
       );
-      debugPrint('[TerminalApi.getHardwareInfo] 静态信息响应状态码: ${infoResponse.statusCode}');
       final infoData = _unwrapResponse(infoResponse);
-      debugPrint('[TerminalApi.getHardwareInfo] 静态信息解包类型: ${infoData.runtimeType}');
 
       // 尝试获取实时数据（可选，失败不影响静态信息展示）
       Map<String, dynamic> realtimeData = {};
       try {
-        debugPrint('[TerminalApi.getHardwareInfo] 请求实时信息...');
         final rtResponse = await _netbarPost(
           domain,
           '/task',
           queryParameters: {'seat': seatId},
           data: {'fun': 'hwinfo', 'data': {'type': 'realtime'}},
         );
-        debugPrint('[TerminalApi.getHardwareInfo] 实时信息响应状态码: ${rtResponse.statusCode}');
         final rtRaw = _unwrapResponse(rtResponse);
         if (rtRaw is Map<String, dynamic>) realtimeData = rtRaw;
-      } catch (e) {
-        debugPrint('[TerminalApi.getHardwareInfo] 实时信息获取失败(可忽略): $e');
-      }
+      } catch (_) {}
 
       if (infoData is Map<String, dynamic>) {
-        final result = _transformHardwareInfo(infoData, realtimeData);
-        debugPrint('[TerminalApi.getHardwareInfo] 转换完成，共 ${result.length} 个硬件分类');
-        return result;
+        return _transformHardwareInfo(infoData, realtimeData);
       }
-      debugPrint('[TerminalApi.getHardwareInfo] infoData 不是 Map，返回空');
       return [];
-    } catch (e, stack) {
-      debugPrint('[TerminalApi.getHardwareInfo] ========== 失败 ==========');
-      debugPrint('[TerminalApi.getHardwareInfo] 错误: $e');
-      debugPrint('[TerminalApi.getHardwareInfo] Stack: $stack');
-      if (_shouldReturnEmpty(e)) {
-        debugPrint('[TerminalApi.getHardwareInfo] 错误被判定为可忽略，返回空列表');
-        return [];
-      }
+    } catch (e) {
+      if (_shouldReturnEmpty(e)) return [];
       rethrow;
     }
   }
@@ -651,7 +546,6 @@ class TerminalApi {
       if (data is Map<String, dynamic>) return data;
       return {};
     } catch (e) {
-      debugPrint('[TerminalApi.getHardwareRealtime] 错误: $e');
       if (_shouldReturnEmpty(e)) return {};
       rethrow;
     }

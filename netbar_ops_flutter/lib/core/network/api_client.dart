@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import '../config/app_config.dart';
 import '../storage/token_store.dart';
+import 'http_log_interceptor.dart';
 
 /// API 错误
 class ApiError implements Exception {
@@ -127,6 +128,9 @@ class ApiClient {
         },
       ),
     );
+
+    // 统一日志拦截器（放在业务拦截器之后，能看到完整 headers）
+    _dio.interceptors.add(HttpLogInterceptor());
   }
 
   static ApiClient get instance {

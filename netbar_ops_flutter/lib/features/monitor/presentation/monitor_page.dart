@@ -307,18 +307,17 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (error, _) => _buildErrorView(error.toString()),
           data: (terminals) {
-            // 终端列表加载完成后，触发批量截图请求
-            if (terminals.isNotEmpty && _screenshotCache.isEmpty && !_screenshotsLoading) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                _loadScreenshots(terminals);
-              });
-            }
-            // 触发批量 hwinfo realtime 请求
-            if (terminals.isNotEmpty && _realtimeCache.isEmpty && !_realtimeLoading) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                _loadRealtimeStats(terminals);
-              });
-            }
+            // TODO: 批量截图和批量实时硬件请求暂停，并发量过大影响服务端响应
+            // if (terminals.isNotEmpty && _screenshotCache.isEmpty && !_screenshotsLoading) {
+            //   WidgetsBinding.instance.addPostFrameCallback((_) {
+            //     _loadScreenshots(terminals);
+            //   });
+            // }
+            // if (terminals.isNotEmpty && _realtimeCache.isEmpty && !_realtimeLoading) {
+            //   WidgetsBinding.instance.addPostFrameCallback((_) {
+            //     _loadRealtimeStats(terminals);
+            //   });
+            // }
             return _buildContent(terminals);
           },
         ),

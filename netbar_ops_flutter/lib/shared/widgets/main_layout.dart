@@ -345,6 +345,8 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
       return (name: '监控中心', icon: LucideIcons.monitor, color: Colors.green);
     } else if (location.startsWith('/system-logs')) {
       return (name: '系统日志', icon: LucideIcons.fileText, color: Colors.grey);
+    } else if (location.startsWith('/slow-request-logs')) {
+      return (name: '请求日志', icon: LucideIcons.clock, color: Colors.orange);
     } else {
       return (name: '首页', icon: LucideIcons.home, color: AppColors.iosBlue);
     }
@@ -447,6 +449,12 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
               '/system-logs',
               LucideIcons.fileText,
               Colors.grey,
+            ),
+            _buildMenuItem(
+              '请求日志',
+              '/slow-request-logs',
+              LucideIcons.clock,
+              Colors.orange,
             ),
             _buildMenuItem('安全中心', '#', LucideIcons.shield, Colors.red),
           ],

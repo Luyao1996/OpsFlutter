@@ -21,6 +21,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../data/terminal_api.dart';
 import '../../desktop/data/desktop_api.dart';
+import 'monitor_page.dart' show terminalsProvider;
 import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/providers/terminal_dock_provider.dart';
 import '../../../../shared/services/terminal_window_bridge.dart';
@@ -38,32 +39,28 @@ import 'widgets/log_manager_tab.dart';
 
 
 final terminalDetailProvider = FutureProvider.autoDispose.family<Terminal, int>((ref, terminalId) async {
-  final api = ref.read(terminalApiProvider);
   final currentNetbar = ref.watch(currentNetbarProvider);
   final domain = currentNetbar.subdomainFull;
 
-  // 调试日志
-  debugPrint('[TerminalDetailProvider] ========== 开始获取终端详情 ==========');
-  debugPrint('[TerminalDetailProvider] terminalId: $terminalId');
-  debugPrint('[TerminalDetailProvider] currentNetbar.id: ${currentNetbar.id}');
-  debugPrint('[TerminalDetailProvider] currentNetbar.name: ${currentNetbar.name}');
-  debugPrint('[TerminalDetailProvider] currentNetbar.subdomainFull: $domain');
-
   if (domain == null || domain.isEmpty) {
-    debugPrint('[TerminalDetailProvider] ERROR: domain 为空！');
     throw Exception('网吧域名为空，无法获取终端详情');
   }
 
-  try {
-    debugPrint('[TerminalDetailProvider] 开始调用 api.getById($terminalId, domain: $domain)');
-    final terminal = await api.getById(terminalId, domain: domain);
-    debugPrint('[TerminalDetailProvider] 成功获取终端: ${terminal.name}');
-    return terminal;
-  } catch (e, stack) {
-    debugPrint('[TerminalDetailProvider] ERROR: 获取终端失败: $e');
-    debugPrint('[TerminalDetailProvider] Stack: $stack');
-    rethrow;
+  // 优先从 terminalsProvider 缓存中查找，避免重复请求 /seatlist
+  final cachedTerminals = ref.read(terminalsProvider).valueOrNull;
+  if (cachedTerminals != null && cachedTerminals.isNotEmpty) {
+    final found = cachedTerminals.where((t) => t.id == terminalId);
+    if (found.isNotEmpty) {
+      debugPrint('[TerminalDetailProvider] 从缓存获取终端: ${found.first.name}');
+      return found.first;
+    }
   }
+
+  // 缓存中没有，才发起请求
+  debugPrint('[TerminalDetailProvider] 缓存未命中, 请求 seatlist (id=$terminalId)');
+  final api = ref.read(terminalApiProvider);
+  final terminal = await api.getById(terminalId, domain: domain);
+  return terminal;
 });
 
 class TerminalDetailPage extends ConsumerStatefulWidget {
@@ -1265,19 +1262,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   void _confirmAction(String actionName, VoidCallback onConfirm) {
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(actionName),
-        content: Text('确定要对该终端执行「$actionName」操作吗？'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              onConfirm();
-            },
-            child: const Text('继续'),
-          ),
-        ],
+      builder: (ctx) => _ConfirmActionDialog(
+        actionName: actionName,
+        onConfirm: onConfirm,
       ),
     );
   }
@@ -1644,6 +1631,69 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
       }
     }
+  }
+}
+
+class _ConfirmActionDialog extends StatefulWidget {
+  final String actionName;
+  final VoidCallback onConfirm;
+  const _ConfirmActionDialog({
+    required this.actionName,
+    required this.onConfirm,
+  });
+
+  @override
+  State<_ConfirmActionDialog> createState() => _ConfirmActionDialogState();
+}
+
+class _ConfirmActionDialogState extends State<_ConfirmActionDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final matched = _controller.text.trim() == widget.actionName;
+    return AlertDialog(
+      title: Text(widget.actionName),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('此操作不可撤销，请输入「${widget.actionName}」以确认对该终端执行操作。'),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            decoration: InputDecoration(
+              hintText: '请输入 ${widget.actionName}',
+              border: const OutlineInputBorder(),
+              isDense: true,
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: matched
+              ? () {
+                  Navigator.pop(context);
+                  widget.onConfirm();
+                }
+              : null,
+          child: const Text('继续'),
+        ),
+      ],
+    );
   }
 }
 

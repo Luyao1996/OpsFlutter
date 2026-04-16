@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/network/dio_helper.dart';
 import '../../../core/config/app_config.dart';
 import '../../../core/storage/token_store.dart';
 import 'desktop_model.dart';
@@ -277,7 +278,10 @@ class ScreenshotApi {
     final token = TokenStore.getToken();
 
     try {
-      final dio = Dio();
+      final dio = createDio(BaseOptions(
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+      ));
       final response = await dio.post(
         url,
         data: {'fun': 'Screenshot', 'data': {}},
@@ -475,7 +479,7 @@ class FileApi {
       if (keyword != null && keyword.isNotEmpty) params['keyword'] = keyword;
 
       final token = TokenStore.getToken();
-      final dio = Dio();
+      final dio = createDio();
       final res = await dio.get(
         _baseUrl,
         queryParameters: params,
@@ -498,7 +502,7 @@ class FileApi {
   Future<ServerFile?> getFileById(int id) async {
     try {
       final token = TokenStore.getToken();
-      final dio = Dio();
+      final dio = createDio();
       final res = await dio.get(
         _baseUrl,
         queryParameters: {'id': id},

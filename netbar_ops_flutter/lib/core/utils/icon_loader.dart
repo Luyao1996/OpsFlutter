@@ -2,11 +2,12 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
+import '../network/dio_helper.dart';
 import '../storage/token_store.dart';
 
 /// 图标加载器，支持 ICO 格式
 class IconLoader {
-  static final Dio _dio = Dio();
+  static final Dio _dio = createDio();
 
   /// 检测是否是 ICO 格式
   /// ICO 文件头: 00 00 01 00
