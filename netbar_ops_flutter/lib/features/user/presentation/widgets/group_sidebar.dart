@@ -202,7 +202,8 @@ class _GroupSidebarState extends State<GroupSidebar> {
                           ),
                         ),
                       ),
-                      if (widget.onDeleteGroup != null)
+                      // 分组21不显示操作按钮（对标 Vue 端 UserPage.vue 第 45 行 group.id !== 21）
+                      if (widget.onDeleteGroup != null && group.id != 21)
                         PopupMenuButton<String>(
                           tooltip: '更多',
                           padding: EdgeInsets.zero,

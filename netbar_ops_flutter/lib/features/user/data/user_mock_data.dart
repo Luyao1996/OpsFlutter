@@ -24,6 +24,24 @@ class RoleObject {
   }
 }
 
+/// 细分权限对象 - 对应后端 GET /role 返回的 permissions 数组中的 {id, name, parent_id}
+/// parent_id 对应 roles 中的角色 id，用于按角色分组展示
+class PermissionObject {
+  final int id;
+  final String name;
+  final int parentId;
+
+  PermissionObject({required this.id, required this.name, this.parentId = 0});
+
+  factory PermissionObject.fromJson(Map<String, dynamic> json) {
+    return PermissionObject(
+      id: int.tryParse((json['id'] ?? 0).toString()) ?? 0,
+      name: (json['name'] ?? '').toString(),
+      parentId: int.tryParse((json['parent_id'] ?? 0).toString()) ?? 0,
+    );
+  }
+}
+
 /// 用户模型 - 适配后端 /api/group 返回的 users 数组
 class User {
   final int id;
@@ -35,6 +53,10 @@ class User {
   final List<RoleObject> roleObjects;
   /// 角色ID列表（从 roleObjects 中提取）
   final List<int> roleIds;
+  /// 后端返回的细分权限对象列表 [{id, name, parent_id}, ...]
+  final List<PermissionObject> permissionObjects;
+  /// 权限ID列表（从 permissionObjects 中提取）
+  final List<int> permissionIds;
   final int? groupId;
   final String? phoneNumber;
   final bool isManager;
@@ -59,6 +81,8 @@ class User {
     required this.roles,
     this.roleObjects = const [],
     this.roleIds = const [],
+    this.permissionObjects = const [],
+    this.permissionIds = const [],
     this.groupId,
     this.phoneNumber,
     this.isManager = false,
@@ -114,6 +138,18 @@ class User {
       roles = rolesList.isNotEmpty ? [UserRole.admin] : [UserRole.user];
     }
 
+    // 解析 permissions 数组 - 后端返回 [{id, name, parent_id}, ...] 格式
+    List<PermissionObject> permissionObjects = [];
+    List<int> permissionIds = [];
+    if (json['permissions'] is List) {
+      final permList = json['permissions'] as List;
+      permissionObjects = permList
+          .where((e) => e is Map<String, dynamic>)
+          .map((e) => PermissionObject.fromJson(e as Map<String, dynamic>))
+          .toList();
+      permissionIds = permissionObjects.map((p) => p.id).where((id) => id > 0).toList();
+    }
+
     return User(
       id: int.tryParse((json['id'] ?? 0).toString()) ?? 0,
       username: username,
@@ -122,6 +158,8 @@ class User {
       roles: roles,
       roleObjects: roleObjects,
       roleIds: roleIds,
+      permissionObjects: permissionObjects,
+      permissionIds: permissionIds,
       groupId: json['group_id'] != null ? int.tryParse(json['group_id'].toString()) : null,
       phoneNumber: json['phone_number']?.toString(),
       isManager: isManager,

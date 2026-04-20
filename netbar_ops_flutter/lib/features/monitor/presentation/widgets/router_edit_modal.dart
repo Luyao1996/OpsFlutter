@@ -150,12 +150,14 @@ class _RouterEditModalState extends ConsumerState<RouterEditModal> {
                   data: (types) => types.isEmpty
                       ? TextFormField(
                           initialValue: _selectedType,
-                          decoration: const InputDecoration(labelText: '路由器类型'),
+                          decoration: const InputDecoration(labelText: '路由器类型 *'),
+                          validator: (v) => (v == null || v.trim().isEmpty) ? '请输入类型' : null,
                           onChanged: (v) => _selectedType = v,
                         )
                       : DropdownButtonFormField<String>(
                           value: types.contains(_selectedType) ? _selectedType : null,
-                          decoration: const InputDecoration(labelText: '路由器类型'),
+                          decoration: const InputDecoration(labelText: '路由器类型 *'),
+                          validator: (v) => (v == null || v.isEmpty) ? '请选择类型' : null,
                           items: types.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
                           onChanged: (v) => setState(() => _selectedType = v),
                         ),
@@ -164,7 +166,8 @@ class _RouterEditModalState extends ConsumerState<RouterEditModal> {
                     debugPrint('[RouterEditModal] scriptTypes error: $e');
                     return TextFormField(
                       initialValue: _selectedType,
-                      decoration: InputDecoration(labelText: '路由器类型（加载失败: $e）'),
+                      decoration: InputDecoration(labelText: '路由器类型 *（加载失败: $e）'),
+                      validator: (v) => (v == null || v.trim().isEmpty) ? '请输入类型' : null,
                       onChanged: (v) => _selectedType = v,
                     );
                   },
@@ -176,15 +179,17 @@ class _RouterEditModalState extends ConsumerState<RouterEditModal> {
                     Expanded(
                       child: TextFormField(
                         controller: _userCtrl,
-                        decoration: const InputDecoration(labelText: '登录账号'),
+                        decoration: const InputDecoration(labelText: '登录账号 *'),
+                        validator: (v) => (v == null || v.trim().isEmpty) ? '请输入账号' : null,
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: TextFormField(
                         controller: _passCtrl,
-                        decoration: const InputDecoration(labelText: '登录密码'),
+                        decoration: const InputDecoration(labelText: '登录密码 *'),
                         obscureText: true,
+                        validator: (v) => (v == null || v.trim().isEmpty) ? '请输入密码' : null,
                       ),
                     ),
                   ],

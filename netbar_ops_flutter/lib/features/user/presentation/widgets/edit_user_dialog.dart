@@ -8,6 +8,13 @@ import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../data/user_api.dart';
 
+/// 业主权限分组ID（对标 Vue 端 UserPage.vue 第 625 行）
+const int _ownerGroupId = 21;
+/// 分组21允许的角色名称（对标 Vue 端第 628 行）
+const List<String> _allowedRolesForOwner = ['网吧管理'];
+/// 分组21允许的权限名称（对标 Vue 端第 631 行）
+const List<String> _allowedPermissionsForOwner = ['远程/唤醒'];
+
 class EditUserDialog extends ConsumerStatefulWidget {
   final User user;
   final List<UserGroup> groups;
@@ -29,7 +36,9 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
   late int? _selectedGroupId;
   late bool _isManager;
   List<int> _selectedRoleIds = [];
+  List<int> _selectedPermissionIds = [];
   List<Role> _roleList = [];
+  List<PermissionObject> _permissionList = [];
   bool _saving = false;
   bool _loadingUser = true;
 
@@ -49,6 +58,25 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
     return auth.user?.isTopManager == true;
   }
 
+  /// 当前选中分组是否为业主权限分组（对标 Vue 端 isGroup21 computed）
+  bool get _isOwnerGroup => _selectedGroupId == _ownerGroupId;
+
+  /// 判断角色是否在业主白名单中
+  bool _isAllowedRole(String roleName) =>
+      _allowedRolesForOwner.contains(roleName);
+
+  /// 判断权限是否在业主白名单中
+  bool _isAllowedPermission(String permName) =>
+      _allowedPermissionsForOwner.contains(permName);
+
+  /// 获取白名单角色的ID列表
+  List<int> get _allowedRoleIds =>
+      _roleList.where((r) => _allowedRolesForOwner.contains(r.name)).map((r) => r.id).toList();
+
+  /// 获取白名单权限的ID列表
+  List<int> get _allowedPermissionIds =>
+      _permissionList.where((p) => _allowedPermissionsForOwner.contains(p.name)).map((p) => p.id).toList();
+
   @override
   void dispose() {
     _nickname.dispose();
@@ -57,29 +85,69 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
     super.dispose();
   }
 
+  /// 加载用户详情（对标 Vue 端 editMember 第 914-972 行）
   Future<void> _loadUserDetails() async {
     setState(() => _loadingUser = true);
     try {
       final api = ref.read(userApiProvider);
-      // 加载角色列表
-      final roles = await api.getRoleList();
-      // 加载用户详情（包含 roles）
+      // 加载角色和权限列表
+      final rolePermResult = await api.getRoleAndPermissionList();
+      // 加载用户详情（包含 roles + permissions）
       final user = await api.getById(widget.user.id);
       if (!mounted) return;
+
+      final userGroupId = user.groupId ?? widget.user.groupId;
+      final isOwner = userGroupId == _ownerGroupId;
+
+      List<int> roleIds = List<int>.from(user.roleIds);
+      List<int> permissionIds = List<int>.from(user.permissionIds);
+
+      // 分组21：只保留允许的角色和权限（对标 Vue 端 editMember 第 940-947 行）
+      if (isOwner) {
+        final allowedRIds = rolePermResult.roles
+            .where((r) => _allowedRolesForOwner.contains(r.name))
+            .map((r) => r.id).toList();
+        roleIds = roleIds.where((id) => allowedRIds.contains(id)).toList();
+
+        final allowedPIds = rolePermResult.permissions
+            .where((p) => _allowedPermissionsForOwner.contains(p.name))
+            .map((p) => p.id).toList();
+        permissionIds = permissionIds.where((id) => allowedPIds.contains(id)).toList();
+      }
+
       setState(() {
-        _roleList = roles;
+        _roleList = rolePermResult.roles;
+        _permissionList = rolePermResult.permissions;
         _nickname.text = user.nickname;
         _username.text = user.username;
-        _selectedGroupId = user.groupId;
+        _selectedGroupId = userGroupId;
         _isManager = user.isManager;
-        // 直接使用用户详情中解析好的 roleIds
-        _selectedRoleIds = List<int>.from(user.roleIds);
+        _selectedRoleIds = roleIds;
+        _selectedPermissionIds = permissionIds;
         _loadingUser = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() => _loadingUser = false);
     }
+  }
+
+  /// 分组切换处理（对标 Vue 端 watch(() => memberForm.group_id) 第 658-681 行）
+  void _onGroupChanged(int? newGroupId) {
+    final oldGroupId = _selectedGroupId;
+    setState(() {
+      _selectedGroupId = newGroupId;
+      if (oldGroupId == _ownerGroupId && newGroupId != _ownerGroupId) {
+        // 从分组21切换到其他分组：全选角色和权限
+        _selectedRoleIds = _roleList.map((r) => r.id).toList();
+        _selectedPermissionIds = _permissionList.map((p) => p.id).toList();
+      } else if (newGroupId == _ownerGroupId) {
+        // 切换到分组21：过滤只保留允许的
+        _selectedRoleIds = _selectedRoleIds.where((id) => _allowedRoleIds.contains(id)).toList();
+        _selectedPermissionIds = _selectedPermissionIds.where((id) => _allowedPermissionIds.contains(id)).toList();
+        _isManager = false;
+      }
+    });
   }
 
   Future<void> _save() async {
@@ -101,6 +169,14 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
       return;
     }
 
+    // 分组21的特殊权限处理（对标 Vue 端 saveMember 第 858-870 行）
+    List<int> finalRoleIds = List.from(_selectedRoleIds);
+    List<int> finalPermissionIds = List.from(_selectedPermissionIds);
+    if (_isOwnerGroup) {
+      finalRoleIds = finalRoleIds.where((id) => _allowedRoleIds.contains(id)).toList();
+      finalPermissionIds = finalPermissionIds.where((id) => _allowedPermissionIds.contains(id)).toList();
+    }
+
     setState(() => _saving = true);
     try {
       final api = ref.read(userApiProvider);
@@ -111,7 +187,8 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
         password: password.isNotEmpty ? password : null,
         groupId: _selectedGroupId,
         isManager: _isManager,
-        roleIds: _selectedRoleIds.isNotEmpty ? _selectedRoleIds : null,
+        roleIds: finalRoleIds.isNotEmpty ? finalRoleIds : null,
+        permissionIds: finalPermissionIds.isNotEmpty ? finalPermissionIds : null,
       );
       if (!mounted) return;
       showTopNotice(context, '保存成功', level: NoticeLevel.success);
@@ -275,6 +352,7 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
                 style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 12),
+              // 管理员开关（对标 Vue 端 :disabled="isGroup21"）
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -282,16 +360,17 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
                   Switch.adaptive(
                     value: _isManager,
                     activeColor: AppColors.iosBlue,
-                    onChanged: (v) => setState(() => _isManager = v),
+                    onChanged: _isOwnerGroup ? null : (v) => setState(() => _isManager = v),
                   ),
                 ],
               ),
+              // 角色分配（对标 Vue 端 :disabled="isGroup21 && !isAllowedRole(role.name)"）
               if (_roleList.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 const Divider(height: 1),
                 const SizedBox(height: 12),
                 const Text(
-                  '权限分配',
+                  '角色分配',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 const SizedBox(height: 8),
@@ -300,10 +379,11 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
                   runSpacing: 8,
                   children: _roleList.map((role) {
                     final selected = _selectedRoleIds.contains(role.id);
+                    final disabled = _isOwnerGroup && !_isAllowedRole(role.name);
                     return FilterChip(
                       label: Text(role.name),
                       selected: selected,
-                      onSelected: (v) {
+                      onSelected: disabled ? null : (v) {
                         setState(() {
                           if (v) {
                             _selectedRoleIds.add(role.id);
@@ -312,17 +392,77 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
                           }
                         });
                       },
-                      selectedColor: AppColors.iosBlue.withOpacity(0.15),
-                      checkmarkColor: AppColors.iosBlue,
+                      selectedColor: disabled ? Colors.grey.shade200 : AppColors.iosBlue.withOpacity(0.15),
+                      checkmarkColor: disabled ? Colors.grey : AppColors.iosBlue,
+                      backgroundColor: disabled ? Colors.grey.shade100 : null,
                     );
                   }).toList(),
                 ),
+              ],
+              // 细分权限（对标 Vue 端 groupedPermissions，按 parent_id 分组展示）
+              if (_permissionList.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Divider(height: 1),
+                const SizedBox(height: 12),
+                const Text(
+                  '细分权限',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 8),
+                ..._buildGroupedPermissions(),
               ],
             ],
           ),
         ),
       ],
     );
+  }
+
+  /// 按 parent_id 分组展示权限（对标 Vue 端 groupedPermissions computed）
+  List<Widget> _buildGroupedPermissions() {
+    final roleMap = <int, String>{};
+    for (final r in _roleList) {
+      roleMap[r.id] = r.name;
+    }
+
+    final groups = <int, List<PermissionObject>>{};
+    for (final p in _permissionList) {
+      groups.putIfAbsent(p.parentId, () => []).add(p);
+    }
+
+    final widgets = <Widget>[];
+    for (final entry in groups.entries) {
+      final groupName = roleMap[entry.key] ?? '其他';
+      widgets.add(Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 4),
+        child: Text(groupName, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black54)),
+      ));
+      widgets.add(Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: entry.value.map((perm) {
+          final selected = _selectedPermissionIds.contains(perm.id);
+          final disabled = _isOwnerGroup && !_isAllowedPermission(perm.name);
+          return FilterChip(
+            label: Text(perm.name),
+            selected: selected,
+            onSelected: disabled ? null : (v) {
+              setState(() {
+                if (v) {
+                  _selectedPermissionIds.add(perm.id);
+                } else {
+                  _selectedPermissionIds.remove(perm.id);
+                }
+              });
+            },
+            selectedColor: disabled ? Colors.grey.shade200 : AppColors.iosBlue.withOpacity(0.15),
+            checkmarkColor: disabled ? Colors.grey : AppColors.iosBlue,
+            backgroundColor: disabled ? Colors.grey.shade100 : null,
+          );
+        }).toList(),
+      ));
+    }
+    return widgets;
   }
 
   Widget _buildLabel(String text) {
@@ -381,7 +521,7 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
           items: widget.groups.map((g) {
             return DropdownMenuItem(value: g.id, child: Text(g.name));
           }).toList(),
-          onChanged: (v) => setState(() => _selectedGroupId = v),
+          onChanged: _onGroupChanged,
         ),
       ),
     );

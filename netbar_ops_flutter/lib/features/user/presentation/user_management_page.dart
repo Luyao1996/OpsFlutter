@@ -217,6 +217,11 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   }
 
   Future<void> _handleDeleteGroup(UserGroup group) async {
+    // 分组21不可操作（对标 Vue 端 editGroup 第 791-793 行）
+    if (group.id == 21) {
+      _showError('该分组不可编辑');
+      return;
+    }
     if (!_isSuperAdmin) {
       _showError('仅总部管理员可删除分组');
       return;

@@ -29,12 +29,12 @@ class TerminalApi {
     return '$d/api$path';
   }
 
-  /// 创建 Dio 实例（带统一日志拦截器 + SSL 证书旁路 + 30s 超时）
+  /// 创建 Dio 实例（带统一日志拦截器 + SSL 证书旁路 + 60s 超时）
   Dio _createProxiedDio() {
     final dio = createDio(BaseOptions(
-      connectTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(seconds: 30),
-      sendTimeout: const Duration(seconds: 30),
+      connectTimeout: const Duration(seconds: 60),
+      receiveTimeout: const Duration(seconds: 60),
+      sendTimeout: const Duration(seconds: 60),
     ));
 
     // 配置 SSL 证书校验（允许自签名证书）

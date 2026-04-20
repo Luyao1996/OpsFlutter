@@ -5,7 +5,7 @@ import '../../../core/network/api_client.dart';
 import 'user_mock_data.dart';
 
 // 重新导出 User 和 UserGroup，确保其他文件只需导入 user_api.dart
-export 'user_mock_data.dart' show User, UserGroup, UserRole, RoleObject, roleLabels;
+export 'user_mock_data.dart' show User, UserGroup, UserRole, RoleObject, PermissionObject, roleLabels;
 
 final userApiProvider = Provider((ref) => UserApi());
 final groupApiProvider = Provider((ref) => GroupApi());
@@ -38,6 +38,13 @@ class TwoFactorAuthResponse {
       qrCode: json['qrCode'] ?? '',
     );
   }
+}
+
+/// 角色+权限列表的统一返回（对应 GET /role 的完整响应）
+class RolePermissionResponse {
+  final List<Role> roles;
+  final List<PermissionObject> permissions;
+  RolePermissionResponse({required this.roles, required this.permissions});
 }
 
 /// 小程序绑定响应
@@ -125,6 +132,7 @@ class UserApi {
     int? groupId,
     bool isManager = false,
     List<int>? roleIds,
+    List<int>? permissionIds,
   }) async {
     final formData = FormData();
     formData.fields.add(MapEntry('username', username));
@@ -137,6 +145,11 @@ class UserApi {
     if (roleIds != null) {
       for (final id in roleIds) {
         formData.fields.add(MapEntry('role_ids[]', id.toString()));
+      }
+    }
+    if (permissionIds != null) {
+      for (final id in permissionIds) {
+        formData.fields.add(MapEntry('permission_ids[]', id.toString()));
       }
     }
 
@@ -152,6 +165,7 @@ class UserApi {
     int? groupId,
     bool? isManager,
     List<int>? roleIds,
+    List<int>? permissionIds,
   }) async {
     final formData = FormData();
     if (username != null) formData.fields.add(MapEntry('username', username));
@@ -168,6 +182,11 @@ class UserApi {
     if (roleIds != null) {
       for (final id in roleIds) {
         formData.fields.add(MapEntry('role_ids[]', id.toString()));
+      }
+    }
+    if (permissionIds != null) {
+      for (final id in permissionIds) {
+        formData.fields.add(MapEntry('permission_ids[]', id.toString()));
       }
     }
 
@@ -189,6 +208,27 @@ class UserApi {
           .toList();
     }
     return [];
+  }
+
+  /// 获取角色和细分权限列表（对应 GET /role，同时返回 roles + permissions）
+  Future<RolePermissionResponse> getRoleAndPermissionList() async {
+    final response = await _client.get('/role');
+    final data = response.data;
+    List<Role> roles = [];
+    List<PermissionObject> permissions = [];
+    if (data is Map<String, dynamic>) {
+      if (data.containsKey('roles')) {
+        roles = (data['roles'] as List)
+            .map((e) => Role.fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+      if (data.containsKey('permissions')) {
+        permissions = (data['permissions'] as List)
+            .map((e) => PermissionObject.fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+    }
+    return RolePermissionResponse(roles: roles, permissions: permissions);
   }
 
   /// 获取双因素认证密钥

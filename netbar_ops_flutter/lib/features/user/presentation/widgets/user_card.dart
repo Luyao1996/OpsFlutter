@@ -165,32 +165,54 @@ class _UserCardState extends State<UserCard> {
               ],
             ),
             const SizedBox(height: 12),
-            // Roles
+            // Roles + Permissions（对标 Vue 端 UserPage.vue 第 106-111 行）
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: widget.user.roles.map((role) {
-                final isAdmin = role == UserRole.admin;
-                final label = roleLabels[role] ?? role.name;
-                return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: isAdmin ? const Color(0xFFFEF2F2) : const Color(0xFFEFF6FF), // bg-red-50 : bg-blue-50
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(
-                      color: isAdmin ? const Color(0xFFFEE2E2) : const Color(0xFFDBEAFE), // border-red-100 : border-blue-100
+              children: [
+                // 角色标签
+                ...widget.user.roles.map((role) {
+                  final isAdmin = role == UserRole.admin;
+                  final label = roleLabels[role] ?? role.name;
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: isAdmin ? const Color(0xFFFEF2F2) : const Color(0xFFEFF6FF), // bg-red-50 : bg-blue-50
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: isAdmin ? const Color(0xFFFEE2E2) : const Color(0xFFDBEAFE), // border-red-100 : border-blue-100
+                      ),
                     ),
-                  ),
-                  child: Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                      color: isAdmin ? const Color(0xFFB91C1C) : const Color(0xFF1D4ED8), // text-red-700 : text-blue-700
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: isAdmin ? const Color(0xFFB91C1C) : const Color(0xFF1D4ED8), // text-red-700 : text-blue-700
+                      ),
                     ),
-                  ),
-                );
-              }).toList(),
+                  );
+                }),
+                // 细分权限标签（对标 Vue 端 tag-perm 样式）
+                ...widget.user.permissionObjects.map((perm) {
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0FDF4), // bg-green-50
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: const Color(0xFFDCFCE7)), // border-green-100
+                    ),
+                    child: Text(
+                      perm.name,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xFF15803D), // text-green-700
+                      ),
+                    ),
+                  );
+                }),
+              ],
             ),
             const Spacer(),
             // Footer - 2FA绑定

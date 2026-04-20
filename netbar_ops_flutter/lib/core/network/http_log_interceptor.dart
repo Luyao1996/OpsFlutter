@@ -1,18 +1,36 @@
+import 'dart:math';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'slow_request_file_logger.dart';
 
 /// 统一 HTTP 日志拦截器
-/// - ≤1s：debug 控制台输出摘要
-/// - >1s：写入本地文件完整报文（release 模式也生效）
+/// - debug 模式：控制台输出完整请求/响应报文（body 2KB 截断，Authorization 不脱敏）
+/// - >1s 慢请求：完整报文写入本地文件（release 模式也生效，文件日志 Authorization 脱敏）
 class HttpLogInterceptor extends Interceptor {
   /// 慢请求阈值（毫秒）
   static const int _slowThresholdMs = 1000;
 
+  /// 控制台 body 截断字节数（2KB）
+  static const int _consoleBodyMaxChars = 2048;
+
+  static final Random _rand = Random.secure();
+
+  /// 生成 32 位无符号十六进制 reqId（16 随机字节）
+  static String _generateReqId() {
+    final bytes = List<int>.generate(16, (_) => _rand.nextInt(256));
+    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  }
+
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    final reqId = _generateReqId();
+    options.extra['_httpLog_reqId'] = reqId;
     options.extra['_httpLog_startTime'] = DateTime.now().millisecondsSinceEpoch;
     options.extra['_httpLog_startDateTime'] = DateTime.now().toIso8601String();
+
+    if (kDebugMode) {
+      _printRequest(reqId, options);
+    }
     handler.next(options);
   }
 
@@ -59,6 +77,8 @@ class HttpLogInterceptor extends Interceptor {
     String? errorType,
     String? errorMessage,
   }) {
+    final reqId =
+        requestOptions.extra['_httpLog_reqId'] as String? ?? '-';
     final startMs =
         requestOptions.extra['_httpLog_startTime'] as int? ?? 0;
     final startDateTime =
@@ -68,15 +88,28 @@ class HttpLogInterceptor extends Interceptor {
     final method = requestOptions.method;
     final uri = requestOptions.uri.toString();
     final status = statusCode ?? 0;
-    final tag = isError ? 'ERR' : 'OK';
 
-    // 控制台摘要（仅 debug 模式）
-    debugPrint('[HTTP][$tag] $status $method $uri ${elapsed}ms (startMs=$startMs)');
+    // 控制台完整响应报文（仅 debug 模式）
+    if (kDebugMode) {
+      _printResponse(
+        reqId: reqId,
+        method: method,
+        uri: uri,
+        status: status,
+        elapsedMs: elapsed,
+        responseHeaders: responseHeaders,
+        responseBody: responseBody,
+        requestOptions: requestOptions,
+        isError: isError,
+        errorType: errorType,
+        errorMessage: errorMessage,
+      );
+    }
 
     // 超过阈值 → 写入文件（release 也生效）
     if (elapsed >= _slowThresholdMs) {
-      debugPrint('[HTTP] 慢请求, 正在写入文件日志...');
       _writeSlowLog(
+        reqId: reqId,
         method: method,
         uri: uri,
         startDateTime: startDateTime,
@@ -94,7 +127,70 @@ class HttpLogInterceptor extends Interceptor {
     }
   }
 
+  /// 控制台打印请求报文（不脱敏 Authorization，body 2KB 截断）
+  void _printRequest(String reqId, RequestOptions options) {
+    final method = options.method;
+    final uri = options.uri.toString();
+    final body = _truncateForConsole(_formatRequestBody(options.data));
+    _debugPrintMultiline([
+      '========== [HTTP][REQ] $method $uri ==========',
+      '>> reqId: $reqId',
+      '>> Headers: ${options.headers}',
+      '>> Body: $body',
+      '======================================================',
+    ]);
+  }
+
+  /// 控制台打印响应报文（不脱敏 Authorization，body 2KB 截断）
+  void _printResponse({
+    required String reqId,
+    required String method,
+    required String uri,
+    required int status,
+    required int elapsedMs,
+    Map<String, List<String>>? responseHeaders,
+    dynamic responseBody,
+    required RequestOptions requestOptions,
+    required bool isError,
+    String? errorType,
+    String? errorMessage,
+  }) {
+    final tag = isError ? 'ERR' : 'OK';
+    final reqBody = _truncateForConsole(_formatRequestBody(requestOptions.data));
+    final respBody = _truncateForConsole(
+      _formatResponseBody(responseBody, requestOptions),
+    );
+    final lines = <String>[
+      '========== [HTTP][$tag] $status $method $uri ${elapsedMs}ms ==========',
+      '   reqId: $reqId',
+      '>> Request Headers: ${requestOptions.headers}',
+      '>> Request Body: $reqBody',
+      '<< Response Headers: ${responseHeaders ?? {}}',
+    ];
+    if (isError) {
+      lines.add('<< ErrorType: $errorType');
+      lines.add('<< ErrorMessage: $errorMessage');
+    }
+    lines.add('<< Response Body: $respBody');
+    lines.add('======================================================');
+    _debugPrintMultiline(lines);
+  }
+
+  /// 逐行 debugPrint，避免 Android logcat 单行截断
+  void _debugPrintMultiline(List<String> lines) {
+    for (final line in lines) {
+      debugPrint(line);
+    }
+  }
+
+  /// 控制台 body 截断（2KB）
+  String _truncateForConsole(String s) {
+    if (s.length <= _consoleBodyMaxChars) return s;
+    return '${s.substring(0, _consoleBodyMaxChars)}\n... [truncated, total ${s.length} chars]';
+  }
+
   void _writeSlowLog({
+    required String reqId,
     required String method,
     required String uri,
     required String startDateTime,
@@ -110,7 +206,7 @@ class HttpLogInterceptor extends Interceptor {
     String? errorMessage,
   }) {
     final buf = StringBuffer();
-    buf.writeln('===== SLOW REQUEST [$startDateTime] =====');
+    buf.writeln('===== SLOW REQUEST [$startDateTime] reqId=$reqId =====');
     buf.writeln('请求发起: $startDateTime');
     buf.writeln('请求结束: $endDateTime');
     buf.writeln('耗时: ${elapsedMs}ms');

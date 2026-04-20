@@ -289,10 +289,14 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     // 切换网吧时重置搜索和筛选状态
     ref.listen<CurrentNetbar>(currentNetbarProvider, (prev, next) {
       if (prev?.id != next.id) {
+        _realtimeTimer?.cancel();
         setState(() {
           _searchQuery = '';
           _filterStatus = 'all';
           _searchController.clear();
+          _screenshotCache.clear();
+          _screenshotRetryCount.clear();
+          _realtimeCache.clear();
         });
       }
     });
@@ -1143,7 +1147,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
               final itemHeight = isPhone ? 160.0 : 200.0;
 
               // Get router list
-              final routers = routersAsync.valueOrNull ?? <RouterInfo>[];
+              final routers = routersAsync.isLoading ? <RouterInfo>[] : (routersAsync.valueOrNull ?? <RouterInfo>[]);
 
               return Wrap(
                 spacing: gap,

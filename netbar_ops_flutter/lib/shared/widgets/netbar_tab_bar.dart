@@ -5,7 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../core/theme/app_theme.dart';
 import '../../features/netbar/presentation/netbar_selector_modal.dart';
+import '../../features/netbar/presentation/widgets/default_win_pwd_dialog.dart';
+import '../../features/netbar/presentation/widgets/batch_reset_pwd_dialog.dart';
+import '../../features/netbar/presentation/widgets/batch_update_program_dialog.dart';
+import '../../features/netbar/presentation/widgets/totp_dialog.dart';
+import '../providers/app_providers.dart';
 import '../providers/netbar_tabs_provider.dart';
+import '../providers/permission_provider.dart';
 
 /// 分组颜色调色板 — 根据 groupName 的 hashCode 稳定映射
 const _groupColors = <Color>[
@@ -101,6 +107,18 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
     );
   }
 
+  void _syncCurrentNetbar() {
+    final activeTab = ref.read(netbarTabsProvider).activeTab;
+    if (activeTab == null) return;
+    final current = ref.read(currentNetbarProvider);
+    if (current.id == activeTab.id) return;
+    ref.read(currentNetbarProvider.notifier).setNetbar(
+      activeTab.id, activeTab.name, activeTab.status,
+      subdomainFull: activeTab.subdomainFull,
+      groupName: activeTab.groupName,
+    );
+  }
+
   void _openNewTab() {
     showDialog(
       context: context,
@@ -111,6 +129,7 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
           selectedId: ref.read(netbarTabsProvider).activeTabId,
           onSelect: (id, name, status, {String? subdomainFull, String? groupName}) {
             ref.read(netbarTabsProvider.notifier).openTab(id, name, status, subdomainFull: subdomainFull, groupName: groupName);
+            _syncCurrentNetbar();
           },
         ),
       ),
@@ -159,10 +178,12 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
         ),
         // 右箭头
         if (_showRightArrow) _buildScrollButton(isLeft: false),
-        // "+"按钮 — 固定在视图按钮左侧
+        // "+"按钮
         _buildAddButton(),
         // 视图按钮 — 打开分组总览弹层
         if (tabsState.tabs.length > 1) _buildViewButton(tabsState),
+        // 设置按钮 — 齿轮图标下拉菜单（最右侧）
+        _buildSettingsButton(),
       ],
     );
   }
@@ -189,9 +210,11 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
         onSwitch: (id) {
           Navigator.of(ctx).pop();
           ref.read(netbarTabsProvider.notifier).switchToTab(id);
+          _syncCurrentNetbar();
         },
         onClose: (id) {
           ref.read(netbarTabsProvider.notifier).closeTab(id);
+          _syncCurrentNetbar();
         },
       ),
     );
@@ -202,8 +225,14 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
 
     return _HoverableTab(
       isActive: isActive,
-      onTap: () => ref.read(netbarTabsProvider.notifier).switchToTab(tab.id),
-      onClose: () => ref.read(netbarTabsProvider.notifier).closeTab(tab.id),
+      onTap: () {
+        ref.read(netbarTabsProvider.notifier).switchToTab(tab.id);
+        _syncCurrentNetbar();
+      },
+      onClose: () {
+        ref.read(netbarTabsProvider.notifier).closeTab(tab.id);
+        _syncCurrentNetbar();
+      },
       onContextMenu: (offset) => _showTabContextMenu(offset, tab),
       tab: tab,
       canClose: canClose,
@@ -242,7 +271,9 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
           notifier.closeTab(tab.id);
         case 'insert_after':
           _openNewTabAfter(tab.id);
+          return;
       }
+      _syncCurrentNetbar();
     });
   }
 
@@ -257,7 +288,6 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
           onSelect: (id, name, status, {String? subdomainFull, String? groupName}) {
             final existing = ref.read(netbarTabsProvider).tabs;
             if (existing.any((t) => t.id == id)) {
-              // 已存在，直接切换
               ref.read(netbarTabsProvider.notifier).switchToTab(id);
             } else {
               final newTab = OpenedNetbarTab(
@@ -270,6 +300,7 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
               );
               ref.read(netbarTabsProvider.notifier).insertTabAfter(afterId, newTab);
             }
+            _syncCurrentNetbar();
           },
         ),
       ),
@@ -278,6 +309,64 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
 
   Widget _buildAddButton() {
     return _HoverableAddButton(onTap: _openNewTab);
+  }
+
+  /// 设置菜单按钮（对标 Vue 端 NetbarPage.vue 第 136-158 行）
+  Widget _buildSettingsButton() {
+    final perm = ref.watch(permissionProvider);
+
+    // 菜单项列表（根据权限动态构建）
+    // 对标 Vue 端 hasSettingItems computed（第 534-536 行）
+    final items = <PopupMenuEntry<String>>[];
+
+    // "默认服务端Windows密码" — 非总部用户 + 有权限时显示
+    // 对标 Vue 端 v-if="!isHQUser && canServerWinPwd"
+    if (!perm.isHQUser && perm.hasDetailPermission('服务端Windows密码')) {
+      items.add(const PopupMenuItem(value: 'defaultWinPwd', child: Text('默认服务端Windows密码', style: TextStyle(fontSize: 14))));
+    }
+
+    // "批量重置Windows密码"
+    if (perm.hasDetailPermission('批量清除Windows密码')) {
+      items.add(const PopupMenuItem(value: 'batchResetPwd', child: Text('批量重置Windows密码', style: TextStyle(fontSize: 14))));
+    }
+
+    // "批量更新程序"
+    if (perm.hasDetailPermission('更新')) {
+      items.add(const PopupMenuItem(value: 'batchUpdate', child: Text('批量更新程序', style: TextStyle(fontSize: 14))));
+    }
+
+    // "生成超级密码"
+    if (perm.hasDetailPermission('生成超级密码')) {
+      items.add(const PopupMenuItem(value: 'superPwd', child: Text('生成超级密码', style: TextStyle(fontSize: 14))));
+    }
+
+    // 无可见项则不渲染按钮
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    return PopupMenuButton<String>(
+      tooltip: '设置',
+      padding: EdgeInsets.zero,
+      offset: const Offset(0, 36),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      onSelected: (value) {
+        switch (value) {
+          case 'defaultWinPwd':
+            showDialog(context: context, builder: (_) => const DefaultWinPwdDialog());
+            break;
+          case 'batchResetPwd':
+            showDialog(context: context, builder: (_) => const BatchResetPwdDialog());
+            break;
+          case 'batchUpdate':
+            showDialog(context: context, builder: (_) => const BatchUpdateProgramDialog());
+            break;
+          case 'superPwd':
+            showDialog(context: context, builder: (_) => const TotpDialog());
+            break;
+        }
+      },
+      itemBuilder: (_) => items,
+      child: _HoverableSettingsIcon(),
+    );
   }
 }
 
@@ -486,6 +575,44 @@ class _HoverableTabState extends State<_HoverableTab> {
 }
 
 /// 带 Hover 效果的添加按钮
+/// 设置按钮图标（样式对齐 _HoverableAddButton）
+class _HoverableSettingsIcon extends StatefulWidget {
+  @override
+  State<_HoverableSettingsIcon> createState() => _HoverableSettingsIconState();
+}
+
+class _HoverableSettingsIconState extends State<_HoverableSettingsIcon> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        width: 32,
+        height: 32,
+        margin: const EdgeInsets.only(left: 4),
+        decoration: BoxDecoration(
+          color: _isHovered ? Colors.grey.shade200 : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: _isHovered ? Colors.grey.shade300 : Colors.grey.shade200,
+          ),
+          boxShadow: _isHovered ? AppShadows.sm : null,
+        ),
+        child: Icon(
+          LucideIcons.settings,
+          size: 16,
+          color: _isHovered ? Colors.grey.shade700 : Colors.grey.shade500,
+        ),
+      ),
+    );
+  }
+}
+
 class _HoverableAddButton extends StatefulWidget {
   final VoidCallback onTap;
 

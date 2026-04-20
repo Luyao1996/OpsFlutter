@@ -38,6 +38,8 @@ class User {
   final bool isEnable;
   final String? phoneNumber;
   final List<Role>? roles;
+  /// 细分权限列表（后端返回 [{id, name}, ...]，用于 hasDetailPermission 检查）
+  final List<Role>? permissions;
   final String? createdAt;
 
   // 兼容旧代码的getter
@@ -66,6 +68,7 @@ class User {
     required this.isEnable,
     this.phoneNumber,
     this.roles,
+    this.permissions,
     this.createdAt,
   });
 
@@ -79,6 +82,7 @@ class User {
       isEnable: json['is_enable'] == true || json['is_enable'] == 1,
       phoneNumber: json['phone_number'],
       roles: (json['roles'] as List?)?.map((e) => Role.fromJson(e as Map<String, dynamic>)).toList(),
+      permissions: (json['permissions'] as List?)?.map((e) => Role.fromJson(e as Map<String, dynamic>)).toList(),
       createdAt: json['created_at'],
     );
   }
@@ -92,6 +96,7 @@ class User {
     'is_enable': isEnable,
     'phone_number': phoneNumber,
     'roles': roles?.map((r) => r.toJson()).toList(),
+    'permissions': permissions?.map((p) => p.toJson()).toList(),
     'created_at': createdAt,
   };
 }

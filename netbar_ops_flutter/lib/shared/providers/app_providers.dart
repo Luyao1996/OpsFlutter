@@ -311,14 +311,6 @@ class CurrentNetbarNotifier extends StateNotifier<CurrentNetbar> {
 
   /// 设置当前网吧
   Future<void> setNetbar(int id, String name, String status, {String? subdomainFull, String? groupName}) async {
-    final netbar = {
-      'id': id,
-      'name': name,
-      'status': status,
-      if (subdomainFull != null) 'subdomain_full': subdomainFull,
-      if (groupName != null) 'group_name': groupName,
-    };
-    await TokenStore.setCurrentNetbar(netbar);
     state = CurrentNetbar(
       id: id,
       name: name,
@@ -327,6 +319,14 @@ class CurrentNetbarNotifier extends StateNotifier<CurrentNetbar> {
       groupName: groupName,
       version: state.version + 1,
     );
+    final netbar = {
+      'id': id,
+      'name': name,
+      'status': status,
+      if (subdomainFull != null) 'subdomain_full': subdomainFull,
+      if (groupName != null) 'group_name': groupName,
+    };
+    await TokenStore.setCurrentNetbar(netbar);
   }
 
   /// 清除当前网吧

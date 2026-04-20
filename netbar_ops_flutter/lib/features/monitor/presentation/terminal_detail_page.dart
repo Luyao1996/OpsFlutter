@@ -1491,33 +1491,36 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       final mark = result['mark'];
       if (mark != null && mark.toString().isNotEmpty) {
         // 构造 VNC URL
-        // 格式: {protocol}//{host}/noVnc/vnc.html?host={seatId}-{subdomain}&port=880&path=websockify&autoconnect=true&encrypt=0&password=hudd416
         final subdomain = domain.split(':')[0]; // 去掉端口
-        final vncUrl = Uri.parse(
-          'https://admin.wwls.net/noVnc/vnc.html'
-          '?host=${terminal.seatId}-$subdomain'
-          '&port=880'
-          '&path=websockify'
-          '&autoconnect=true'
-          '&encrypt=0'
-          '&password=hudd416'
-          '${type == 'view' ? '&view_only=true' : ''}',
+        final vncUrl = Uri.https('admin.wwls.net', '/noVnc/vnc.html', {
+          '网吧分组': netbar.groupName ?? '',
+          '网吧名称': netbar.name ?? '',
+          'host': '${terminal.seatId}-$subdomain',
+          'path': 'websockify',
+          'autoconnect': 'true',
+          'encrypt': '1',
+          'password': 'hudd416',
+          if (type == 'view') 'view_only': 'true',
+        },
         );
+
+        debugPrint('[VNC] 打开URL: ${vncUrl.toString()}');
 
         if (mounted) {
           showTopNotice(context, '正在打开 VNC 远程...', level: NoticeLevel.success);
         }
 
         // 打开浏览器
+        bool launched = false;
         try {
-          await launchUrl(vncUrl, mode: LaunchMode.externalApplication);
-        } catch (_) {
-          // Windows 桌面端 url_launcher channel 可能不可用，用 shell 兜底
-          if (Platform.isWindows) {
-            await Process.run('cmd', ['/c', 'start', '', vncUrl.toString()]);
-          } else {
-            rethrow;
-          }
+          launched = await launchUrl(vncUrl, mode: LaunchMode.externalApplication);
+          debugPrint('[VNC] launchUrl结果: $launched');
+        } catch (e) {
+          debugPrint('[VNC] launchUrl异常: $e');
+        }
+        if (!launched && Platform.isWindows) {
+          debugPrint('[VNC] 使用powershell兜底打开');
+          await Process.run('powershell', ['-Command', 'Start-Process', "'${vncUrl.toString()}'"]);
         }
       } else {
         if (mounted) {

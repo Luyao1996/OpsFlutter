@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import '../../../core/network/api_client.dart';
 
 /// 安全转换为 int（兼容后端返回 String 或 int）
@@ -331,12 +332,43 @@ class NetbarApi {
     });
   }
 
-  /// 清空所有商户登录密码
-  Future<void> clearAllPasswords({required List<int> merchantIds, bool reset = false}) async {
-    await _client.post('/merchant/clearAllPwd', data: {
-      'merchant_ids': merchantIds,
-      'reset': reset ? '1' : '0',
-    });
+  /// 批量清除商户Windows登录密码（FormData 格式，与 Vue 端对齐）
+  Future<void> clearAllPasswords({required List<int> merchantIds}) async {
+    final formData = FormData();
+    for (final id in merchantIds) {
+      formData.fields.add(MapEntry('merchant_ids[]', id.toString()));
+    }
+    await _client.post('/merchant/clearAllPwd', data: formData);
+  }
+
+  /// 批量重置商户Windows登录密码（使用小组默认密码）
+  Future<void> resetAllPasswords({required List<int> merchantIds}) async {
+    final formData = FormData();
+    for (final id in merchantIds) {
+      formData.fields.add(MapEntry('merchant_ids[]', id.toString()));
+    }
+    formData.fields.add(const MapEntry('reset', '0'));
+    await _client.post('/merchant/resetAllPwd', data: formData);
+  }
+
+  /// 批量更新程序
+  Future<void> batchProgramUpdate({required List<int> merchantIds}) async {
+    final formData = FormData();
+    for (final id in merchantIds) {
+      formData.fields.add(MapEntry('merchant_ids[]', id.toString()));
+    }
+    await _client.post('/socket/programBatch', data: formData);
+  }
+
+  /// 生成超级密码（TOTP）
+  /// [time] 格式: "YYYY-MM-DD HH:mm:ss"
+  Future<String> generateTotp({required String time}) async {
+    final response = await _client.get('/merchant/totp', queryParameters: {'time': time});
+    final data = response.data;
+    if (data is Map<String, dynamic> && data.containsKey('totp')) {
+      return data['totp'].toString();
+    }
+    return '';
   }
 
   /// 下载商户配置（返回下载URL）

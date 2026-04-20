@@ -11,6 +11,11 @@ import '../../features/netbar/data/netbar_api.dart';
 import '../../features/dashboard/presentation/dashboard_page.dart';
 import '../../features/dashboard/data/dashboard_api.dart';
 import 'netbar_tab_bar.dart';
+import '../providers/permission_provider.dart';
+import '../../features/netbar/presentation/widgets/default_win_pwd_dialog.dart';
+import '../../features/netbar/presentation/widgets/batch_reset_pwd_dialog.dart';
+import '../../features/netbar/presentation/widgets/batch_update_program_dialog.dart';
+import '../../features/netbar/presentation/widgets/totp_dialog.dart';
 import 'upload_queue_overlay.dart';
 import '../../features/user/presentation/user_profile_dialog.dart';
 import '../services/terminal_window_bridge.dart';
@@ -61,11 +66,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
   Widget build(BuildContext context) {
     final authState = ref.watch(authNotifierProvider);
     final stats = ref.watch(dashboardStatsProvider);
-    final tabsState = ref.watch(netbarTabsProvider);
     final isNarrow = platformHelper.isMobile || context.isNarrow;
-
-    // 同步活动标签到 currentNetbarProvider
-    _syncActiveTab(tabsState);
 
     final content = Column(
       children: [
@@ -88,21 +89,6 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
         ],
       ),
     );
-  }
-
-  void _syncActiveTab(NetbarTabsState tabsState) {
-    final activeTab = tabsState.activeTab;
-    if (activeTab != null) {
-      final currentNetbar = ref.read(currentNetbarProvider);
-      if (currentNetbar.id != activeTab.id) {
-        // 延迟同步避免在 build 中更新状态
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          ref
-              .read(currentNetbarProvider.notifier)
-              .setNetbar(activeTab.id, activeTab.name, activeTab.status, subdomainFull: activeTab.subdomainFull, groupName: activeTab.groupName);
-        });
-      }
-    }
   }
 
   Future<void> _initializeNetbarTabs() async {
@@ -158,6 +144,63 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     } catch (_) {
       // 网络或数据错误时保持现状，避免阻塞 UI
     }
+  }
+
+  /// 手机端设置按钮（与桌面端 netbar_tab_bar 中的逻辑一致）
+  Widget _buildMobileSettingsButton() {
+    final perm = ref.watch(permissionProvider);
+
+    final items = <PopupMenuEntry<String>>[];
+
+    if (!perm.isHQUser && perm.hasDetailPermission('服务端Windows密码')) {
+      items.add(const PopupMenuItem(value: 'defaultWinPwd', child: Text('默认服务端Windows密码', style: TextStyle(fontSize: 14))));
+    }
+    if (perm.hasDetailPermission('批量清除Windows密码')) {
+      items.add(const PopupMenuItem(value: 'batchResetPwd', child: Text('批量重置Windows密码', style: TextStyle(fontSize: 14))));
+    }
+    if (perm.hasDetailPermission('更新')) {
+      items.add(const PopupMenuItem(value: 'batchUpdate', child: Text('批量更新程序', style: TextStyle(fontSize: 14))));
+    }
+    if (perm.hasDetailPermission('生成超级密码')) {
+      items.add(const PopupMenuItem(value: 'superPwd', child: Text('生成超级密码', style: TextStyle(fontSize: 14))));
+    }
+
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    return PopupMenuButton<String>(
+      tooltip: '设置',
+      padding: EdgeInsets.zero,
+      offset: const Offset(0, 40),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      onSelected: (value) {
+        switch (value) {
+          case 'defaultWinPwd':
+            showDialog(context: context, builder: (_) => const DefaultWinPwdDialog());
+            break;
+          case 'batchResetPwd':
+            showDialog(context: context, builder: (_) => const BatchResetPwdDialog());
+            break;
+          case 'batchUpdate':
+            showDialog(context: context, builder: (_) => const BatchUpdateProgramDialog());
+            break;
+          case 'superPwd':
+            showDialog(context: context, builder: (_) => const TotpDialog());
+            break;
+        }
+      },
+      itemBuilder: (_) => items,
+      child: Container(
+        width: 36,
+        height: 36,
+        margin: const EdgeInsets.only(left: 8),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Icon(LucideIcons.settings, size: 16, color: Colors.grey.shade600),
+      ),
+    );
   }
 
   Widget _buildNetbarPicker(bool isNarrow) {
@@ -279,9 +322,10 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
             _buildLeftSection(authState, isNarrow: true),
             const SizedBox(width: 10),
             // 全局页面不显示网吧选择器，网吧页面显示
-            if (!isGlobalPage)
-              Expanded(child: _buildNetbarPicker(true))
-            else
+            if (!isGlobalPage) ...[
+              Expanded(child: _buildNetbarPicker(true)),
+              _buildMobileSettingsButton(),
+            ] else
               const Spacer(),
             const SizedBox(width: 10),
             _buildRightSection(authState, true),

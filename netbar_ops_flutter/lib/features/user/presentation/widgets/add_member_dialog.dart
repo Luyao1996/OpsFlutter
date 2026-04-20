@@ -10,6 +10,13 @@ import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../data/user_api.dart';
 
+/// 业主权限分组ID（对标 Vue 端 UserPage.vue 第 625 行）
+const int _ownerGroupId = 21;
+/// 分组21允许的角色名称（对标 Vue 端第 628 行）
+const List<String> _allowedRolesForOwner = ['网吧管理'];
+/// 分组21允许的权限名称（对标 Vue 端第 631 行）
+const List<String> _allowedPermissionsForOwner = ['远程/唤醒'];
+
 class AddMemberDialog extends ConsumerStatefulWidget {
   final List<UserGroup> groups;
   final int? initialGroupId;
@@ -32,7 +39,9 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
   bool _passwordVisible = true;
   bool _isManager = false;
   List<int> _selectedRoleIds = [];
+  List<int> _selectedPermissionIds = [];
   List<Role> _roleList = [];
+  List<PermissionObject> _permissionList = [];
   bool _creating = false;
   bool _loadingRoles = true;
 
@@ -50,6 +59,25 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
     return auth.user?.isTopManager == true;
   }
 
+  /// 当前选中分组是否为业主权限分组（对标 Vue 端 isGroup21 computed）
+  bool get _isOwnerGroup => _selectedGroupId == _ownerGroupId;
+
+  /// 判断角色是否在业主白名单中（对标 Vue 端 isAllowedRole）
+  bool _isAllowedRole(String roleName) =>
+      _allowedRolesForOwner.contains(roleName);
+
+  /// 判断权限是否在业主白名单中（对标 Vue 端 isAllowedPermission）
+  bool _isAllowedPermission(String permName) =>
+      _allowedPermissionsForOwner.contains(permName);
+
+  /// 获取白名单角色的ID列表（对标 Vue 端 getAllowedRoleIds）
+  List<int> get _allowedRoleIds =>
+      _roleList.where((r) => _allowedRolesForOwner.contains(r.name)).map((r) => r.id).toList();
+
+  /// 获取白名单权限的ID列表（对标 Vue 端 getAllowedPermissionIds）
+  List<int> get _allowedPermissionIds =>
+      _permissionList.where((p) => _allowedPermissionsForOwner.contains(p.name)).map((p) => p.id).toList();
+
   @override
   void dispose() {
     _username.dispose();
@@ -62,11 +90,21 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
     setState(() => _loadingRoles = true);
     try {
       final api = ref.read(userApiProvider);
-      final roles = await api.getRoleList();
+      final result = await api.getRoleAndPermissionList();
       if (!mounted) return;
       setState(() {
-        _roleList = roles;
+        _roleList = result.roles;
+        _permissionList = result.permissions;
         _loadingRoles = false;
+        // 初始化默认选中（对标 Vue 端 openMemberModal 第 690-720 行）
+        if (_isOwnerGroup) {
+          _selectedRoleIds = _allowedRoleIds;
+          _selectedPermissionIds = _allowedPermissionIds;
+          _isManager = false;
+        } else {
+          _selectedRoleIds = _roleList.map((r) => r.id).toList();
+          _selectedPermissionIds = _permissionList.map((p) => p.id).toList();
+        }
       });
     } catch (e) {
       if (!mounted) return;
@@ -78,6 +116,24 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
     const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     final rnd = Random.secure();
     return List.generate(8, (_) => chars[rnd.nextInt(chars.length)]).join();
+  }
+
+  /// 分组切换处理（对标 Vue 端 watch(() => memberForm.group_id) 第 658-681 行）
+  void _onGroupChanged(int? newGroupId) {
+    final oldGroupId = _selectedGroupId;
+    setState(() {
+      _selectedGroupId = newGroupId;
+      if (oldGroupId == _ownerGroupId && newGroupId != _ownerGroupId) {
+        // 从分组21切换到其他分组：全选角色和权限
+        _selectedRoleIds = _roleList.map((r) => r.id).toList();
+        _selectedPermissionIds = _permissionList.map((p) => p.id).toList();
+      } else if (newGroupId == _ownerGroupId) {
+        // 切换到分组21：过滤只保留允许的
+        _selectedRoleIds = _selectedRoleIds.where((id) => _allowedRoleIds.contains(id)).toList();
+        _selectedPermissionIds = _selectedPermissionIds.where((id) => _allowedPermissionIds.contains(id)).toList();
+        _isManager = false;
+      }
+    });
   }
 
   Future<void> _handleCreate() async {
@@ -98,6 +154,14 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
       return;
     }
 
+    // 分组21的特殊权限处理（对标 Vue 端 saveMember 第 858-870 行）
+    List<int> finalRoleIds = List.from(_selectedRoleIds);
+    List<int> finalPermissionIds = List.from(_selectedPermissionIds);
+    if (_isOwnerGroup) {
+      finalRoleIds = finalRoleIds.where((id) => _allowedRoleIds.contains(id)).toList();
+      finalPermissionIds = finalPermissionIds.where((id) => _allowedPermissionIds.contains(id)).toList();
+    }
+
     setState(() => _creating = true);
     try {
       final api = ref.read(userApiProvider);
@@ -107,7 +171,8 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
         nickname: name,
         groupId: _selectedGroupId,
         isManager: _isManager,
-        roleIds: _selectedRoleIds.isNotEmpty ? _selectedRoleIds : null,
+        roleIds: finalRoleIds.isNotEmpty ? finalRoleIds : null,
+        permissionIds: finalPermissionIds.isNotEmpty ? finalPermissionIds : null,
       );
       if (!mounted) return;
       showTopNotice(context, '用户创建成功', level: NoticeLevel.success);
@@ -223,6 +288,7 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
                 style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 12),
+              // 管理员开关（对标 Vue 端 :disabled="isGroup21"）
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -230,16 +296,17 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
                   Switch.adaptive(
                     value: _isManager,
                     activeColor: AppColors.iosBlue,
-                    onChanged: (v) => setState(() => _isManager = v),
+                    onChanged: _isOwnerGroup ? null : (v) => setState(() => _isManager = v),
                   ),
                 ],
               ),
+              // 角色分配（对标 Vue 端 :disabled="isGroup21 && !isAllowedRole(role.name)"）
               if (_roleList.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 const Divider(height: 1),
                 const SizedBox(height: 12),
                 const Text(
-                  '权限分配',
+                  '角色分配',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 const SizedBox(height: 8),
@@ -248,10 +315,11 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
                   runSpacing: 8,
                   children: _roleList.map((role) {
                     final selected = _selectedRoleIds.contains(role.id);
+                    final disabled = _isOwnerGroup && !_isAllowedRole(role.name);
                     return FilterChip(
                       label: Text(role.name),
                       selected: selected,
-                      onSelected: (v) {
+                      onSelected: disabled ? null : (v) {
                         setState(() {
                           if (v) {
                             _selectedRoleIds.add(role.id);
@@ -260,17 +328,79 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
                           }
                         });
                       },
-                      selectedColor: AppColors.iosBlue.withOpacity(0.15),
-                      checkmarkColor: AppColors.iosBlue,
+                      selectedColor: disabled ? Colors.grey.shade200 : AppColors.iosBlue.withOpacity(0.15),
+                      checkmarkColor: disabled ? Colors.grey : AppColors.iosBlue,
+                      backgroundColor: disabled ? Colors.grey.shade100 : null,
                     );
                   }).toList(),
                 ),
+              ],
+              // 细分权限（对标 Vue 端 groupedPermissions，按 parent_id 分组展示）
+              if (_permissionList.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Divider(height: 1),
+                const SizedBox(height: 12),
+                const Text(
+                  '细分权限',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 8),
+                ..._buildGroupedPermissions(),
               ],
             ],
           ),
         ),
       ],
     );
+  }
+
+  /// 按 parent_id 分组展示权限（对标 Vue 端 groupedPermissions computed）
+  List<Widget> _buildGroupedPermissions() {
+    // 构建角色ID→名称映射
+    final roleMap = <int, String>{};
+    for (final r in _roleList) {
+      roleMap[r.id] = r.name;
+    }
+
+    // 按 parent_id 分组
+    final groups = <int, List<PermissionObject>>{};
+    for (final p in _permissionList) {
+      groups.putIfAbsent(p.parentId, () => []).add(p);
+    }
+
+    final widgets = <Widget>[];
+    for (final entry in groups.entries) {
+      final groupName = roleMap[entry.key] ?? '其他';
+      widgets.add(Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 4),
+        child: Text(groupName, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black54)),
+      ));
+      widgets.add(Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: entry.value.map((perm) {
+          final selected = _selectedPermissionIds.contains(perm.id);
+          final disabled = _isOwnerGroup && !_isAllowedPermission(perm.name);
+          return FilterChip(
+            label: Text(perm.name),
+            selected: selected,
+            onSelected: disabled ? null : (v) {
+              setState(() {
+                if (v) {
+                  _selectedPermissionIds.add(perm.id);
+                } else {
+                  _selectedPermissionIds.remove(perm.id);
+                }
+              });
+            },
+            selectedColor: disabled ? Colors.grey.shade200 : AppColors.iosBlue.withOpacity(0.15),
+            checkmarkColor: disabled ? Colors.grey : AppColors.iosBlue,
+            backgroundColor: disabled ? Colors.grey.shade100 : null,
+          );
+        }).toList(),
+      ));
+    }
+    return widgets;
   }
 
   Widget _buildLabel(String text) {
@@ -384,7 +514,7 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
           items: widget.groups.map((g) {
             return DropdownMenuItem(value: g.id, child: Text(g.name));
           }).toList(),
-          onChanged: (v) => setState(() => _selectedGroupId = v),
+          onChanged: _onGroupChanged,
         ),
       ),
     );
