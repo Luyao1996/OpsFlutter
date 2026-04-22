@@ -17,6 +17,7 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:window_manager/window_manager.dart';
 import 'dart:ffi' as ffi hide Size;
 import 'package:win32/win32.dart' as win32;
+import '../../../../core/logging/webrtc_crash_logger.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../data/terminal_api.dart';
@@ -1331,7 +1332,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
               LucideIcons.monitor,
               AppColors.iosBlue,
               Colors.white,
-              () => _openVncRemote(terminal, type: 'control'),
+              () => _handleVncButtonTap(terminal),
             ),
           ),
         ],
@@ -1355,9 +1356,45 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           LucideIcons.monitor,
           AppColors.iosBlue,
           Colors.white,
-          () => _openVncRemote(terminal, type: 'control'),
+          () => _handleVncButtonTap(terminal),
         ),
       ],
+    );
+  }
+
+  /// 点击 VNC 按钮：先弹出"是否以只读方式打开"的选择框，再根据结果打开
+  Future<void> _handleVncButtonTap(Terminal terminal) async {
+    final readOnly = await _showVncReadOnlyDialog();
+    if (readOnly == null) return; // 用户取消
+    await _openVncRemote(terminal, type: readOnly ? 'view' : 'control');
+  }
+
+  /// 询问用户是否以只读方式打开 VNC。
+  /// 返回：true=只读，false=控制模式，null=取消
+  Future<bool?> _showVncReadOnlyDialog() {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('VNC 远程桌面'),
+          content: const Text('是否以"只读"模式打开？\n只读模式下仅能观看画面，无法操作鼠标键盘。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(null),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('否（控制模式）'),
+            ),
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: AppColors.iosBlue),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('是（只读）'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -1365,10 +1402,31 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   Future<void> _openWebRTCRemote(Terminal terminal) async {
     final netbar = ref.read(currentNetbarProvider);
     final domain = netbar.subdomainFull;
+    final ctxId =
+        'netbar_${netbar.id ?? 'null'}_seat_${terminal.seatId.isEmpty ? 'empty' : terminal.seatId}';
     if (domain == null || domain.isEmpty) {
+      WebRtcCrashLogger.I.log(
+        'WARN',
+        'webrtc',
+        'open_remote',
+        ctxId,
+        'abort domainMissing netbarId=${netbar.id} netbarName=${netbar.name} subdomainFull=$domain',
+      );
       showTopNotice(context, '网吧域名缺失，无法远程', level: NoticeLevel.error);
       return;
     }
+
+    final authState = ref.read(authNotifierProvider);
+    final user = authState.user;
+    WebRtcCrashLogger.I.log(
+      'INFO',
+      'webrtc',
+      'open_remote',
+      ctxId,
+      "entry netbarId=${netbar.id} netbarName='${netbar.name}' groupName='${netbar.groupName}' "
+          "terminalId=${terminal.id} seatId='${terminal.seatId}' seatIdLen=${terminal.seatId.length} "
+          "terminalName='${terminal.name}' domain='$domain' userNickname='${user?.nickname}' userName='${user?.name}'",
+    );
 
     // 显示 loading
     showDialog(
@@ -1380,10 +1438,6 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     );
 
     try {
-      // 获取用户信息
-      final authState = ref.read(authNotifierProvider);
-      final user = authState.user;
-
       // 发送 task 命令
       final api = ref.read(terminalApiProvider);
       final result = await api.remote(
@@ -1402,16 +1456,41 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
       // 检查返回结果
       final mark = result['mark'];
+      WebRtcCrashLogger.I.log(
+        'INFO',
+        'webrtc',
+        'open_remote',
+        ctxId,
+        'api_return mark=${mark} markType=${mark?.runtimeType} '
+            'resultKeys=${result.keys.toList()} '
+            'resultJson=${WebRtcCrashLogger.I.jsonOrString(result)}',
+      );
       if (mark != null && mark.toString().isNotEmpty) {
         // 构造 WebRTC 参数并打开
         final subdomain = domain.split('.')[0];
         final peerId = '${terminal.seatId}-$subdomain';
         final wsUrl = 'wss://webrtc.03kan.com:443/ws?Peer=$peerId&type=Client';
+        WebRtcCrashLogger.I.log(
+          'INFO',
+          'webrtc',
+          'open_remote',
+          ctxId,
+          "built_url subdomain='$subdomain' subdomainLen=${subdomain.length} "
+              "peerId='$peerId' peerIdLen=${peerId.length} wsUrl='$wsUrl'",
+        );
 
         _isWebRTCActive = true;
         // 进入 WebRTC 时暂停截图和心跳（远程桌面已有实时画面，无需后台刷新）
         _stopScreenshotTimer();
         _heartbeatTimer?.cancel();
+        WebRtcCrashLogger.I.log(
+          'INFO',
+          'webrtc',
+          'open_remote',
+          ctxId,
+          "pushing_screen serverId='webrtc_${terminal.id}' serverName='WebRTC ${terminal.name}' "
+              "host='webrtc.03kan.com' port=443 windowId=${widget.windowId} isStandaloneWindow=${widget.isStandaloneWindow}",
+        );
         await Navigator.push(
           context,
           MaterialPageRoute(
@@ -1441,16 +1520,37 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           ),
         );
         _isWebRTCActive = false;
+        WebRtcCrashLogger.I.log(
+          'INFO',
+          'webrtc',
+          'open_remote',
+          ctxId,
+          'exited_screen resume_heartbeat',
+        );
         // 退出 WebRTC，恢复心跳定时器
         _heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (_) {
           _refreshHeartbeat(widget.terminalId, silent: true);
         });
       } else {
+        WebRtcCrashLogger.I.log(
+          'WARN',
+          'webrtc',
+          'open_remote',
+          ctxId,
+          'abort invalid_mark mark=$mark',
+        );
         if (mounted) {
           showTopNotice(context, '远程连接失败：未返回有效标识', level: NoticeLevel.error);
         }
       }
-    } catch (e) {
+    } catch (e, s) {
+      WebRtcCrashLogger.I.log(
+        'ERROR',
+        'webrtc',
+        'open_remote',
+        ctxId,
+        'exception e=$e stack=${s.toString().split('\n').take(10).join(' | ')}',
+      );
       // 关闭 loading
       if (mounted) Navigator.pop(context);
       if (mounted) {
