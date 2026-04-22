@@ -6,8 +6,11 @@ import '../../data/router_api.dart';
 class RouterEditModal extends ConsumerStatefulWidget {
   final RouterInfo? router; // null = create mode
   final RouterApi api;
+  /// 打开 modal 时所处网吧的 id；scriptTypesProvider 按此 key 取数，
+  /// 保证 modal 操作与指定网吧绑定，不随后续切换变化。
+  final int? netbarId;
 
-  const RouterEditModal({super.key, this.router, required this.api});
+  const RouterEditModal({super.key, this.router, required this.api, required this.netbarId});
 
   @override
   ConsumerState<RouterEditModal> createState() => _RouterEditModalState();
@@ -111,7 +114,7 @@ class _RouterEditModalState extends ConsumerState<RouterEditModal> {
 
   @override
   Widget build(BuildContext context) {
-    final typesAsync = ref.watch(scriptTypesProvider);
+    final typesAsync = ref.watch(scriptTypesProvider(widget.netbarId));
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),

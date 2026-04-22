@@ -1056,27 +1056,52 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     }
   }
 
-  void _openRouterInBrowser(RouterInfo router) {
+  void _openRouterInBrowser(RouterInfo router, {required int? expectedNetbarId}) {
     final token = TokenStore.getToken() ?? '';
-    var proxy = router.proxyUrl;
-    final url = '$proxy?Authorization=Bearer%20$token';
-    launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    final netbar = ref.read(currentNetbarProvider);
+    // 不变量：卡片渲染时绑定的 netbarId 必须与点击瞬间的当前 netbar 一致。
+    // 这是"路由器数据跨网吧串台"bug 的最后一道防线：
+    //   - debug：assert 直接崩溃，任何未来重构破坏该不变量都会在开发期暴露；
+    //   - release：assert 被擦除，保留 warning + return，用户看到提示而不是打开错误路由器。
+    if (expectedNetbarId != netbar.id) {
+      assert(false,
+          '[Router] netbarId 不变量被破坏：expected=$expectedNetbarId current=${netbar.id} proxyUrl=${router.proxyUrl}');
+      debugPrint('[Router] abort open: expectedNetbarId=$expectedNetbarId currentId=${netbar.id}');
+      if (mounted) {
+        showTopNotice(context, '网吧已切换，请重新操作', level: NoticeLevel.warning);
+      }
+      return;
+    }
+    final uri = Uri.parse(router.proxyUrl);
+    final newUri = uri.replace(
+      host: uri.host.toLowerCase(),
+      path: '/embed/',
+      queryParameters: {
+        'netbarGroup': netbar.groupName ?? '',
+        'netbarName': netbar.name ?? '',
+        'Authorization': 'Bearer $token',
+      },
+    );
+    debugPrint('[Router] opening url=$newUri');
+    launchUrl(newUri, mode: LaunchMode.externalApplication);
   }
 
-  void _showRouterEditModal({RouterInfo? router}) {
-    final api = ref.read(routerApiProvider);
+  void _showRouterEditModal({RouterInfo? router, required int? netbarId}) {
+    if (netbarId == null) return;
+    final api = ref.read(routerApiProvider(netbarId));
     if (api == null) return;
     showDialog<bool>(
       context: context,
-      builder: (_) => RouterEditModal(api: api, router: router),
+      builder: (_) => RouterEditModal(api: api, router: router, netbarId: netbarId),
     ).then((saved) {
-      if (saved == true) ref.refresh(routersProvider);
+      if (saved == true) ref.refresh(routersProvider(netbarId));
     });
   }
 
   Widget _buildDevicesSection(List<Terminal> devices, {EdgeInsets? padding}) {
-    final routersAsync = ref.watch(routersProvider);
-    final routerApi = ref.watch(routerApiProvider);
+    final netbarId = ref.watch(currentNetbarIdProvider);
+    final routersAsync = ref.watch(routersProvider(netbarId));
+    final routerApi = ref.watch(routerApiProvider(netbarId));
 
     return Padding(
       padding: padding ?? const EdgeInsets.all(32),
@@ -1146,8 +1171,9 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
               final itemWidth = (width - (columns - 1) * gap) / columns;
               final itemHeight = isPhone ? 160.0 : 200.0;
 
-              // Get router list
-              final routers = routersAsync.isLoading ? <RouterInfo>[] : (routersAsync.valueOrNull ?? <RouterInfo>[]);
+              // Get router list：严格只取 AsyncData 分支，
+              // 避免 AsyncError(previous: 旧网吧列表) 时把上个网吧的残留渲染出来。
+              final routers = routersAsync.whenOrNull(data: (v) => v) ?? const <RouterInfo>[];
 
               return Wrap(
                 spacing: gap,
@@ -1173,11 +1199,14 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
                       width: itemWidth,
                       height: itemHeight,
                       child: RouterCard(
+                        // netbarId 入 key：切网吧时强制销毁旧 State，
+                        // 避免 polling 用旧 api 查旧网吧 traffic。
+                        key: ValueKey('router-$netbarId-${r.id}'),
                         router: r,
                         api: routerApi,
                         active: _devicesVisible,
-                        onTap: () => _openRouterInBrowser(r),
-                        onEdit: () => _showRouterEditModal(router: r),
+                        onTap: () => _openRouterInBrowser(r, expectedNetbarId: netbarId),
+                        onEdit: () => _showRouterEditModal(router: r, netbarId: netbarId),
                       ),
                     ),
                   ),
@@ -1191,10 +1220,11 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
   }
 
   Widget _buildAddRouterButton({required bool compact}) {
+    final netbarId = ref.watch(currentNetbarIdProvider);
     return SizedBox(
       height: 32,
       child: ElevatedButton.icon(
-        onPressed: () => _showRouterEditModal(),
+        onPressed: netbarId == null ? null : () => _showRouterEditModal(netbarId: netbarId),
         icon: const Icon(LucideIcons.plus, size: 14),
         label: Text(compact ? '路由器' : '新增路由器', style: const TextStyle(fontSize: 12)),
         style: ElevatedButton.styleFrom(
@@ -1209,13 +1239,14 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
   }
 
   Widget _buildDevicesRefreshButton() {
+    final netbarId = ref.watch(currentNetbarIdProvider);
     return SizedBox(
       width: 32,
       height: 32,
       child: IconButton(
         onPressed: () {
           ref.refresh(terminalsProvider);
-          ref.refresh(routersProvider);
+          if (netbarId != null) ref.refresh(routersProvider(netbarId));
         },
         icon: const Icon(LucideIcons.refreshCw, size: 14),
         style: IconButton.styleFrom(

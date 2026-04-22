@@ -339,3 +339,9 @@ class CurrentNetbarNotifier extends StateNotifier<CurrentNetbar> {
 final currentNetbarProvider = StateNotifierProvider<CurrentNetbarNotifier, CurrentNetbar>((ref) {
   return CurrentNetbarNotifier();
 });
+
+/// 仅暴露"当前网吧 id"，作为 family provider 的稳定 key。
+/// 只有 id 变化时才通知下游，避免因无关字段变化误触 family 重建。
+final currentNetbarIdProvider = Provider<int?>((ref) {
+  return ref.watch(currentNetbarProvider.select((n) => n.id));
+});

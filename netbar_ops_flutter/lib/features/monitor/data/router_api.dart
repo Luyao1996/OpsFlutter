@@ -218,24 +218,39 @@ class RouterApi {
 
 // ── Providers ──
 
-final routerApiProvider = Provider<RouterApi?>((ref) {
+/// 按 netbarId 隔离的 RouterApi。
+/// 每个网吧对应独立实例；切网吧后旧 family 没有订阅者会 autoDispose，previous 不跨网吧保留。
+final routerApiProvider =
+    Provider.autoDispose.family<RouterApi?, int?>((ref, netbarId) {
+  if (netbarId == null) return null;
   final netbar = ref.watch(currentNetbarProvider);
+  // 严格校验：family key 必须与当前 state 对齐，否则返回 null，
+  // 防止极端竞态下"旧 key 拿到新网吧数据"的串台。
+  if (netbar.id != netbarId) return null;
   final domain = netbar.subdomainFull;
   if (domain == null || domain.isEmpty) return null;
   return RouterApi(subdomainFull: domain);
 });
 
-final routersProvider = FutureProvider<List<RouterInfo>>((ref) async {
-  final api = ref.watch(routerApiProvider);
-  if (api == null) return [];
-  return api.getAll();
-});
+/// 按 netbarId 隔离的路由器列表。
+final routersProvider =
+    FutureProvider.autoDispose.family<List<RouterInfo>, int?>(
+  (ref, netbarId) async {
+    final api = ref.watch(routerApiProvider(netbarId));
+    if (api == null) return const [];
+    return api.getAll();
+  },
+);
 
-final scriptTypesProvider = FutureProvider<List<String>>((ref) async {
-  final api = ref.watch(routerApiProvider);
-  if (api == null) return [];
-  return api.getScriptTypes();
-});
+/// 按 netbarId 隔离的脚本类型列表。
+final scriptTypesProvider =
+    FutureProvider.autoDispose.family<List<String>, int?>(
+  (ref, netbarId) async {
+    final api = ref.watch(routerApiProvider(netbarId));
+    if (api == null) return const [];
+    return api.getScriptTypes();
+  },
+);
 
 // ── Helpers ──
 
