@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/responsive/responsive.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/providers/netbar_tabs_provider.dart';
+import '../../netbar/presentation/netbar_selector_modal.dart';
 import '../data/dashboard_api.dart';
 import 'widgets/stat_card.dart';
 import 'widgets/trend_chart.dart';
@@ -138,6 +141,7 @@ class DashboardPage extends ConsumerWidget {
                         LucideIcons.server,
                         Colors.indigo,
                         compact: isPhone,
+                        onTap: () => _showNetbarSelector(context, ref),
                       ),
                       _buildStatItem(
                         itemWidth,
@@ -193,22 +197,58 @@ class DashboardPage extends ConsumerWidget {
     IconData icon,
     Color color, {
     required bool compact,
+    VoidCallback? onTap,
   }) {
     final cardHeight = compact ? 120.0 : 150.0;
+    final radius = BorderRadius.circular(compact ? 16 : 20);
+    final card = StatCard(
+      title: title,
+      value: value,
+      subtext: compact ? null : subtext,
+      icon: icon,
+      color: color,
+      trend: null,
+      compact: compact,
+    );
 
     return SizedBox(
       width: width,
       height: cardHeight,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(compact ? 16 : 20),
-        child: StatCard(
-          title: title,
-          value: value,
-          subtext: compact ? null : subtext,
-          icon: icon,
-          color: color,
-          trend: null,
-          compact: compact,
+        borderRadius: radius,
+        child: onTap == null
+            ? card
+            : Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: onTap,
+                  borderRadius: radius,
+                  child: card,
+                ),
+              ),
+      ),
+    );
+  }
+
+  void _showNetbarSelector(BuildContext context, WidgetRef ref) {
+    final tabsNotifier = ref.read(netbarTabsProvider.notifier);
+    final current = ref.read(currentNetbarProvider);
+    final isMobile = MediaQuery.of(context).size.width < 768;
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: EdgeInsets.all(isMobile ? 12 : 32),
+        child: NetbarSelectorModal(
+          selectedId: current.id,
+          onSelect: (id, name, status, {subdomainFull, groupName}) {
+            tabsNotifier.openTab(id, name, status,
+                subdomainFull: subdomainFull, groupName: groupName);
+            ref.read(currentNetbarProvider.notifier).setNetbar(id, name, status,
+                subdomainFull: subdomainFull, groupName: groupName);
+            context.go('/monitor');
+          },
+          isMobile: isMobile,
         ),
       ),
     );

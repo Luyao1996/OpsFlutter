@@ -5,6 +5,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../shared/widgets/search_field.dart';
 import '../data/netbar_api.dart';
+import '../data/netbar_pinyin_matcher.dart';
 import 'widgets/create_netbar_modal.dart';
 import 'widgets/netbar_list_view.dart';
 import 'widgets/netbar_grid_view.dart';
@@ -127,16 +128,10 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
                 ),
               ),
               data: (netbars) {
-                // Filter logic
-                final filtered = netbars.where((n) {
-                  final q = _searchQuery.toLowerCase();
-                  final matchesSearch =
-                      n.name.toLowerCase().contains(q) ||
-                      n.id.toString().contains(q) ||
-                      n.code.toLowerCase().contains(q);
-                  // TODO: Add group filter logic if group data is available
-                  return matchesSearch;
-                }).toList();
+                // Filter logic: 三级匹配 (name → pinyin_full → pinyin) + id/token/group 兜底
+                final filtered = netbars
+                    .where((n) => NetbarMatcher.match(n, _searchQuery))
+                    .toList();
 
                 if (filtered.isEmpty) {
                   return const Center(child: Text('未找到匹配的网吧'));

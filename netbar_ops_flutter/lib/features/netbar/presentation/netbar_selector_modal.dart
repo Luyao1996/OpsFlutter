@@ -5,6 +5,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/utils/top_notice.dart';
 import '../data/netbar_api.dart';
+import '../data/netbar_pinyin_matcher.dart';
 import 'group_picker.dart';
 import 'edit_netbar_modal.dart';
 
@@ -77,13 +78,7 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
   List<Netbar> _filterAndSort(List<Netbar> netbars) {
     var result = netbars.where((n) {
       if (_selectedGroup != '全部分组' && n.group != _selectedGroup) return false;
-      if (_searchQuery.isNotEmpty) {
-        final q = _searchQuery.toLowerCase();
-        return n.name.toLowerCase().contains(q) ||
-            n.id.toString().contains(q) ||
-            n.code.toLowerCase().contains(q);
-      }
-      return true;
+      return NetbarMatcher.match(n, _searchQuery);
     }).toList();
 
     result.sort((a, b) {

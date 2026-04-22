@@ -7,6 +7,8 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/logging/logging_binary_messenger.dart';
+import 'core/logging/webrtc_crash_logger.dart';
 import 'core/storage/token_store.dart';
 import 'core/network/api_client.dart';
 import 'core/theme/app_theme.dart';
@@ -32,10 +34,18 @@ Future<void> _writeCrashLog(String error, String stack) async {
 
 void main(List<String> args) async {
   runZonedGuarded(() async {
-    WidgetsFlutterBinding.ensureInitialized();
+    LoggingWidgetsFlutterBinding.ensureInitialized();
+    await WebRtcCrashLogger.I.init();
 
     FlutterError.onError = (details) {
       FlutterError.presentError(details);
+      WebRtcCrashLogger.I.log(
+        'ERROR',
+        'flutter',
+        'onError',
+        '-',
+        'exception=${details.exceptionAsString()} stack=${details.stack?.toString().split('\n').take(10).join(' | ') ?? 'no stack'}',
+      );
       _writeCrashLog(
         details.exceptionAsString(),
         details.stack?.toString() ?? 'no stack',
@@ -43,6 +53,13 @@ void main(List<String> args) async {
     };
 
     PlatformDispatcher.instance.onError = (error, stack) {
+      WebRtcCrashLogger.I.log(
+        'ERROR',
+        'flutter',
+        'platformError',
+        '-',
+        'error=$error stack=${stack.toString().split('\n').take(10).join(' | ')}',
+      );
       _writeCrashLog(error.toString(), stack.toString());
       return true;
     };
@@ -109,6 +126,13 @@ void main(List<String> args) async {
 
   runApp(const ProviderScope(child: NetbarOpsApp()));
   }, (error, stack) {
+    WebRtcCrashLogger.I.log(
+      'ERROR',
+      'flutter',
+      'zoneGuarded',
+      '-',
+      'error=$error stack=${stack.toString().split('\n').take(10).join(' | ')}',
+    );
     _writeCrashLog(error.toString(), stack.toString());
   });
 }
