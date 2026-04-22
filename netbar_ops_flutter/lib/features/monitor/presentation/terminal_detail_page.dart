@@ -4,7 +4,7 @@ import 'dart:io' show Platform, Process;
 import 'dart:typed_data';
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, immutable;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -39,8 +39,35 @@ import 'widgets/network_monitor_tab.dart';
 import 'widgets/log_manager_tab.dart';
 
 
-final terminalDetailProvider = FutureProvider.autoDispose.family<Terminal, int>((ref, terminalId) async {
+/// 终端详情 provider 的复合 key：(netbarId, terminalId)。
+/// 跨网吧时即便 terminalId 相同也视为不同 key，彻底避免缓存串台。
+@immutable
+class TerminalDetailKey {
+  final int? netbarId;
+  final int terminalId;
+  const TerminalDetailKey(this.netbarId, this.terminalId);
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TerminalDetailKey &&
+          other.netbarId == netbarId &&
+          other.terminalId == terminalId;
+
+  @override
+  int get hashCode => Object.hash(netbarId, terminalId);
+
+  @override
+  String toString() => 'TerminalDetailKey(netbar=$netbarId, terminal=$terminalId)';
+}
+
+final terminalDetailProvider =
+    FutureProvider.autoDispose.family<Terminal, TerminalDetailKey>((ref, key) async {
   final currentNetbar = ref.watch(currentNetbarProvider);
+  // family key 必须与当前 netbar 对齐，防止切网吧后用旧 key 读到新网吧数据
+  if (currentNetbar.id != key.netbarId) {
+    throw Exception('网吧已切换，终端详情 key 失效 (key=$key current=${currentNetbar.id})');
+  }
   final domain = currentNetbar.subdomainFull;
 
   if (domain == null || domain.isEmpty) {
@@ -48,9 +75,9 @@ final terminalDetailProvider = FutureProvider.autoDispose.family<Terminal, int>(
   }
 
   // 优先从 terminalsProvider 缓存中查找，避免重复请求 /seatlist
-  final cachedTerminals = ref.read(terminalsProvider).valueOrNull;
+  final cachedTerminals = ref.read(terminalsProvider(key.netbarId)).valueOrNull;
   if (cachedTerminals != null && cachedTerminals.isNotEmpty) {
-    final found = cachedTerminals.where((t) => t.id == terminalId);
+    final found = cachedTerminals.where((t) => t.id == key.terminalId);
     if (found.isNotEmpty) {
       debugPrint('[TerminalDetailProvider] 从缓存获取终端: ${found.first.name}');
       return found.first;
@@ -58,9 +85,9 @@ final terminalDetailProvider = FutureProvider.autoDispose.family<Terminal, int>(
   }
 
   // 缓存中没有，才发起请求
-  debugPrint('[TerminalDetailProvider] 缓存未命中, 请求 seatlist (id=$terminalId)');
+  debugPrint('[TerminalDetailProvider] 缓存未命中, 请求 seatlist (key=$key)');
   final api = ref.read(terminalApiProvider);
-  final terminal = await api.getById(terminalId, domain: domain);
+  final terminal = await api.getById(key.terminalId, domain: domain);
   return terminal;
 });
 
@@ -89,6 +116,30 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   // 当前选中的功能 Tab
   String _selectedTab = '远程控制';
   Terminal? _liveTerminal;
+  /// 打开本页时"所属网吧"的 id，锁定后作为不变量基准。
+  /// - 独立子窗口：snapshot 自子 container，天然锁定
+  /// - 主窗口 in-place：initState 一次读取后不再变化；
+  ///   一旦主窗口切网吧，所有远程操作入口通过 _ensureSameNetbar 立即拦截
+  late final int? _ownerNetbarId;
+  /// 复合 key 助手：避免到处重复 new
+  TerminalDetailKey get _detailKey =>
+      TerminalDetailKey(_ownerNetbarId, widget.terminalId);
+
+  /// 远程操作前的不变量校验：当前 netbar 必须与详情页打开时一致。
+  /// - debug：assert 直接崩溃，暴露未来引入"详情页上可切网吧"UI 的破坏
+  /// - release：返回 false，上层应立即中止操作并 toast 提示
+  bool _ensureSameNetbar(String op) {
+    final currentId = ref.read(currentNetbarProvider).id;
+    if (currentId == _ownerNetbarId) return true;
+    assert(false,
+        '[TerminalDetail] netbarId 不变量被破坏 op=$op owner=$_ownerNetbarId current=$currentId terminalId=${widget.terminalId}');
+    debugPrint(
+        '[TerminalDetail] abort $op: owner=$_ownerNetbarId current=$currentId');
+    if (mounted) {
+      showTopNotice(context, '网吧已切换，请重新打开终端', level: NoticeLevel.warning);
+    }
+    return false;
+  }
   bool _refreshing = false;
   bool _isMaximized = false;
   bool _isWebRTCActive = false;
@@ -121,6 +172,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   @override
   void initState() {
     super.initState();
+    // 锁定"打开时所属网吧"，后续所有远程操作都以此为不变量基准
+    _ownerNetbarId = ref.read(currentNetbarProvider).id;
     if (widget.initialScreenshot != null) {
       _liveScreenshot = widget.initialScreenshot;
     }
@@ -178,7 +231,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         // 更新窗口标题
         if (isDesktopPlatform) {
           final terminalName = _liveTerminal?.name ??
-              ref.read(terminalDetailProvider(widget.terminalId)).valueOrNull?.name ?? '';
+              ref.read(terminalDetailProvider(_detailKey)).valueOrNull?.name ?? '';
           final title = '终端详情 - $_netbarName - $_groupName - $terminalName';
           if (widget.isStandaloneWindow && widget.windowId != null) {
             WindowController.fromWindowId(widget.windowId!).setTitle(title);
@@ -250,12 +303,13 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   /// [autoStart] 为 true 时，成功后会自动启动倒计时
   Future<void> _fetchScreenshotOnce({bool autoStart = false}) async {
     if (!mounted) return;
+    if (!_ensureSameNetbar('fetchScreenshot')) return;
 
     final netbar = ref.read(currentNetbarProvider);
     final domain = netbar.subdomainFull;
     if (domain == null || domain.isEmpty) return;
 
-    final terminalAsync = ref.read(terminalDetailProvider(widget.terminalId));
+    final terminalAsync = ref.read(terminalDetailProvider(_detailKey));
     final terminal = terminalAsync.valueOrNull;
     if (terminal == null) return;
 
@@ -317,7 +371,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final terminalAsync = ref.watch(terminalDetailProvider(widget.terminalId));
+    final terminalAsync = ref.watch(terminalDetailProvider(_detailKey));
     final isNarrow = context.isNarrow || context.isPhone;
 
     final bool showWindowBorder = isDesktopPlatform && widget.isStandaloneWindow && !_isMaximized;
@@ -641,6 +695,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   Future<void> _handleMinimize(Terminal terminal) async {
     if (!isDesktopPlatform) return;
+    if (!_ensureSameNetbar('handleMinimize')) return;
     final netbar = ref.read(currentNetbarProvider);
     await TerminalWindowBridge.sendToMain('terminal_minimize', {
       'terminalId': widget.terminalId,
@@ -677,6 +732,10 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   Future<void> _handleClose() async {
     if (isDesktopPlatform) {
+      // 关闭流程不拦截（用户就是要退出），但要记录不匹配供排查
+      if (_ownerNetbarId != ref.read(currentNetbarProvider).id) {
+        debugPrint('[TerminalDetail] handleClose: netbar mismatch owner=$_ownerNetbarId current=${ref.read(currentNetbarProvider).id}');
+      }
       final netbar = ref.read(currentNetbarProvider);
       await TerminalWindowBridge.sendToMain('terminal_close', {
         'terminalId': widget.terminalId,
@@ -1138,6 +1197,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   Future<void> _refreshHeartbeat(int terminalId, {bool silent = false}) async {
     if (_refreshing) return;
+    if (!_ensureSameNetbar('refreshHeartbeat')) return;
     setState(() => _refreshing = true);
     try {
       final api = ref.read(terminalApiProvider);
@@ -1400,6 +1460,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   /// 打开 WebRTC 远程桌面
   Future<void> _openWebRTCRemote(Terminal terminal) async {
+    if (!_ensureSameNetbar('openWebRTCRemote')) return;
     final netbar = ref.read(currentNetbarProvider);
     final domain = netbar.subdomainFull;
     final ctxId =
@@ -1562,6 +1623,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   /// 打开 VNC 远程桌面
   /// type: 'control' (控制) 或 'view' (仅查看)
   Future<void> _openVncRemote(Terminal terminal, {String type = 'control'}) async {
+    if (!_ensureSameNetbar('openVncRemote')) return;
     final netbar = ref.read(currentNetbarProvider);
     final domain = netbar.subdomainFull;
     if (domain == null || domain.isEmpty) {
@@ -1718,6 +1780,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   }
 
   Future<void> _remoteAction(String seatId, String action) async {
+    if (!_ensureSameNetbar('remoteAction:$action')) return;
     try {
       final api = ref.read(terminalApiProvider);
       final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';

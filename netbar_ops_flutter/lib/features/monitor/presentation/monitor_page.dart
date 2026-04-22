@@ -24,11 +24,19 @@ import 'widgets/terminal_card.dart';
 import 'widgets/router_card.dart';
 import 'widgets/router_edit_modal.dart';
 
-/// 终端列表 Provider - 移除 autoDispose 避免频繁重载
-final terminalsProvider = FutureProvider<List<Terminal>>((ref) async {
+/// 终端列表 Provider — 按 netbarId 隔离。
+///
+/// 历史背景：原来是非 family 的 `FutureProvider`，跨网吧共享，AsyncValue.previous
+/// 会在切网吧后残留；若消费端用 `.valueOrNull` / `isLoading ? [] : value` 形式读取，
+/// 会导致上个网吧的终端列表渲染到新网吧（与 routers 同模式的架构隐患）。
+/// 现改为 `autoDispose.family<?, int?>`，切网吧后旧 family 实例会被释放，previous 不跨网吧保留。
+final terminalsProvider =
+    FutureProvider.autoDispose.family<List<Terminal>, int?>((ref, netbarId) async {
+  if (netbarId == null) return const [];
   final netbar = ref.watch(currentNetbarProvider);
+  // family key 与当前 state 不同步时返回空，防止极端竞态下串台
+  if (netbar.id != netbarId) return const [];
   final api = ref.read(terminalApiProvider);
-  // 使用网吧的 subdomainFull 作为动态域名请求 /api/seatlist
   return api.getAll(domain: netbar.subdomainFull);
 });
 
@@ -174,7 +182,8 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     // Schedule next refresh after 15 seconds
     _realtimeTimer?.cancel();
     _realtimeTimer = Timer(const Duration(seconds: 15), () {
-      final ts = ref.read(terminalsProvider).valueOrNull ?? [];
+      final currentId = ref.read(currentNetbarIdProvider);
+      final ts = ref.read(terminalsProvider(currentId)).valueOrNull ?? [];
       _loadRealtimeStats(ts);
     });
   }
@@ -298,10 +307,21 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
           _screenshotRetryCount.clear();
           _realtimeCache.clear();
         });
+        // 防御：若当前路由栈在 /terminal/:id（主窗口 in-place 详情页），
+        // 主窗口切网吧时将其归位到 /monitor，避免详情页持有旧网吧的 owner state。
+        // 注：当前架构下 /terminal/:id 是顶层路由、不与 MainLayout 共存，用户
+        // 实际无法在详情页上触发切网吧；此处仅作未来架构调整时的防御兜底。
+        try {
+          final loc = GoRouterState.of(context).uri.path;
+          if (loc.startsWith('/terminal/')) {
+            context.go('/monitor');
+          }
+        } catch (_) {}
       }
     });
 
-    final terminalsAsync = ref.watch(terminalsProvider);
+    final netbarId = ref.watch(currentNetbarIdProvider);
+    final terminalsAsync = ref.watch(terminalsProvider(netbarId));
 
     return GestureDetector(
       onTap: _hideContextMenu,
@@ -370,7 +390,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
-              onPressed: () => ref.invalidate(terminalsProvider),
+              onPressed: () => ref.invalidate(terminalsProvider(ref.read(currentNetbarIdProvider))),
               icon: const Icon(LucideIcons.refreshCw, size: 16),
               label: const Text('重新加载'),
               style: ElevatedButton.styleFrom(
@@ -430,7 +450,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
             ),
             const SizedBox(height: 20),
             ElevatedButton.icon(
-              onPressed: () => ref.invalidate(terminalsProvider),
+              onPressed: () => ref.invalidate(terminalsProvider(ref.read(currentNetbarIdProvider))),
               icon: const Icon(LucideIcons.refreshCw, size: 16),
               label: const Text('刷新'),
               style: ElevatedButton.styleFrom(
@@ -1245,7 +1265,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
       height: 32,
       child: IconButton(
         onPressed: () {
-          ref.refresh(terminalsProvider);
+          ref.refresh(terminalsProvider(netbarId));
           if (netbarId != null) ref.refresh(routersProvider(netbarId));
         },
         icon: const Icon(LucideIcons.refreshCw, size: 14),
@@ -1364,7 +1384,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
               _buildToolbarButton(
                 icon: LucideIcons.refreshCw,
                 tooltip: '刷新',
-                onPressed: () => ref.invalidate(terminalsProvider),
+                onPressed: () => ref.invalidate(terminalsProvider(ref.read(currentNetbarIdProvider))),
                 size: isNarrow ? 40 : 44,
               ),
             ],
