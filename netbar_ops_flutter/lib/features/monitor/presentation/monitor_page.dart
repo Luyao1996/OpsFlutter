@@ -1191,9 +1191,25 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
               final itemWidth = (width - (columns - 1) * gap) / columns;
               final itemHeight = isPhone ? 160.0 : 200.0;
 
-              // Get router list：严格只取 AsyncData 分支，
-              // 避免 AsyncError(previous: 旧网吧列表) 时把上个网吧的残留渲染出来。
-              final routers = routersAsync.whenOrNull(data: (v) => v) ?? const <RouterInfo>[];
+              // Router 三态：
+              //   1) hasValue + 非空 → 渲染 RouterCard 列表，无占位
+              //   2) hasValue + 空    → 1 个"无路由信息"占位
+              //   3) hasError        → 1 个"加载失败"占位（严格只接 AsyncData 的语义保持：不使用 previous）
+              //   4) loading(首次)   → 1 个"正在加载路由信息"占位
+              // 防串台原则：只有 hasValue 时才把数据取出来渲染 RouterCard；
+              // AsyncError.previous（切网吧中途的旧数据）被统一降级为 loading/error 占位。
+              final List<RouterInfo> routers;
+              final _RouterPlaceholderKind? placeholderKind;
+              if (routersAsync.hasValue && !routersAsync.hasError) {
+                routers = routersAsync.value ?? const <RouterInfo>[];
+                placeholderKind = routers.isEmpty ? _RouterPlaceholderKind.empty : null;
+              } else if (routersAsync.hasError) {
+                routers = const <RouterInfo>[];
+                placeholderKind = _RouterPlaceholderKind.error;
+              } else {
+                routers = const <RouterInfo>[];
+                placeholderKind = _RouterPlaceholderKind.loading;
+              }
 
               return Wrap(
                 spacing: gap,
@@ -1230,6 +1246,13 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
                       ),
                     ),
                   ),
+                  // 3) Router placeholder：loading / empty / error 三态之一，不可点击
+                  if (placeholderKind != null)
+                    SizedBox(
+                      width: itemWidth,
+                      height: itemHeight,
+                      child: _RouterPlaceholderCard(kind: placeholderKind),
+                    ),
                 ],
               );
             },
@@ -1535,4 +1558,89 @@ class _MobileTabAwareBuilderState extends State<_MobileTabAwareBuilder> {
 
   @override
   Widget build(BuildContext context) => widget.builder(context, _index);
+}
+
+/// 路由器占位卡：与 RouterCard 同尺寸/同风格的纯提示卡，无点击交互。
+enum _RouterPlaceholderKind { loading, empty, error }
+
+class _RouterPlaceholderCard extends StatelessWidget {
+  final _RouterPlaceholderKind kind;
+  const _RouterPlaceholderCard({required this.kind});
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isCompact = context.isPhone || constraints.maxHeight < 180;
+          final fontSize = isCompact ? 12.0 : 13.0;
+          final iconSize = isCompact ? 22.0 : 28.0;
+
+          late final Widget leading;
+          late final String text;
+          late final Color accent;
+          switch (kind) {
+            case _RouterPlaceholderKind.loading:
+              accent = const Color(0xFF06B6D4);
+              text = '正在加载路由信息...';
+              leading = SizedBox(
+                width: iconSize,
+                height: iconSize,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(accent),
+                ),
+              );
+              break;
+            case _RouterPlaceholderKind.empty:
+              accent = Colors.grey.shade500;
+              text = '无路由信息';
+              leading = Icon(LucideIcons.router, size: iconSize, color: accent);
+              break;
+            case _RouterPlaceholderKind.error:
+              accent = const Color(0xFFF59E0B);
+              text = '路由信息加载失败';
+              leading = Icon(LucideIcons.alertTriangle, size: iconSize, color: accent);
+              break;
+          }
+
+          return Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A1A2E),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: Colors.grey.shade600.withValues(alpha: 0.3),
+                width: 2,
+              ),
+              boxShadow: AppShadows.sm,
+            ),
+            child: Opacity(
+              opacity: 0.7,
+              child: Center(
+                child: Padding(
+                  padding: EdgeInsets.all(isCompact ? 10 : 14),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      leading,
+                      SizedBox(height: isCompact ? 8 : 12),
+                      Text(
+                        text,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.75),
+                          fontSize: fontSize,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
 }
