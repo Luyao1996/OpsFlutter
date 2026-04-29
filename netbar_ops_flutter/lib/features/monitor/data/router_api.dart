@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/network/api_client.dart';
 import '../../../core/network/dio_helper.dart';
 import '../../../core/storage/token_store.dart';
 import '../../../shared/providers/app_providers.dart';
@@ -126,9 +127,13 @@ class RouterTraffic {
 
 class RouterApi {
   late final Dio _dio;
+  final int _merchantId;
 
-  RouterApi({required String subdomainFull}) {
+  RouterApi({required String subdomainFull, required int merchantId})
+      : _merchantId = merchantId {
     // subdomainFull may already contain port (e.g. "xxx.frps.wwls.net")
+    // 仅供未迁移的方法（create/update/delete/getTraffic/getScriptTypes）使用，
+    // getAll 已切换到中央 HTTP，不再依赖此 _dio。
     final hostOnly = subdomainFull.split(':').first;
     final baseUrl = 'https://router-$hostOnly/api';
     _dio = createDio(BaseOptions(
@@ -171,29 +176,59 @@ class RouterApi {
     throw Exception(error.toString());
   }
 
+  /// 路由器列表 —— 走中央 HTTP `GET /routers?merchant_id=X`。
+  /// 拦截器已剥外壳，res.data 即后端 data 字段值（List）。
   Future<List<RouterInfo>> getAll() async {
-    final response = await _dio.get('/routers');
-    return _unwrap(response, (data) {
-      if (data is List) return data.map((e) => RouterInfo.fromJson(e)).toList();
-      return <RouterInfo>[];
-    });
+    final response = await ApiClient.instance.get(
+      '/routers',
+      queryParameters: {'merchant_id': _merchantId},
+    );
+    final data = response.data;
+    if (data is List) {
+      return data
+          .whereType<Map>()
+          .map((e) => RouterInfo.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+    }
+    return const [];
   }
 
+  /// 创建路由器 —— 中央 HTTP，body 必须带 `merchant_id`（按 toolboxPage useRouters.js:101）
   Future<RouterInfo> create(Map<String, dynamic> data) async {
-    final response = await _dio.post('/routers', data: data);
-    return _unwrap(response, (d) => RouterInfo.fromJson(d));
+    final response = await ApiClient.instance.post(
+      '/routers',
+      data: {...data, 'merchant_id': _merchantId},
+    );
+    final raw = response.data;
+    return RouterInfo.fromJson(raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{});
   }
 
+  /// 更新路由器 —— 中央 HTTP，body **不带** merchant_id
   Future<RouterInfo> update(String id, Map<String, dynamic> data) async {
-    final response = await _dio.put('/routers/$id', data: data);
-    return _unwrap(response, (d) => RouterInfo.fromJson(d));
+    final response = await ApiClient.instance.put(
+      '/routers/$id',
+      data: data,
+    );
+    final raw = response.data;
+    return RouterInfo.fromJson(raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{});
   }
 
+  /// 删除路由器 —— 中央 HTTP
   Future<void> delete(String id) async {
-    final response = await _dio.delete('/routers/$id');
-    _unwrap(response, (_) => null);
+    await ApiClient.instance.delete('/routers/$id');
   }
 
+  /// 保存路由器备注（toolboxPage useRouters.js:130 saveRemark 对齐）
+  Future<void> saveRemark(String id, String remark) async {
+    await ApiClient.instance.put(
+      '/routers/$id/remark',
+      data: {'remark': remark},
+    );
+  }
+
+  /// 路由器流量 —— **保留 frp 路由器代理**。
+  /// toolboxPage 未实现该接口的中央 HTTP 化（useRouters.js 无 traffic 相关逻辑），
+  /// 故 Flutter 端继续走 frp 不动。
   Future<List<TrafficInterface>> getTraffic(String routerId) async {
     final response = await _dio.get('/traffic/$routerId');
     return _unwrap(response, (data) {
@@ -207,12 +242,17 @@ class RouterApi {
     });
   }
 
+  /// 脚本类型枚举 —— 路径 `/config/global/router_types`（toolboxPage useRouters.js:77）
   Future<List<String>> getScriptTypes() async {
-    final response = await _dio.get('/scripts/types');
-    return _unwrap(response, (data) {
-      if (data is List) return data.map((e) => e.toString()).toList();
-      return <String>[];
-    });
+    final response = await ApiClient.instance.get('/config/global/router_types');
+    final data = response.data;
+    if (data is List) {
+      return data.map((e) {
+        if (e is Map) return (e['name'] ?? '').toString();
+        return e.toString();
+      }).where((s) => s.isNotEmpty).toList();
+    }
+    return const [];
   }
 }
 
@@ -229,7 +269,7 @@ final routerApiProvider =
   if (netbar.id != netbarId) return null;
   final domain = netbar.subdomainFull;
   if (domain == null || domain.isEmpty) return null;
-  return RouterApi(subdomainFull: domain);
+  return RouterApi(subdomainFull: domain, merchantId: netbarId);
 });
 
 /// 按 netbarId 隔离的路由器列表。

@@ -1,20 +1,19 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
-import '../../../core/config/app_config.dart';
-import '../../../core/network/dio_helper.dart';
 import '../../../core/responsive/responsive.dart';
 import '../../../core/storage/token_store.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/icon_loader.dart';
+import '../../../shared/providers/app_providers.dart';
 import '../../../shared/providers/netbar_tabs_provider.dart';
 import '../../../shared/utils/top_notice.dart';
+import '../../monitor/data/terminal_api.dart';
 import '../data/desktop_api.dart';
 import '../data/desktop_model.dart';
 import 'widgets/desktop_toolbar.dart';
@@ -116,8 +115,8 @@ class _DesktopManagementPageImplState extends ConsumerState<DesktopManagementPag
       _layoutBackup = null;
     });
     _loadLayouts();
-    if (tab.subdomainFull != null && tab.subdomainFull!.isNotEmpty) {
-      _loadSeats(tab.subdomainFull!);
+    if (tab.id != null) {
+      _loadSeats(tab.id!);
     }
   }
 
@@ -143,9 +142,9 @@ class _DesktopManagementPageImplState extends ConsumerState<DesktopManagementPag
       // Load layouts
       await _loadLayouts();
 
-      // 加载机号列表
-      if (_selectedNetbarDomain != null && _selectedNetbarDomain!.isNotEmpty) {
-        await _loadSeats(_selectedNetbarDomain!);
+      // 加载机号列表（走中央 HTTP /terminals）
+      if (_selectedNetbarId != null) {
+        await _loadSeats(_selectedNetbarId!);
       }
 
       setState(() => _loading = false);
@@ -293,73 +292,19 @@ class _DesktopManagementPageImplState extends ConsumerState<DesktopManagementPag
     setState(() {});
   }
 
-  Future<void> _loadSeats(String domain) async {
+  Future<void> _loadSeats(int merchantId) async {
     try {
-      // 规范化域名
-      String normalizedDomain = domain.trim();
-      if (!normalizedDomain.startsWith('http://') &&
-          !normalizedDomain.startsWith('https://')) {
-        // 如果包含非标准端口，使用 HTTP；否则使用 HTTPS
-        if (normalizedDomain.contains(':') && !normalizedDomain.contains(':443')) {
-          normalizedDomain = 'https://$normalizedDomain';
-        } else {
-          normalizedDomain = 'https://$normalizedDomain';
-        }
-      }
-      normalizedDomain = normalizedDomain.replaceAll(RegExp(r'/$'), '');
-
-      final url = '$normalizedDomain/api/seatlist';
-      final token = TokenStore.getToken();
-
-      final dio = createDio(BaseOptions(
-        connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 30),
-      ));
-      final response = await dio.get(
-        url,
-        options: Options(
-          headers: {
-            if (token != null) 'Authorization': 'Bearer $token',
-          },
-          validateStatus: (status) => status != null && status < 500,
-        ),
-      );
-
-      if (response.statusCode == 200 && response.data != null) {
-        final data = response.data;
-        final List<SeatOption> seats = [];
-
-        if (data is Map<String, dynamic>) {
-          final innerData = data['data'];
-
-          if (innerData is Map<String, dynamic>) {
-            // 格式: { "data": { "机号1": {...}, "机号2": {...} } }
-            innerData.forEach((key, value) {
-              final name = (value is Map && value['name'] != null && value['name'].toString().isNotEmpty)
-                  ? value['name'].toString()
-                  : key;
-              seats.add(SeatOption(id: key, name: name));
-            });
-          } else if (innerData is List) {
-            // 格式: { "data": [ {...}, {...} ] }
-            for (final seat in innerData) {
-              final id = (seat['id'] ?? seat['seat_id'] ?? seat['name'] ?? '').toString();
-              final name = (seat['name'] ?? seat['seat_name'] ?? '${id}号机').toString();
-              seats.add(SeatOption(id: id, name: name));
-            }
-          }
-        } else if (data is List) {
-          for (final seat in data) {
-            final id = (seat['id'] ?? seat['seat_id'] ?? seat['name'] ?? '').toString();
-            final name = (seat['name'] ?? seat['seat_name'] ?? '${id}号机').toString();
-            seats.add(SeatOption(id: id, name: name));
-          }
-        }
-
-        setState(() => _seatOptions = seats);
-      } else {
-        setState(() => _seatOptions = []);
-      }
+      final terminalApi = ref.read(terminalApiProvider);
+      final terminals = await terminalApi.getAll(merchantId: merchantId);
+      final seats = terminals
+          .map((t) => SeatOption(
+                id: t.seatId.isNotEmpty ? t.seatId : t.id.toString(),
+                name: t.name.isNotEmpty
+                    ? t.name
+                    : (t.seatId.isNotEmpty ? t.seatId : '${t.id}号机'),
+              ))
+          .toList();
+      setState(() => _seatOptions = seats);
     } catch (e) {
       debugPrint('加载机号列表失败: $e');
       setState(() => _seatOptions = []);

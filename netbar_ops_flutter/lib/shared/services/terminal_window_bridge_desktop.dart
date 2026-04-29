@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -7,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../core/network/task_ws_client.dart';
 import '../../features/monitor/data/terminal_api.dart';
 import '../providers/terminal_dock_provider.dart';
 import '../utils/platform_utils.dart';
@@ -16,6 +18,10 @@ class TerminalWindowBridge {
   // Track open windows: uniqueKey (netbarId_terminalId) -> windowId
   static final Map<String, int> _openWindows = {};
   static ProviderContainer? _container;
+
+  /// 主窗口为各子窗口托管的 WS 流订阅
+  /// reqId（形如 `w<fromWindowId>-...`）→ 主窗 TaskWsClient stream 订阅
+  static final Map<String, StreamSubscription<dynamic>> _hostStreams = {};
 
   static void initMainWindowHandler(ProviderContainer container) {
     if (!isDesktopPlatform || _initializedMainHandler) return;
@@ -41,6 +47,8 @@ class TerminalWindowBridge {
               notifier.remove(key);
               _openWindows.remove(key);
             }
+            // 清理该子窗口名下托管的所有 ws stream，避免僵尸订阅
+            await _cleanupHostStreams(fromWindowId);
             break;
           case 'terminal_tab_changed':
             final id = args['terminalId'] as int?;
@@ -50,9 +58,161 @@ class TerminalWindowBridge {
               notifier.setLastTab('${netbarId}_$id', tab);
             }
             break;
+          case 'ws/ensureConnected':
+            return await _wsEnsureConnected();
+          case 'ws/request':
+            return await _wsRequest(args);
+          case 'ws/streamOpen':
+            return _wsStreamOpen(args, fromWindowId);
+          case 'ws/streamCancel':
+            return await _wsStreamCancel(args);
+          case 'ws/fireAndForget':
+            return await _wsFireAndForget(args);
+          case 'ws/getState':
+            return {'state': TaskWsClient.instance.currentState.name};
         }
       },
     );
+
+    // WS 状态变化广播到所有当前存在的子窗口
+    TaskWsClient.instance.state.listen((s) async {
+      try {
+        final ids = await DesktopMultiWindow.getAllSubWindowIds();
+        for (final id in ids) {
+          try {
+            await DesktopMultiWindow.invokeMethod(
+                id, 'ws/state', {'state': s.name});
+          } catch (_) {}
+        }
+      } catch (_) {}
+    });
+  }
+
+  // ---------- 主窗口侧 ws/* IPC handler ----------
+
+  static Future<Map<String, dynamic>> _wsEnsureConnected() async {
+    try {
+      await TaskWsClient.instance.ensureConnected();
+      return {'ok': true};
+    } catch (e) {
+      return {'ok': false, 'msg': e.toString()};
+    }
+  }
+
+  static Future<Map<String, dynamic>> _wsRequest(
+      Map<String, dynamic> args) async {
+    try {
+      final fun = args['fun'] as String;
+      final seat = args['seat'] as String;
+      final merchantId = args['merchantId'] as int;
+      final data = args['data'] is Map
+          ? Map<String, dynamic>.from(args['data'] as Map)
+          : <String, dynamic>{};
+      final timeoutMs = (args['timeoutMs'] as int?) ?? 15000;
+      final result = await TaskWsClient.instance.request(
+        fun: fun,
+        seat: seat,
+        merchantId: merchantId,
+        data: data,
+        timeout: Duration(milliseconds: timeoutMs),
+      );
+      return {'ok': true, 'data': result};
+    } catch (e) {
+      return {'ok': false, 'msg': e.toString()};
+    }
+  }
+
+  static Map<String, dynamic> _wsStreamOpen(
+      Map<String, dynamic> args, int fromWindowId) {
+    try {
+      final reqId = args['reqId'] as String;
+      final fun = args['fun'] as String;
+      final seat = args['seat'] as String;
+      final merchantId = args['merchantId'] as int;
+      final data = args['data'] is Map
+          ? Map<String, dynamic>.from(args['data'] as Map)
+          : <String, dynamic>{};
+      final sessionId = args['sessionId'] as String?;
+
+      final stream = TaskWsClient.instance.requestStream(
+        fun: fun,
+        seat: seat,
+        merchantId: merchantId,
+        data: data,
+        sessionId: sessionId,
+      );
+      _hostStreams[reqId] = stream.listen(
+        (chunk) {
+          DesktopMultiWindow.invokeMethod(
+              fromWindowId,
+              'ws/streamChunk',
+              {'reqId': reqId, 'data': chunk}).catchError((Object _) {});
+        },
+        onError: (Object e) {
+          DesktopMultiWindow.invokeMethod(fromWindowId, 'ws/streamEnd',
+              {'reqId': reqId, 'ok': false, 'msg': e.toString()})
+              .catchError((Object _) {});
+          _hostStreams.remove(reqId);
+        },
+        onDone: () {
+          DesktopMultiWindow.invokeMethod(fromWindowId, 'ws/streamEnd',
+              {'reqId': reqId, 'ok': true}).catchError((Object _) {});
+          _hostStreams.remove(reqId);
+        },
+      );
+      return {'ok': true};
+    } catch (e) {
+      return {'ok': false, 'msg': e.toString()};
+    }
+  }
+
+  static Future<Map<String, dynamic>> _wsStreamCancel(
+      Map<String, dynamic> args) async {
+    final reqId = args['reqId'] as String?;
+    if (reqId != null) {
+      final sub = _hostStreams.remove(reqId);
+      try {
+        await sub?.cancel();
+      } catch (_) {}
+    }
+    return {'ok': true};
+  }
+
+  static Future<Map<String, dynamic>> _wsFireAndForget(
+      Map<String, dynamic> args) async {
+    try {
+      final fun = args['fun'] as String;
+      final seat = args['seat'] as String;
+      final merchantId = args['merchantId'] as int;
+      final data = args['data'] is Map
+          ? Map<String, dynamic>.from(args['data'] as Map)
+          : <String, dynamic>{};
+      final sessionId = args['sessionId'] as String?;
+      await TaskWsClient.instance.fireAndForget(
+        fun: fun,
+        seat: seat,
+        merchantId: merchantId,
+        data: data,
+        sessionId: sessionId,
+      );
+      return {'ok': true};
+    } catch (e) {
+      return {'ok': false, 'msg': e.toString()};
+    }
+  }
+
+  /// 清理 fromWindowId 名下托管的所有流（reqId 形如 `w<fromWindowId>-...`）
+  static Future<void> _cleanupHostStreams(int fromWindowId) async {
+    final prefix = 'w$fromWindowId-';
+    final stale = _hostStreams.entries
+        .where((e) => e.key.startsWith(prefix))
+        .toList();
+    for (final e in stale) {
+      try {
+        await e.value.cancel();
+      } catch (_) {}
+      _hostStreams.remove(e.key);
+    }
   }
 
   static Future<int?> openTerminalWindow({

@@ -7,6 +7,11 @@ import 'slow_request_file_logger.dart';
 /// - debug 模式：控制台输出完整请求/响应报文（body 2KB 截断，Authorization 不脱敏）
 /// - >1s 慢请求：完整报文写入本地文件（release 模式也生效，文件日志 Authorization 脱敏）
 class HttpLogInterceptor extends Interceptor {
+  /// 控制台 HTTP 日志总开关。
+  /// 联调期临时打开（hwinfo 排查）；正式上线前改回 false。
+  /// 不影响慢请求文件日志（>1s 仍写入 SlowRequestFileLogger）。
+  static const bool _consoleEnabled = true;
+
   /// 慢请求阈值（毫秒）
   static const int _slowThresholdMs = 1000;
 
@@ -28,7 +33,7 @@ class HttpLogInterceptor extends Interceptor {
     options.extra['_httpLog_startTime'] = DateTime.now().millisecondsSinceEpoch;
     options.extra['_httpLog_startDateTime'] = DateTime.now().toIso8601String();
 
-    if (kDebugMode) {
+    if (kDebugMode && _consoleEnabled) {
       _printRequest(reqId, options);
     }
     handler.next(options);
@@ -89,8 +94,8 @@ class HttpLogInterceptor extends Interceptor {
     final uri = requestOptions.uri.toString();
     final status = statusCode ?? 0;
 
-    // 控制台完整响应报文（仅 debug 模式）
-    if (kDebugMode) {
+    // 控制台完整响应报文（仅 debug 模式且开关打开）
+    if (kDebugMode && _consoleEnabled) {
       _printResponse(
         reqId: reqId,
         method: method,

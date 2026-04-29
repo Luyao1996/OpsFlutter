@@ -1,0 +1,237 @@
+import 'dart:async';
+
+import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+
+import 'task_ws.dart';
+import 'window_runtime.dart';
+
+/// 子窗口持有的 [TaskWs] 代理：所有调用通过 DesktopMultiWindow 转发到
+/// 主窗口（windowId=0）的真实 [TaskWsClient]。
+///
+/// 子窗口当前仅由 [TaskWsProxy] 调用 [DesktopMultiWindow.setMethodHandler]
+/// （子窗口 main 入口未注册其他 handler），独占该回调，不会与他人冲突。
+class TaskWsProxy implements TaskWs {
+  TaskWsProxy._() {
+    _initIpc();
+  }
+  static final TaskWsProxy instance = TaskWsProxy._();
+
+  /// 主窗口 windowId 始终为 0（desktop_multi_window 约定）
+  static const int _mainWindowId = 0;
+
+  TaskWsState _state = TaskWsState.idle;
+  final StreamController<TaskWsState> _stateCtrl =
+      StreamController<TaskWsState>.broadcast();
+
+  /// 本子窗口持有的流：reqId → 本地 StreamController
+  final Map<String, StreamController<dynamic>> _streams = {};
+  int _seq = 0;
+
+  // ---------- IPC handler 注册 ----------
+
+  void _initIpc() {
+    DesktopMultiWindow.setMethodHandler(_onMethodCall);
+    // 启动时主动拉一次主窗口当前状态（避免错过开窗前的 state 推送）
+    Future.microtask(_pullState);
+  }
+
+  Future<dynamic> _onMethodCall(MethodCall call, int fromWindowId) async {
+    final raw = call.arguments;
+    final args = raw is Map
+        ? Map<String, dynamic>.from(raw)
+        : <String, dynamic>{};
+    switch (call.method) {
+      case 'ws/streamChunk':
+        _onStreamChunk(args);
+        return null;
+      case 'ws/streamEnd':
+        await _onStreamEnd(args);
+        return null;
+      case 'ws/state':
+        _onStateBroadcast(args);
+        return null;
+    }
+    return null;
+  }
+
+  void _onStreamChunk(Map<String, dynamic> args) {
+    final reqId = args['reqId'] as String?;
+    if (reqId == null) return;
+    final ctrl = _streams[reqId];
+    if (ctrl == null || ctrl.isClosed) return;
+    ctrl.add(args['data']);
+  }
+
+  Future<void> _onStreamEnd(Map<String, dynamic> args) async {
+    final reqId = args['reqId'] as String?;
+    if (reqId == null) return;
+    final ctrl = _streams.remove(reqId);
+    if (ctrl == null || ctrl.isClosed) return;
+    if (args['ok'] == true) {
+      await ctrl.close();
+    } else {
+      ctrl.addError(StateError((args['msg'] ?? 'stream error').toString()));
+      await ctrl.close();
+    }
+  }
+
+  void _onStateBroadcast(Map<String, dynamic> args) {
+    final s = args['state'];
+    if (s is String) {
+      try {
+        _setState(TaskWsState.values.byName(s));
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _pullState() async {
+    try {
+      final r = await DesktopMultiWindow.invokeMethod(
+          _mainWindowId, 'ws/getState', <String, dynamic>{});
+      if (r is Map && r['state'] is String) {
+        _setState(TaskWsState.values.byName(r['state'] as String));
+      }
+    } catch (e) {
+      _log('WARN', 'pullState', '-', 'failed: $e');
+    }
+  }
+
+  // ---------- TaskWs 接口（全部走 IPC） ----------
+
+  @override
+  Stream<TaskWsState> get state => _stateCtrl.stream;
+
+  @override
+  TaskWsState get currentState => _state;
+
+  @override
+  Future<void> ensureConnected() async {
+    if (_state == TaskWsState.ready) return;
+    if (_state == TaskWsState.authFailed) {
+      throw StateError('auth failed');
+    }
+    final r = await DesktopMultiWindow.invokeMethod(
+        _mainWindowId, 'ws/ensureConnected', <String, dynamic>{});
+    if (r is Map && r['ok'] == true) {
+      _setState(TaskWsState.ready);
+      return;
+    }
+    final msg = (r is Map ? r['msg'] : 'ensureConnected failed').toString();
+    throw StateError(msg);
+  }
+
+  @override
+  Future<dynamic> request({
+    required String fun,
+    required String seat,
+    required int merchantId,
+    Map<String, dynamic> data = const {},
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    final r = await DesktopMultiWindow.invokeMethod(
+      _mainWindowId,
+      'ws/request',
+      <String, dynamic>{
+        'fun': fun,
+        'seat': seat,
+        'merchantId': merchantId,
+        'data': data,
+        'timeoutMs': timeout.inMilliseconds,
+      },
+    );
+    if (r is Map && r['ok'] == true) return r['data'];
+    final msg = (r is Map ? r['msg'] : 'request failed').toString();
+    throw StateError(msg);
+  }
+
+  @override
+  Stream<dynamic> requestStream({
+    required String fun,
+    required String seat,
+    required int merchantId,
+    Map<String, dynamic> data = const {},
+    String? sessionId,
+  }) {
+    final reqId = _genReqId();
+    late StreamController<dynamic> ctrl;
+    ctrl = StreamController<dynamic>(
+      onCancel: () async {
+        _streams.remove(reqId);
+        try {
+          await DesktopMultiWindow.invokeMethod(
+              _mainWindowId,
+              'ws/streamCancel',
+              <String, dynamic>{'reqId': reqId});
+        } catch (_) {}
+      },
+    );
+    _streams[reqId] = ctrl;
+    DesktopMultiWindow.invokeMethod(
+      _mainWindowId,
+      'ws/streamOpen',
+      <String, dynamic>{
+        'reqId': reqId,
+        'fun': fun,
+        'seat': seat,
+        'merchantId': merchantId,
+        'data': data,
+        if (sessionId != null) 'sessionId': sessionId,
+      },
+    ).catchError((Object e) {
+      final c = _streams.remove(reqId);
+      if (c != null && !c.isClosed) {
+        c.addError(e);
+        c.close();
+      }
+    });
+    return ctrl.stream;
+  }
+
+  @override
+  Future<void> fireAndForget({
+    required String fun,
+    required String seat,
+    required int merchantId,
+    Map<String, dynamic> data = const {},
+    String? sessionId,
+  }) async {
+    await DesktopMultiWindow.invokeMethod(
+      _mainWindowId,
+      'ws/fireAndForget',
+      <String, dynamic>{
+        'fun': fun,
+        'seat': seat,
+        'merchantId': merchantId,
+        'data': data,
+        if (sessionId != null) 'sessionId': sessionId,
+      },
+    );
+  }
+
+  @override
+  String generateSessionId() {
+    // 子窗口本地生成 sessionId（命名空间隔离：以 windowId 前缀避免主/子窗口冲突）
+    final wid = WindowRuntime.subWindowId ?? 0;
+    return 'flutter-w$wid-${DateTime.now().millisecondsSinceEpoch}-${++_seq}';
+  }
+
+  // ---------- 内部 ----------
+
+  String _genReqId() {
+    final wid = WindowRuntime.subWindowId ?? 0;
+    return 'w$wid-${DateTime.now().millisecondsSinceEpoch}-${++_seq}';
+  }
+
+  void _setState(TaskWsState s) {
+    if (_state == s) return;
+    _state = s;
+    if (!_stateCtrl.isClosed) _stateCtrl.add(s);
+  }
+
+  void _log(String level, String operType, String contextId, String msg) {
+    final ts = DateTime.now().toIso8601String();
+    debugPrint('[$ts][$level][task_ws_proxy][$operType][$contextId] $msg');
+  }
+}

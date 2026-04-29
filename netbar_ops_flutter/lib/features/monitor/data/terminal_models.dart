@@ -55,38 +55,104 @@ class Terminal {
   }
 
   factory Terminal.fromJson(Map<String, dynamic> json) {
-    // 兼容 seatlist 格式：{id: "PC001", name: "1号机", online: true, ip, mac, remote}
     final rawId = json['id'];
-    final isSeatFormat = rawId is String || json.containsKey('online');
 
-    final int parsedId = rawId is int ? rawId : (int.tryParse(rawId?.toString() ?? '') ?? rawId.hashCode.abs());
-    final String parsedSeatId = rawId?.toString() ?? '';
+    // 检测响应格式：
+    //   - 中央 HTTP /terminals: 顶层有 'seat' / 'is_online' / 'merchant_id'，id 是整型主键
+    //   - 旧 frp /seatlist: id 直接是座位号字符串，状态字段叫 'online'
+    final bool isCentralFormat = json.containsKey('seat') ||
+        json.containsKey('is_online') ||
+        json.containsKey('merchant_id');
+
+    final String parsedSeatId;
+    final int parsedId;
+    if (isCentralFormat) {
+      parsedSeatId = json['seat']?.toString() ?? '';
+      parsedId = rawId is int
+          ? rawId
+          : (int.tryParse(rawId?.toString() ?? '') ?? 0);
+    } else {
+      // 旧格式：id 即座位号
+      parsedId = rawId is int
+          ? rawId
+          : (int.tryParse(rawId?.toString() ?? '') ?? rawId.hashCode.abs());
+      parsedSeatId = rawId?.toString() ?? '';
+    }
 
     final rawName = json['name']?.toString() ?? '';
+
+    // 远程中用户列表：兼容 remoting_users（新）/ remote（旧）
+    final List<dynamic>? remoteList = json['remoting_users'] is List
+        ? List<dynamic>.from(json['remoting_users'] as List)
+        : (json['remote'] is List
+            ? List<dynamic>.from(json['remote'] as List)
+            : null);
+
+    // 状态三态：
+    //   离线 → 0
+    //   在线 + 有人远程中 → 2 (busy)
+    //   在线 + 无人远程   → 1 (online idle)
+    final int status;
+    if (isCentralFormat) {
+      final online = json['is_online'] == true;
+      if (!online) {
+        status = 0;
+      } else {
+        status = (remoteList != null && remoteList.isNotEmpty) ? 2 : 1;
+      }
+    } else if (json.containsKey('online')) {
+      // 旧 /seatlist 格式：online 字段。busy 状态在旧协议下也通过 remote 列表推导
+      final online = _parseOnlineStatus(json['online']);
+      if (online == 0) {
+        status = 0;
+      } else {
+        status = (remoteList != null && remoteList.isNotEmpty) ? 2 : 1;
+      }
+    } else {
+      status = json['status'] ?? 0;
+    }
+
+    // 设备类型：中央 HTTP 用 mode (0=client, 1=server) 或座位号 ServerChannel；
+    //         旧格式优先用 json['type']
+    final String type;
+    if (isCentralFormat) {
+      final mode = json['mode'];
+      if (mode == 1 || parsedSeatId == 'ServerChannel') {
+        type = 'server';
+      } else {
+        type = 'client';
+      }
+    } else {
+      type = (json['type']?.toString().isNotEmpty == true)
+          ? json['type'].toString()
+          : 'client';
+    }
 
     return Terminal(
       id: parsedId,
       seatId: parsedSeatId,
       name: rawName.isNotEmpty ? rawName : parsedSeatId,
       code: json['code'] ?? parsedSeatId,
-      netbarId: json['netbar_id'] ?? 0,
+      // merchant_id（新）/ netbar_id（旧）兼容
+      netbarId: (json['merchant_id'] ?? json['netbar_id'] ?? 0) as int,
       areaId: json['area_id'],
       ip: json['ip'] ?? '',
       mac: json['mac'] ?? '',
       os: json['os'] ?? '',
-      type: json['type'] ?? 'client',
-      status: isSeatFormat ? _parseOnlineStatus(json['online']) : (json['status'] ?? 0),
+      type: type,
+      status: status,
       cpuUsage: (json['cpu_usage'] ?? json['cpuUsage'] ?? 0).toDouble(),
       ramUsage: (json['ram_usage'] ?? json['ramUsage'] ?? 0).toDouble(),
       gpuUsage: (json['gpu_usage'] ?? json['gpuUsage'] ?? 0).toDouble(),
       diskUsage: (json['disk_usage'] ?? json['diskUsage'] ?? 0).toDouble(),
       uptime: json['uptime'] ?? '0天',
       screenshotUrl: json['screenshot_url'] ?? json['screenshotUrl'],
-      lastOnline: json['last_online'],
+      // 中央 HTTP 用 online_at/offline_at 表达上下线时刻
+      lastOnline: json['last_online'] ?? json['online_at'],
       lastHeartbeat: json['last_heartbeat'],
       createdAt: json['created_at'],
       updatedAt: json['updated_at'],
-      remote: json['remote'] is List ? json['remote'] : null,
+      remote: remoteList,
     );
   }
 

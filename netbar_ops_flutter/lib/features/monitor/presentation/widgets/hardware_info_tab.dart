@@ -31,8 +31,7 @@ class _HardwareInfoTabState extends ConsumerState<HardwareInfoTab> {
     });
     try {
       final api = ref.read(terminalApiProvider);
-      final netbar = ref.read(currentNetbarProvider);
-      final domain = netbar.subdomainFull ?? '';
+      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
       debugPrint('[HardwareInfoTab] domain=$domain');
       final list = await api.getHardwareInfo(widget.seatId, domain: domain);
       debugPrint('[HardwareInfoTab] 获取到 ${list.length} 项硬件信息');

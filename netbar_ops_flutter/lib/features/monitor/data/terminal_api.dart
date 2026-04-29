@@ -5,6 +5,7 @@ import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/dio_helper.dart';
+import '../../../core/network/task_ws.dart';
 import '../../../core/storage/token_store.dart';
 import 'terminal_mock_data.dart';
 import 'terminal_models.dart';
@@ -12,9 +13,16 @@ import 'terminal_models.dart';
 export 'terminal_models.dart';
 
 /// Terminal API 服务
-/// 终端相关请求发送到各网吧自己的域名（subdomainFull），而非中央 API
+///
+/// 三类调用形态共存：
+/// 1. 中央 HTTP（座位列表）：走 [_client] /terminals
+/// 2. WebSocket 任务通道（remote/updateProgram 等）：走 [_ws]
+/// 3. 各网吧 frp 直连 HTTP（进程/文件/WOL 等红线方法）：仍走自建 Dio + domain 参数
 class TerminalApi {
   final ApiClient _client = ApiClient.instance;
+  final TaskWs _ws;
+
+  TerminalApi(this._ws);
 
   /// 构造网吧域名的完整 API URL
   /// domain 示例: "xxx.frps.wwls.net"
@@ -164,32 +172,24 @@ class TerminalApi {
            msg.contains('xmlhttprequest');
   }
 
-  /// 获取所有终端（座位列表）
-  /// domain: 网吧的 subdomainFull（动态域名）
-  Future<List<Terminal>> getAll({
-    String? domain,
-    String? search,
-    int? netbarId,
-    int? status,
-    String? type,
-  }) async {
-    if (domain == null || domain.isEmpty) {
-      debugPrint('[TerminalApi.getAll] domain 为空，返回空列表');
-      return [];
-    }
-
+  /// 获取所有终端（座位列表）—— 走中央 HTTP `GET /terminals?merchant_id=X`。
+  /// 拦截器已剥外壳，[ApiClient.get] 返回的 res.data 即后端 data 字段值。
+  Future<List<Terminal>> getAll({required int merchantId}) async {
     try {
-      final response = await _netbarGet(domain, '/seatlist');
-      final data = _unwrapResponse(response);
+      final response = await _client.get(
+        '/terminals',
+        queryParameters: {'merchant_id': merchantId},
+      );
+      final data = response.data;
 
       List<Map<String, dynamic>> list = [];
       if (data is List) {
         list = data.whereType<Map<String, dynamic>>().toList();
       } else if (data is Map<String, dynamic>) {
+        // 兼容对象返回：{ "PC001": {...}, "PC002": {...} }
         for (final entry in data.entries) {
           final val = entry.value;
           if (val is Map<String, dynamic>) {
-            // ServerChannel 固定为服务端，其余为客户端终端
             final deviceType = entry.key == 'ServerChannel' ? 'server' : 'client';
             list.add({'id': entry.key, 'type': deviceType, ...val});
           }
@@ -204,8 +204,8 @@ class TerminalApi {
   }
 
   /// 获取单个终端（通过座位列表查找）
-  Future<Terminal> getById(int id, {String? domain}) async {
-    final terminals = await getAll(domain: domain);
+  Future<Terminal> getById(int id, {required int merchantId}) async {
+    final terminals = await getAll(merchantId: merchantId);
     return terminals.firstWhere(
       (t) => t.id == id,
       orElse: () {
@@ -214,29 +214,67 @@ class TerminalApi {
     );
   }
 
-  /// 远程操作（远程连接/断开）
-  Future<Map<String, dynamic>> remote(String seatId, String action, {required String domain, Map<String, dynamic>? user}) async {
-    final response = await _netbarPost(
-      domain,
-      '/task',
-      queryParameters: {'seat': seatId},
+  /// 远程操作（远程连接 / 断开）—— 走 WebSocket 任务通道。
+  /// [action] = 'control' / 'view' / 'webrtc' 时建立连接（enable=true）；
+  /// [action] = 'disconnect' 时断开（enable=false）。
+  Future<Map<String, dynamic>> remote(
+    String seatId,
+    String action, {
+    required int merchantId,
+    Map<String, dynamic>? user,
+  }) async {
+    final res = await _ws.request(
+      fun: 'remote',
+      seat: seatId,
+      merchantId: merchantId,
       data: {
-        'fun': 'remote',
-        'data': {
-          'enable': action != 'disconnect',
-          'type': action == 'disconnect' ? null : action,
-          if (user != null) 'user': user,
-        },
+        'enable': action != 'disconnect',
+        'type': action == 'disconnect' ? null : action,
+        if (user != null) 'user': user,
       },
     );
-    final data = _unwrapResponse(response);
-    return data is Map<String, dynamic> ? data : {};
+    if (res is Map) {
+      final code = res['code'];
+      if (code != null && code != 0 && code != '0') {
+        throw ApiError(
+          code: code is int ? code : int.tryParse(code.toString()),
+          message: (res['msg'] ?? res['message'] ?? '远程失败').toString(),
+          raw: res,
+        );
+      }
+      // 剥业务包装层，返回 data 字段本身（含 mark/type/...），与旧 frp 行为对齐。
+      // 服务端响应：{code, msg, data:{type, mark, ...}, fun} → 调用方拿到的是 {type, mark, ...}
+      final data = res['data'];
+      return data is Map ? Map<String, dynamic>.from(data) : {};
+    }
+    return {};
   }
 
-  /// 获取终端心跳/实时状态（通过 seatlist 获取 online 状态）
-  Future<Terminal> getHeartbeat(int id, {String? domain}) async {
+  /// 触发远端机器更新自身程序 —— 走 WebSocket。
+  /// 参考 toolboxPage `useRemoteAwaken.js:224 updateProgram`。
+  Future<void> updateProgram(String seatId, {required int merchantId}) async {
+    final res = await _ws.request(
+      fun: 'update',
+      seat: seatId,
+      merchantId: merchantId,
+      data: const {},
+    );
+    if (res is Map) {
+      final code = res['code'];
+      if (code != null && code != 0 && code != '0') {
+        throw ApiError(
+          code: code is int ? code : int.tryParse(code.toString()),
+          message: (res['msg'] ?? res['message'] ?? '更新程序失败').toString(),
+          raw: res,
+        );
+      }
+    }
+  }
+
+  /// 获取终端心跳/实时状态（通过 /terminals 获取 online 状态）
+  Future<Terminal> getHeartbeat(int id, {required int merchantId}) async {
     try {
-      return await getById(id, domain: domain);
+      return await getById(id, merchantId: merchantId);
     } catch (e) {
       if (_shouldReturnEmpty(e)) {
         return Terminal(
@@ -497,8 +535,12 @@ class TerminalApi {
     }
   }
 
-  /// 获取硬件信息（静态 + 实时合并）
-  Future<List<Map<String, dynamic>>> getHardwareInfo(String seatId, {required String domain}) async {
+  /// 获取硬件信息（静态 + 实时合并）—— 走 frp HTTP（后端 WS 协议返回
+  /// `code:10 msg:"请使用http协议拉取本数据"`，明确要求 HTTP 拉取）。
+  Future<List<Map<String, dynamic>>> getHardwareInfo(
+    String seatId, {
+    required String domain,
+  }) async {
     if (domain.isEmpty || seatId.isEmpty) return [];
     try {
       final infoResponse = await _netbarPost(
@@ -532,8 +574,11 @@ class TerminalApi {
     }
   }
 
-  /// 获取硬件实时信息（供网络监控等周期调用）
-  Future<Map<String, dynamic>> getHardwareRealtime(String seatId, {required String domain}) async {
+  /// 获取硬件实时信息（供网络监控等周期调用）—— 走 frp HTTP（后端 WS 不支持，同上）。
+  Future<Map<String, dynamic>> getHardwareRealtime(
+    String seatId, {
+    required String domain,
+  }) async {
     if (domain.isEmpty || seatId.isEmpty) return {};
     try {
       final response = await _netbarPost(
@@ -549,6 +594,18 @@ class TerminalApi {
       if (_shouldReturnEmpty(e)) return {};
       rethrow;
     }
+  }
+
+  /// 剥 WS 业务包装层 `{code, msg, data, fun}` → 返回 `data` 字段（Map）。
+  /// code != 0 时返回 null。当前 hwinfo 已还原 HTTP，本方法保留供未来 WS 化复用。
+  // ignore: unused_element
+  Map<String, dynamic>? _extractWsBusinessData(dynamic res) {
+    if (res is! Map) return null;
+    final code = res['code'];
+    if (code != null && code != 0 && code != '0') return null;
+    final data = res['data'];
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return null;
   }
 
   /// 电源控制（关机/重启/注销/锁定）

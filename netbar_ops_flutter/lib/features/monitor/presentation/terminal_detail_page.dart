@@ -22,6 +22,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../data/terminal_api.dart';
 import '../../desktop/data/desktop_api.dart';
+import '../../logs/data/operation_log_api.dart';
 import 'monitor_page.dart' show terminalsProvider;
 import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/providers/terminal_dock_provider.dart';
@@ -68,14 +69,13 @@ final terminalDetailProvider =
   if (currentNetbar.id != key.netbarId) {
     throw Exception('网吧已切换，终端详情 key 失效 (key=$key current=${currentNetbar.id})');
   }
-  final domain = currentNetbar.subdomainFull;
-
-  if (domain == null || domain.isEmpty) {
-    throw Exception('网吧域名为空，无法获取终端详情');
+  final netbarId = key.netbarId;
+  if (netbarId == null) {
+    throw Exception('netbarId 为空，无法获取终端详情 (key=$key)');
   }
 
-  // 优先从 terminalsProvider 缓存中查找，避免重复请求 /seatlist
-  final cachedTerminals = ref.read(terminalsProvider(key.netbarId)).valueOrNull;
+  // 优先从 terminalsProvider 缓存中查找，避免重复请求 /terminals
+  final cachedTerminals = ref.read(terminalsProvider(netbarId)).valueOrNull;
   if (cachedTerminals != null && cachedTerminals.isNotEmpty) {
     final found = cachedTerminals.where((t) => t.id == key.terminalId);
     if (found.isNotEmpty) {
@@ -85,9 +85,9 @@ final terminalDetailProvider =
   }
 
   // 缓存中没有，才发起请求
-  debugPrint('[TerminalDetailProvider] 缓存未命中, 请求 seatlist (key=$key)');
+  debugPrint('[TerminalDetailProvider] 缓存未命中, 请求 /terminals (key=$key)');
   final api = ref.read(terminalApiProvider);
-  final terminal = await api.getById(key.terminalId, domain: domain);
+  final terminal = await api.getById(key.terminalId, merchantId: netbarId);
   return terminal;
 });
 
@@ -1198,16 +1198,18 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   Future<void> _refreshHeartbeat(int terminalId, {bool silent = false}) async {
     if (_refreshing) return;
     if (!_ensureSameNetbar('refreshHeartbeat')) return;
+    final ownerNetbarId = _ownerNetbarId;
+    if (ownerNetbarId == null) return;
     setState(() => _refreshing = true);
     try {
       final api = ref.read(terminalApiProvider);
       final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
 
-      // Step 1: fetch seatlist and update UI immediately
-      final hb = await api.getHeartbeat(terminalId, domain: domain);
+      // Step 1: fetch /terminals via central HTTP and update UI immediately
+      final hb = await api.getHeartbeat(terminalId, merchantId: ownerNetbarId);
       if (mounted) setState(() => _liveTerminal = hb);
 
-      // Step 2: fetch realtime hwinfo in background, update UI when ready
+      // Step 2: fetch realtime hwinfo via frp HTTP in background, update UI when ready
       final seatId = hb.seatId.isNotEmpty ? hb.seatId : (_liveTerminal?.seatId ?? '');
       if (seatId.isNotEmpty && domain.isNotEmpty && hb.status > 0) {
         api.getHardwareRealtime(seatId, domain: domain).then((rt) {
@@ -1375,7 +1377,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           Expanded(
             flex: 2,
             child: _buildBigActionButton(
-              'WebRTC 远程',
+              '笨鸟远程',
               'WebRTC低延迟',
               LucideIcons.video,
               const Color(0xFF10B981),  // 绿色
@@ -1402,7 +1404,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     return Column(
       children: [
         _buildBigActionButton(
-          'WebRTC 远程',
+          '笨鸟远程',
           'WebRTC低延迟',
           LucideIcons.video,
           const Color(0xFF10B981),  // 绿色
@@ -1499,12 +1501,12 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     );
 
     try {
-      // 发送 task 命令
+      // 发送 task 命令（走 WebSocket 任务通道）
       final api = ref.read(terminalApiProvider);
       final result = await api.remote(
         terminal.seatId,
         'webrtc',
-        domain: domain,
+        merchantId: netbar.id!,
         user: {
           'name': user?.nickname ?? user?.name ?? 'unknown',
           'seat': terminal.name,
@@ -1527,6 +1529,20 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
             'resultJson=${WebRtcCrashLogger.I.jsonOrString(result)}',
       );
       if (mark != null && mark.toString().isNotEmpty) {
+        // 上报操作日志（fire-and-forget）
+        ref.read(operationLogApiProvider).add(
+              event: 'remote.connect',
+              description: '远程连接 ${terminal.name}',
+            );
+
+        // ⚠️ WS 链路升级后 remote() 调用 ~33ms 就返回，但 Host 端启动 webrtc-remote
+        // 服务需要 100~500ms。若立即拉信令 WS 会被服务端以 host_offline 拒绝
+        // （webrtc_remote 包不内置重试，单次失败就 INITIAL CONNECTION ERROR）。
+        // 此处固定 delay 1500ms 给 Host 端启动留 3 倍冗余。
+        // 旧 frp HTTP 链路天然有几百 ms 延迟，掩盖了这个时序竞态。
+        await Future.delayed(const Duration(milliseconds: 1500));
+        if (!mounted) return;
+
         // 构造 WebRTC 参数并打开
         final subdomain = domain.split('.')[0];
         final peerId = '${terminal.seatId}-$subdomain';
@@ -1636,12 +1652,12 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     final user = authState.user;
 
     try {
-      // 发送远程连接请求
+      // 发送远程连接请求（走 WebSocket 任务通道）
       final api = ref.read(terminalApiProvider);
       final result = await api.remote(
         terminal.seatId,
         type,
-        domain: domain,
+        merchantId: netbar.id!,
         user: {
           'name': user?.nickname ?? user?.name ?? 'unknown',
           'seat': terminal.name,
@@ -1652,6 +1668,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       // 检查返回结果
       final mark = result['mark'];
       if (mark != null && mark.toString().isNotEmpty) {
+        // 上报操作日志（fire-and-forget）
+        ref.read(operationLogApiProvider).add(
+              event: 'remote.connect',
+              description: '远程连接 ${terminal.name}',
+            );
         // 构造 VNC URL
         final subdomain = domain.split(':')[0]; // 去掉端口
         final vncUrl = Uri.https('admin.wwls.net', '/noVnc/vnc.html', {
@@ -1786,6 +1807,12 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
       if (action == 'wakeup') {
         await api.wakeOnLan(seatId, domain: domain);
+        // 唤醒成功上报操作日志（fire-and-forget）
+        final terminalName = _liveTerminal?.name ?? seatId;
+        ref.read(operationLogApiProvider).add(
+              event: 'remote.awaken',
+              description: '唤醒: $terminalName',
+            );
       } else {
         await api.controlPc(seatId, action, domain: domain);
       }
@@ -2153,57 +2180,58 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
       backgroundColor: const Color(0xFF0A0A0C),
       body: Column(
         children: [
-          // 标题栏：常驻显示，不遮挡视频
-          Container(
-            height: 40,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: const BoxDecoration(
-              color: Color(0xCC1a1a2e),
-              border: Border(bottom: BorderSide(color: Color(0x882a2a3e))),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.connected_tv, size: 14, color: Colors.blue.shade300),
-                const SizedBox(width: 8),
-                Text(
-                  widget.title,
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white70),
-                ),
-                const SizedBox(width: 16),
-                // Drag area
-                Expanded(
-                  child: MouseRegion(
-                    cursor: widget.isStandaloneWindow ? SystemMouseCursors.move : MouseCursor.defer,
-                    child: Listener(
-                      behavior: HitTestBehavior.translucent,
-                      onPointerDown: widget.isStandaloneWindow
-                          ? (event) {
-                              if ((event.buttons & kPrimaryButton) == 0) return;
-                              WindowControl.startDragging(widget.windowId);
-                            }
-                          : null,
-                      child: const SizedBox.expand(),
+          // 标题栏：仅非全屏时显示。全屏后由 webrtc_remote 内置按钮（toggleFullscreen 回调）退出
+          if (!_isFullscreen)
+            Container(
+              height: 40,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: const BoxDecoration(
+                color: Color(0xCC1a1a2e),
+                border: Border(bottom: BorderSide(color: Color(0x882a2a3e))),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.connected_tv, size: 14, color: Colors.blue.shade300),
+                  const SizedBox(width: 8),
+                  Text(
+                    widget.title,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white70),
+                  ),
+                  const SizedBox(width: 16),
+                  // Drag area
+                  Expanded(
+                    child: MouseRegion(
+                      cursor: widget.isStandaloneWindow ? SystemMouseCursors.move : MouseCursor.defer,
+                      child: Listener(
+                        behavior: HitTestBehavior.translucent,
+                        onPointerDown: widget.isStandaloneWindow
+                            ? (event) {
+                                if ((event.buttons & kPrimaryButton) == 0) return;
+                                WindowControl.startDragging(widget.windowId);
+                              }
+                            : null,
+                        child: const SizedBox.expand(),
+                      ),
                     ),
                   ),
-                ),
-                // Minimize button
-                if (widget.onMinimize != null)
+                  // Minimize button
+                  if (widget.onMinimize != null)
+                    _windowButton(
+                      icon: LucideIcons.minus,
+                      tooltip: '最小化到 Dock',
+                      onPressed: widget.onMinimize!,
+                    ),
+                  // Close button
                   _windowButton(
-                    icon: LucideIcons.minus,
-                    tooltip: '最小化到 Dock',
-                    onPressed: widget.onMinimize!,
+                    icon: LucideIcons.x,
+                    tooltip: 'Close',
+                    onPressed: _handleClose,
+                    hoverColor: Colors.red.withOpacity(0.2),
                   ),
-                // Close button
-                _windowButton(
-                  icon: LucideIcons.x,
-                  tooltip: 'Close',
-                  onPressed: _handleClose,
-                  hoverColor: Colors.red.withOpacity(0.2),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          // 视频内容：填充剩余空间
+          // 视频内容：填充剩余空间（全屏时占满整个 Scaffold）
           Expanded(
             child: widget.childBuilder(_handleFullscreen, _isFullscreen),
           ),

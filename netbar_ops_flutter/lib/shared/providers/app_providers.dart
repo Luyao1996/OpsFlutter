@@ -1,12 +1,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
+import '../../core/network/task_ws_provider.dart';
 import '../../core/storage/token_store.dart';
 import '../../features/auth/data/auth_api.dart';
 import '../../features/monitor/data/terminal_api.dart';
 
 // API 实例
 final authApiProvider = Provider((ref) => AuthApi());
-final terminalApiProvider = Provider((ref) => TerminalApi());
+final terminalApiProvider =
+    Provider((ref) => TerminalApi(ref.read(taskWsProvider)));
 
 /// 认证状态
 class AuthState {

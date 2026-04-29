@@ -11,6 +11,7 @@ import 'core/logging/logging_binary_messenger.dart';
 import 'core/logging/webrtc_crash_logger.dart';
 import 'core/storage/token_store.dart';
 import 'core/network/api_client.dart';
+import 'core/network/window_runtime.dart';
 import 'core/theme/app_theme.dart';
 import 'app/router.dart';
 import 'features/monitor/presentation/terminal_detail_window_app.dart';
@@ -74,6 +75,8 @@ void main(List<String> args) async {
 
   if (args.isNotEmpty && args.first == 'multi_window') {
     final windowId = int.tryParse(args.length > 1 ? args[1] : '') ?? 0;
+    // 标记当前进程为子窗口，让 taskWsProvider 注入 TaskWsProxy 而非真实客户端
+    WindowRuntime.bindSubWindow(windowId);
     final payload = args.length > 2 ? args[2] : '{}';
     final data = jsonDecode(payload) as Map<String, dynamic>;
     final terminalId = data['terminalId'] as int? ?? 0;

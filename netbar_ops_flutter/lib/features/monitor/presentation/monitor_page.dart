@@ -37,7 +37,7 @@ final terminalsProvider =
   // family key 与当前 state 不同步时返回空，防止极端竞态下串台
   if (netbar.id != netbarId) return const [];
   final api = ref.read(terminalApiProvider);
-  return api.getAll(domain: netbar.subdomainFull);
+  return api.getAll(merchantId: netbarId);
 });
 
 class MonitorPage extends ConsumerStatefulWidget {
@@ -125,7 +125,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     }
   }
 
-  /// 批量获取在线终端的 hwinfo realtime（CPU/GPU/RAM）
+  /// 批量获取在线终端的 hwinfo realtime（CPU/GPU/RAM）—— 走 frp HTTP
   Future<void> _loadRealtimeStats(List<Terminal> terminals) async {
     if (_realtimeLoading) return;
     _realtimeLoading = true;
@@ -1051,17 +1051,17 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     if (_selectedTerminal == null) return;
 
     final netbar = ref.read(currentNetbarProvider);
-    final domain = netbar.subdomainFull;
-    if (domain == null || domain.isEmpty) {
+    final merchantId = netbar.id;
+    if (merchantId == null) {
       if (mounted) {
-        showTopNotice(context, '当前网吧未配置域名', level: NoticeLevel.error);
+        showTopNotice(context, '当前网吧 id 为空', level: NoticeLevel.error);
       }
       return;
     }
 
     try {
       final api = ref.read(terminalApiProvider);
-      await api.remote(_selectedTerminal!.seatId, action, domain: domain);
+      await api.remote(_selectedTerminal!.seatId, action, merchantId: merchantId);
       if (mounted) {
         showTopNotice(
           context,

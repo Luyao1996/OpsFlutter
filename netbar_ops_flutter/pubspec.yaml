@@ -82,7 +82,7 @@ dependencies:
     git:
       url: https://github.com/Luyao1996/WebRtcGo.git
       path: examples/FlutterUi
-      ref: feature/andriod
+      ref: feature/optimization
 
   # WebRTC 依赖
   # flutter_webrtc: ^1.3.1
