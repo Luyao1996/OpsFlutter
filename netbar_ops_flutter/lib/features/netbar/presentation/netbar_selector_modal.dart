@@ -455,7 +455,7 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
       child: Row(
         children: [
           _buildHeaderCell('网吧名称 / ID', flex: 3, sortKey: 'id'),
-          _buildHeaderCell('终端', flex: 1, sortKey: 'terminalCount'),
+          _buildHeaderCell('在线数/终端数', flex: 1, sortKey: 'terminalCount'),
           _buildHeaderCell('状态', flex: 1, sortKey: 'status'),
           _buildHeaderCell('所属分组', flex: 2),
           _buildHeaderCell('管理员', flex: 2),
@@ -548,14 +548,32 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
                 ],
               ),
             ),
-            // 终端数
+            // 在线数 / 终端数
             Expanded(
               flex: 1,
               child: Row(
                 children: [
                   Icon(LucideIcons.monitor, size: 14, color: Colors.grey.shade400),
                   const SizedBox(width: 6),
-                  Text(netbar.terminalCount.toString(), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  RichText(
+                    text: TextSpan(
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                      children: [
+                        TextSpan(
+                          text: netbar.terminalOnline.toString(),
+                          style: TextStyle(
+                            color: netbar.terminalOnline > 0
+                                ? const Color(0xFF15803D)
+                                : Colors.grey.shade400,
+                          ),
+                        ),
+                        TextSpan(
+                          text: '/${netbar.terminalCount}',
+                          style: TextStyle(color: Colors.grey.shade700),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),

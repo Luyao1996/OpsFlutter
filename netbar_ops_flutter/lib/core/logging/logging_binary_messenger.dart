@@ -29,6 +29,20 @@ class LoggingBinaryMessenger extends BinaryMessenger {
     return lc.contains('webrtc') || lc.contains('flutterwebrtc');
   }
 
+  /// 取 ByteData 的头 [headLen] 与尾 [tailLen] 字节做 hex dump，便于崩溃时回溯协议形态。
+  /// 长度不足时降级：bytes.length <= headLen 全部头部输出且不带尾部；
+  /// bytes.length 介于 headLen 与 headLen+tailLen 之间时不输出尾部，避免与头部重叠。
+  String _hexDump(ByteData m, {int headLen = 64, int tailLen = 32}) {
+    final bytes = m.buffer.asUint8List(m.offsetInBytes, m.lengthInBytes);
+    String hex(List<int> b) =>
+        b.map((v) => v.toRadixString(16).padLeft(2, '0')).join(' ');
+    if (bytes.length <= headLen) return hex(bytes);
+    if (bytes.length <= headLen + tailLen) return hex(bytes.sublist(0, headLen));
+    final head = hex(bytes.sublist(0, headLen));
+    final tail = hex(bytes.sublist(bytes.length - tailLen));
+    return '$head ... $tail';
+  }
+
   String _describeMessage(String channel, ByteData? message) {
     if (message == null) return 'null_message';
     try {
@@ -40,7 +54,7 @@ class LoggingBinaryMessenger extends BinaryMessenger {
       final s = _stringCodec.decodeMessage(message);
       return 'strMsg=${WebRtcCrashLogger.I.truncate(s)}';
     } catch (_) {}
-    return 'rawBytesLen=${message.lengthInBytes}';
+    return 'rawBytesLen=${message.lengthInBytes} hex=${_hexDump(message)}';
   }
 
   String _describeResult(ByteData? reply) {
@@ -49,7 +63,7 @@ class LoggingBinaryMessenger extends BinaryMessenger {
       final decoded = _codec.decodeEnvelope(reply);
       return 'result=${WebRtcCrashLogger.I.jsonOrString(decoded)}';
     } catch (e) {
-      return 'replyBytesLen=${reply.lengthInBytes} decodeErr=$e';
+      return 'replyBytesLen=${reply.lengthInBytes} decodeErr=$e hex=${_hexDump(reply)}';
     }
   }
 

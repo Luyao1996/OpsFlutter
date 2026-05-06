@@ -45,6 +45,7 @@ class Netbar {
   final String name;
   final String token; // 后端: token
   final int terminalCount; // 后端: terminal_count
+  final int terminalOnline; // 后端: terminal_online
   final int terminalAvg; // 后端: terminal_avg (近7日平均)
   final bool isOnline; // 后端: is_online
   final String? subdomain;
@@ -73,6 +74,7 @@ class Netbar {
     required this.name,
     required this.token,
     required this.terminalCount,
+    required this.terminalOnline,
     required this.terminalAvg,
     required this.isOnline,
     this.subdomain,
@@ -94,6 +96,7 @@ class Netbar {
       name: json['name'] ?? '',
       token: json['token'] ?? '',
       terminalCount: _toInt(json['terminal_count'] ?? json['terminalCount']),
+      terminalOnline: _toInt(json['terminal_online'] ?? json['terminalOnline']),
       terminalAvg: _toInt(json['terminal_avg']),
       isOnline: json['is_online'] == true || json['is_online'] == 1,
       subdomain: json['subdomain'],
@@ -119,6 +122,7 @@ class Netbar {
     'name': name,
     'token': token,
     'terminal_count': terminalCount,
+    'terminal_online': terminalOnline,
     'terminal_avg': terminalAvg,
     'is_online': isOnline,
     'subdomain': subdomain,

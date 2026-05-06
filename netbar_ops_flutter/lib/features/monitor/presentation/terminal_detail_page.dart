@@ -1382,7 +1382,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
               LucideIcons.video,
               const Color(0xFF10B981),  // 绿色
               Colors.white,
-              () => _openWebRTCRemote(terminal),
+              () => _handleWebRTCButtonTap(terminal),
             ),
           ),
           const SizedBox(width: 12),
@@ -1409,7 +1409,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           LucideIcons.video,
           const Color(0xFF10B981),  // 绿色
           Colors.white,
-          () => _openWebRTCRemote(terminal),
+          () => _handleWebRTCButtonTap(terminal),
         ),
         const SizedBox(height: 12),
         _buildBigActionButton(
@@ -1426,19 +1426,26 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   /// 点击 VNC 按钮：先弹出"是否以只读方式打开"的选择框，再根据结果打开
   Future<void> _handleVncButtonTap(Terminal terminal) async {
-    final readOnly = await _showVncReadOnlyDialog();
+    final readOnly = await _showRemoteReadOnlyDialog(title: 'VNC 远程桌面');
     if (readOnly == null) return; // 用户取消
     await _openVncRemote(terminal, type: readOnly ? 'view' : 'control');
   }
 
-  /// 询问用户是否以只读方式打开 VNC。
+  /// 点击"笨鸟远程"按钮：先弹出"是否以只读方式打开"的选择框，再根据结果打开
+  Future<void> _handleWebRTCButtonTap(Terminal terminal) async {
+    final readOnly = await _showRemoteReadOnlyDialog(title: '笨鸟远程');
+    if (readOnly == null) return; // 用户取消
+    await _openWebRTCRemote(terminal, viewOnly: readOnly);
+  }
+
+  /// 询问用户是否以只读方式打开远程。
   /// 返回：true=只读，false=控制模式，null=取消
-  Future<bool?> _showVncReadOnlyDialog() {
+  Future<bool?> _showRemoteReadOnlyDialog({required String title}) {
     return showDialog<bool>(
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          title: const Text('VNC 远程桌面'),
+          title: Text(title),
           content: const Text('是否以"只读"模式打开？\n只读模式下仅能观看画面，无法操作鼠标键盘。'),
           actions: [
             TextButton(
@@ -1461,7 +1468,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   }
 
   /// 打开 WebRTC 远程桌面
-  Future<void> _openWebRTCRemote(Terminal terminal) async {
+  /// viewOnly: true=只读模式，false=控制模式
+  Future<void> _openWebRTCRemote(Terminal terminal, {bool viewOnly = false}) async {
     if (!_ensureSameNetbar('openWebRTCRemote')) return;
     final netbar = ref.read(currentNetbarProvider);
     final domain = netbar.subdomainFull;
@@ -1546,7 +1554,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         // 构造 WebRTC 参数并打开
         final subdomain = domain.split('.')[0];
         final peerId = '${terminal.seatId}-$subdomain';
-        final wsUrl = 'wss://webrtc.03kan.com:443/ws?Peer=$peerId&type=Client';
+        final wsUrl = 'wss://webrtc.03kan.com:443/ws?Peer=$peerId&type=Client&viewonly=$viewOnly';
         WebRtcCrashLogger.I.log(
           'INFO',
           'webrtc',
