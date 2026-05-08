@@ -23,6 +23,9 @@
       "Bash(grep:*)",
       "WebSearch",
       "Skill(sk-deep-debugger)"
+    ],
+    "additionalDirectories": [
+      "/mnt/e/luyao/A-Project/jgweb/web/dxy/toolboxPage/src"
     ]
   }
 }

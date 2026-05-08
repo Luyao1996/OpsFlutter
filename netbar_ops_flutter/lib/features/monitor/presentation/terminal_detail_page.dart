@@ -1445,21 +1445,29 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          title: Text(title),
+          title: Row(
+            children: [
+              Expanded(child: Text(title)),
+              IconButton(
+                icon: const Icon(LucideIcons.x, size: 18),
+                onPressed: () => Navigator.of(ctx).pop(null),
+                splashRadius: 18,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+            ],
+          ),
           content: const Text('是否以"只读"模式打开？\n只读模式下仅能观看画面，无法操作鼠标键盘。'),
+          actionsAlignment: MainAxisAlignment.spaceBetween,
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(ctx).pop(null),
-              child: const Text('取消'),
-            ),
-            TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('否（控制模式）'),
+              child: const Text('控制模式'),
             ),
             TextButton(
               style: TextButton.styleFrom(foregroundColor: AppColors.iosBlue),
               onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('是（只读）'),
+              child: const Text('只读模式'),
             ),
           ],
         );
