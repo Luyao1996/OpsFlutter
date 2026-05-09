@@ -678,6 +678,16 @@ class TerminalApi {
     }
   }
 
+  /// 保存终端备注 —— 中央 HTTP `POST /terminals/{id}/remark`
+  /// body: `{"remark": "<p>...</p>"}`，content-type: application/json
+  /// remark 是 HTML 字符串（由富文本编辑器 Delta → HTML 转换得到）。
+  Future<void> saveRemark(int terminalId, String htmlContent) async {
+    await _client.post(
+      '/terminals/$terminalId/remark',
+      data: {'remark': htmlContent},
+    );
+  }
+
   /// 远程唤醒 (WOL) —— **保持 frp HTTP**，未走 WS。
   /// TODO(WS): 后端 peer 通道暂不支持 fun:'awaken'。WOL 魔术包需由本地网关广播，
   /// 目标机器关机时 peer 通道无在线 agent 可代发；后端支持后再切 WS。

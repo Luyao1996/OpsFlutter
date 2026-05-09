@@ -15,6 +15,10 @@ import 'package:webrtc_remote/webrtc_remote.dart' as webrtc;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:flutter_html/flutter_html.dart' as fhtml;
+import 'package:flutter_quill/flutter_quill.dart' as quill;
+import 'package:flutter_quill_delta_from_html/flutter_quill_delta_from_html.dart';
+import 'package:vsc_quill_delta_to_html/vsc_quill_delta_to_html.dart';
 import 'dart:ffi' as ffi hide Size;
 import 'package:win32/win32.dart' as win32;
 import '../../../../core/logging/webrtc_crash_logger.dart';
@@ -1013,6 +1017,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   }
 
   Widget _buildRemarkCard(Terminal terminal) {
+    final remark = terminal.remark ?? '';
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1026,36 +1031,90 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('备注信息', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-              TextButton(
-                onPressed: () {}, // Save functionality
+              const Text('备注信息',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              TextButton.icon(
+                onPressed: () => _openRemarkEditor(terminal),
+                icon: const Icon(LucideIcons.pencil, size: 14),
+                label: const Text('编辑', style: TextStyle(fontSize: 12)),
                 style: TextButton.styleFrom(
-                  padding: EdgeInsets.zero,
-                  minimumSize: const Size(40, 24),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: const Size(40, 28),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
-                child: const Text('保存', style: TextStyle(fontSize: 12)),
               ),
             ],
           ),
           const SizedBox(height: 8),
-          TextField(
-            maxLines: 4,
-            decoration: InputDecoration(
-              hintText: '此电脑运行良好，暂无异常。',
-              hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
-              filled: true,
-              fillColor: Colors.grey.shade50,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(4),
-                borderSide: BorderSide.none,
-              ),
-              contentPadding: const EdgeInsets.all(12),
+          Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(minHeight: 80, maxHeight: 240),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(4),
             ),
-            style: const TextStyle(fontSize: 12),
+            child: remark.isEmpty
+                ? Text('暂无备注，点击"编辑"添加',
+                    style:
+                        TextStyle(fontSize: 12, color: Colors.grey.shade400))
+                : SingleChildScrollView(
+                    child: fhtml.Html(
+                      data: remark,
+                      style: {
+                        'body': fhtml.Style(
+                          fontSize: fhtml.FontSize(12),
+                          margin: fhtml.Margins.zero,
+                          padding: fhtml.HtmlPaddings.zero,
+                        ),
+                        'p': fhtml.Style(margin: fhtml.Margins.zero),
+                      },
+                    ),
+                  ),
           ),
         ],
       ),
+    );
+  }
+
+  /// 打开全屏备注编辑对话框；保存成功后用返回的新 HTML 刷新本地 _liveTerminal，
+  /// 不必等下次心跳。取消/X 关闭返回 null，不更新。
+  Future<void> _openRemarkEditor(Terminal terminal) async {
+    if (!_ensureSameNetbar('openRemarkEditor')) return;
+    final newHtml = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (ctx) => _RemarkEditDialog(
+          terminalName: terminal.name,
+          initialHtml: terminal.remark ?? '',
+          onSave: (html) async {
+            final api = ref.read(terminalApiProvider);
+            await api.saveRemark(terminal.id, html);
+          },
+        ),
+      ),
+    );
+    if (newHtml != null && mounted) {
+      setState(() {
+        _liveTerminal =
+            _cloneTerminalWithRemark(_liveTerminal ?? terminal, newHtml);
+      });
+    }
+  }
+
+  /// 克隆 Terminal 并替换 remark，用于保存成功后立即刷新 UI（不等心跳）。
+  Terminal _cloneTerminalWithRemark(Terminal src, String newRemark) {
+    return Terminal(
+      id: src.id, seatId: src.seatId, name: src.name, code: src.code,
+      netbarId: src.netbarId, areaId: src.areaId, ip: src.ip, mac: src.mac,
+      os: src.os, type: src.type, status: src.status,
+      cpuUsage: src.cpuUsage, ramUsage: src.ramUsage,
+      gpuUsage: src.gpuUsage, diskUsage: src.diskUsage,
+      uptime: src.uptime, screenshotUrl: src.screenshotUrl,
+      lastOnline: src.lastOnline, lastHeartbeat: src.lastHeartbeat,
+      createdAt: src.createdAt, updatedAt: src.updatedAt, remote: src.remote,
+      mode: src.mode, version: src.version,
+      remark: newRemark,
     );
   }
 
@@ -1276,6 +1335,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                 createdAt: hb.createdAt, updatedAt: hb.updatedAt, remote: hb.remote,
                 mode: hb.mode, // 透传 mode，否则刷新心跳后服务管理按钮会消失
                 version: hb.version, // 透传 version，否则刷新心跳后卡片版本号会丢失
+                remark: hb.remark, // 信任后端 remark 最新值；本地保存后已在 _openRemarkEditor 内立即 setState 更新
               );
             });
           }
@@ -2457,6 +2517,211 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
       splashRadius: 16,
       padding: const EdgeInsets.all(8),
       constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+    );
+  }
+}
+
+/// 备注编辑全屏对话框（占满当前 Navigator 可视区域）。
+/// initialHtml → HtmlToDelta → QuillController；保存时 Delta → HTML → onSave 回调。
+/// 取消/X 直接 Navigator.pop(null)；保存成功 Navigator.pop(html)。
+class _RemarkEditDialog extends StatefulWidget {
+  final String terminalName;
+  final String initialHtml;
+  final Future<void> Function(String html) onSave;
+  const _RemarkEditDialog({
+    required this.terminalName,
+    required this.initialHtml,
+    required this.onSave,
+  });
+
+  @override
+  State<_RemarkEditDialog> createState() => _RemarkEditDialogState();
+}
+
+class _RemarkEditDialogState extends State<_RemarkEditDialog> {
+  late quill.QuillController _controller;
+  final FocusNode _focusNode = FocusNode();
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = quill.QuillController.basic();
+    if (widget.initialHtml.isNotEmpty) {
+      try {
+        // 预处理：给无 style 的 <p> 注入 text-align:left
+        // 原因：flutter_quill_delta_from_html 1.5.3 的 paragraphToOp 仅在
+        // blockAttributes(align/direction/indent) 非空时才插段末 \n（见 default_html_to_ops.dart:75-78），
+        // 否则相邻 <p>...</p><p>...</p> 会拼成一行。给 <p> 加 align 强制触发分段。
+        final preprocessed = _ensureParagraphAlign(widget.initialHtml);
+        final delta = HtmlToDelta().convert(preprocessed);
+        _controller = quill.QuillController(
+          document: quill.Document.fromDelta(delta),
+          selection: const TextSelection.collapsed(offset: 0),
+        );
+      } catch (e) {
+        debugPrint('[RemarkEdit] HtmlToDelta failed: $e — fallback to empty doc');
+      }
+    }
+  }
+
+  /// 给所有无 style/align/dir 属性的 `<p>` 注入 `style="text-align:left;"`。
+  /// 兜底 flutter_quill_delta_from_html 段落分隔符丢失的 bug；
+  /// 已有样式属性的段落保持不变，避免覆盖用户原有 align。
+  String _ensureParagraphAlign(String html) {
+    return html.replaceAllMapped(
+      RegExp(r'<p(\s+[^>]*)?>'),
+      (m) {
+        final attrs = m.group(1) ?? '';
+        if (attrs.contains('style=') ||
+            attrs.contains('align=') ||
+            attrs.contains('dir=')) {
+          return m.group(0)!;
+        }
+        return '<p$attrs style="text-align:left;">';
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleSave() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final deltaJson = _controller.document.toDelta().toJson();
+      // inlineStylesFlag: true → 所有样式以 inline `style="..."` 输出而非 CSS class
+      // (color/background/text-align/font/size/indent 全部受益)。
+      // 否则输出 `class="ql-color-red"` 等无法被 HtmlToDelta 反向识别，导致 round-trip 丢样式。
+      final converter = QuillDeltaToHtmlConverter(
+        List<Map<String, dynamic>>.from(deltaJson),
+        ConverterOptions(
+          converterOptions: OpConverterOptions(inlineStylesFlag: true),
+        ),
+      );
+      final html = converter.convert();
+      await widget.onSave(html);
+      if (!mounted) return;
+      showTopNotice(context, '备注已保存', level: NoticeLevel.success);
+      Navigator.of(context).pop(html);
+    } catch (e) {
+      if (!mounted) return;
+      showTopNotice(context, '保存失败: $e', level: NoticeLevel.error);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Column(
+        children: [
+          // 标题栏
+          Container(
+            height: 48,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${widget.terminalName} - 备注信息',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                IconButton(
+                  onPressed:
+                      _saving ? null : () => Navigator.of(context).pop(),
+                  icon: const Icon(LucideIcons.x, size: 18),
+                  splashRadius: 18,
+                  tooltip: '关闭',
+                ),
+              ],
+            ),
+          ),
+          // 富文本工具栏（flutter_quill 11.x：参数 config + 类名 ...Config）
+          quill.QuillSimpleToolbar(
+            controller: _controller,
+            config: const quill.QuillSimpleToolbarConfig(
+              multiRowsDisplay: true,
+              showAlignmentButtons: true,
+              showBackgroundColorButton: true,
+              showColorButton: true,
+              showLink: true,
+              showListBullets: true,
+              showListNumbers: true,
+              showListCheck: true,
+              showQuote: true,
+              showCodeBlock: true,
+              showFontFamily: true,
+              showFontSize: true,
+              showHeaderStyle: true,
+              showIndent: true,
+              showStrikeThrough: false,
+              showInlineCode: false,
+              showSubscript: false,
+              showSuperscript: false,
+              showSearchButton: false,
+            ),
+          ),
+          const Divider(height: 1),
+          // 编辑区
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: quill.QuillEditor.basic(
+                controller: _controller,
+                focusNode: _focusNode,
+                config: const quill.QuillEditorConfig(
+                  placeholder: '请输入备注内容...',
+                  padding: EdgeInsets.zero,
+                ),
+              ),
+            ),
+          ),
+          // 底部按钮
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: Colors.grey.shade200)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed:
+                      _saving ? null : () => Navigator.of(context).pop(),
+                  child: const Text('取消'),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _saving ? null : _handleSave,
+                  child: _saving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Text('保存'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

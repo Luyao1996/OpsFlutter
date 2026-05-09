@@ -24,6 +24,7 @@ class Terminal {
   final List<dynamic>? remote; // 远程连接用户列表
   final int? mode; // 中央 HTTP 字段：0=client, 1=server。旧 /seatlist 格式留 null
   final String? version; // 终端程序版本号（中央 HTTP 字段：version）。旧格式留 null
+  final String? remark; // 终端备注（HTML 字符串，如 "<p>...</p>"）
 
   Terminal({
     required this.id,
@@ -50,6 +51,7 @@ class Terminal {
     this.remote,
     this.mode,
     this.version,
+    this.remark,
   });
 
   /// 解析后端 seatlist 返回的在线状态
@@ -160,6 +162,8 @@ class Terminal {
       mode: isCentralFormat ? (json['mode'] is int ? json['mode'] as int : null) : null,
       // version 中央 HTTP 直接带；旧 /seatlist 格式不带，留 null
       version: json['version']?.toString(),
+      // remark：HTML 字符串
+      remark: json['remark']?.toString(),
     );
   }
 
@@ -186,6 +190,7 @@ class Terminal {
         'updated_at': updatedAt,
         'mode': mode,
         'version': version,
+        'remark': remark,
       };
 
   /// 获取状态字符串

@@ -206,6 +206,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
       updatedAt: t.updatedAt, remote: t.remote,
       mode: t.mode, // 透传 mode 字段，避免下游 mode==1 判断误判
       version: t.version, // 透传 version，避免实时数据合入后卡片版本号丢失
+      remark: t.remark, // 透传 remark
     );
   }
 

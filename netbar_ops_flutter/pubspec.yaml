@@ -52,13 +52,13 @@ dependencies:
   shared_preferences: ^2.2.2
 
   # 图表
-  syncfusion_flutter_charts: ^26.1.42
+  syncfusion_flutter_charts: ^28.0.0
 
   # 图标
   lucide_icons: ^0.257.0
 
   # 工具
-  intl: ^0.19.0
+  intl: ^0.20.0
   path: ^1.9.0
   url_launcher: ^6.3.0
   charset: ^2.0.1
@@ -72,10 +72,15 @@ dependencies:
   cross_file: ^0.3.4+2
   # 多窗口（桌面端独立终端详情）
   desktop_multi_window: ^0.2.0
-  # super_editor 0.7.0 does not exist on pub at the moment; use the latest available dev release
-  super_editor: ^0.3.0-dev.43
+  # super_editor: ^0.3.0-dev.43  # 已移除（无活跃使用，且与 flutter_quill 11.x 冲突 dart_quill_delta 版本）
   code_text_field: ^1.1.0
   re_editor: ^0.8.0
+
+  # 备注信息：富文本编辑（全屏对话框）+ HTML 渲染（卡片预览）
+  flutter_quill: '>=11.0.0-dev.15 <12.0.0'
+  vsc_quill_delta_to_html: ^1.0.0
+  flutter_quill_delta_from_html: ^1.0.0
+  flutter_html: ^3.0.0
 
   # WebRTC 远程桌面
   webrtc_remote:

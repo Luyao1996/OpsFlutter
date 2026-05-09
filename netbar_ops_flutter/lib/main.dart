@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/logging/logging_binary_messenger.dart';
@@ -154,6 +156,18 @@ class NetbarOpsApp extends ConsumerWidget {
         visualDensity: VisualDensity.adaptivePlatformDensity,
         materialTapTargetSize: MaterialTapTargetSize.padded,
       ),
+      // i18n delegates：flutter_quill 11.x 强制要求；同时让 Material 内置 widget
+      // (剪切/复制/粘贴菜单等) 跟随中文 locale。
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+        FlutterQuillLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('zh', 'CN'),
+        Locale('en'),
+      ],
       routerConfig: router,
     );
   }
