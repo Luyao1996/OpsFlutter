@@ -47,8 +47,15 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
     });
     try {
       final api = ref.read(terminalApiProvider);
-      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
-      final tree = await api.getProcessTree(widget.seatId, domain: domain);
+      final merchantId = ref.read(currentNetbarProvider).id;
+      if (merchantId == null) {
+        setState(() {
+          _loading = false;
+          _error = '当前网吧 id 为空';
+        });
+        return;
+      }
+      final tree = await api.getProcessTree(widget.seatId, merchantId: merchantId);
       if (mounted) {
         setState(() {
           _processTree = tree;
@@ -93,11 +100,18 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
 
     try {
       final api = ref.read(terminalApiProvider);
-      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
+      final merchantId = ref.read(currentNetbarProvider).id;
+      if (merchantId == null) {
+        if (mounted) {
+          showTopNotice(context, '当前网吧 id 为空', level: NoticeLevel.error);
+          setState(() => _killingPids.remove(proc.pid));
+        }
+        return;
+      }
       await api.killProcess(
         widget.seatId,
         proc.pid,
-        domain: domain,
+        merchantId: merchantId,
         processName: proc.name,
         killTree: killTree,
       );

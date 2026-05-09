@@ -61,7 +61,7 @@ class TaskWsProxy implements TaskWs {
     if (reqId == null) return;
     final ctrl = _streams[reqId];
     if (ctrl == null || ctrl.isClosed) return;
-    ctrl.add(args['data']);
+    ctrl.add(_deepCastFromIpc(args['data']));
   }
 
   Future<void> _onStreamEnd(Map<String, dynamic> args) async {
@@ -141,7 +141,7 @@ class TaskWsProxy implements TaskWs {
         'timeoutMs': timeout.inMilliseconds,
       },
     );
-    if (r is Map && r['ok'] == true) return r['data'];
+    if (r is Map && r['ok'] == true) return _deepCastFromIpc(r['data']);
     final msg = (r is Map ? r['msg'] : 'request failed').toString();
     throw StateError(msg);
   }
@@ -211,6 +211,26 @@ class TaskWsProxy implements TaskWs {
   }
 
   @override
+  Future<dynamic> requestRawEvent({
+    required String event,
+    required Map<String, dynamic> customFields,
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    final r = await DesktopMultiWindow.invokeMethod(
+      _mainWindowId,
+      'ws/requestRawEvent',
+      <String, dynamic>{
+        'event': event,
+        'customFields': customFields,
+        'timeoutMs': timeout.inMilliseconds,
+      },
+    );
+    if (r is Map && r['ok'] == true) return _deepCastFromIpc(r['data']);
+    final msg = (r is Map ? r['msg'] : 'requestRawEvent failed').toString();
+    throw StateError(msg);
+  }
+
+  @override
   String generateSessionId() {
     // 子窗口本地生成 sessionId（命名空间隔离：以 windowId 前缀避免主/子窗口冲突）
     final wid = WindowRuntime.subWindowId ?? 0;
@@ -234,4 +254,24 @@ class TaskWsProxy implements TaskWs {
     final ts = DateTime.now().toIso8601String();
     debugPrint('[$ts][$level][task_ws_proxy][$operType][$contextId] $msg');
   }
+}
+
+/// 把 IPC 边界拿到的 Map/List 深度递归转成 `Map<String, dynamic>` / `List<dynamic>`。
+///
+/// 背景：`DesktopMultiWindow.invokeMethod` 走 Flutter platform channel
+/// (`StandardMessageCodec`)，序列化往返后 `Map<String, dynamic>` 会被降级为
+/// `Map<Object?, Object?>`，`List<dynamic>` 被降级为 `List<Object?>`。
+/// 调用方常见的 `if (x is Map<String, dynamic>)` 类型断言对降级后的 Map
+/// **永远 false**，导致 hwinfo / fileList / processTree 等业务字段全部丢失。
+/// 在 IPC 边界做一次深度归一，所有消费方零侵入。
+dynamic _deepCastFromIpc(dynamic v) {
+  if (v is Map) {
+    final result = <String, dynamic>{};
+    v.forEach((k, val) => result[k.toString()] = _deepCastFromIpc(val));
+    return result;
+  }
+  if (v is List) {
+    return v.map(_deepCastFromIpc).toList();
+  }
+  return v;
 }

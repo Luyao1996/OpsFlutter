@@ -82,7 +82,7 @@ class TaskWsClient implements TaskWs {
     _logFrame('INFO', 'send', id, {
       'fun': fun,
       'seat': seat,
-      'merchantId': merchantId,
+      'merchant_id': merchantId,
       'data': data,
     });
     try {
@@ -100,6 +100,52 @@ class TaskWsClient implements TaskWs {
         'seat': seat,
       });
       throw TimeoutException('ws request timeout: fun=$fun seat=$seat');
+    });
+  }
+
+  @override
+  Future<dynamic> requestRawEvent({
+    required String event,
+    required Map<String, dynamic> customFields,
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    await ensureConnected();
+    final id = _genId();
+    final completer = Completer<dynamic>();
+    final startMs = DateTime.now().millisecondsSinceEpoch;
+    _pending[id] = _Pending.once(
+      completer: completer,
+      startMs: startMs,
+      fun: event, // 复用 fun 字段记日志（语义=event）
+      seat: '', // 裸帧无 seat
+      merchantId: customFields['merchant_id'] is int
+          ? customFields['merchant_id'] as int
+          : 0,
+      reqData: customFields,
+    );
+    final frame = <String, dynamic>{
+      'event': event,
+      'id': id,
+      ...customFields,
+    };
+    _logFrame('INFO', 'send-event', id, {
+      'event': event,
+      'fields': customFields,
+    });
+    try {
+      _send(frame);
+    } catch (e) {
+      _pending.remove(id);
+      rethrow;
+    }
+    return completer.future.timeout(timeout, onTimeout: () {
+      _pending.remove(id);
+      final elapsed = DateTime.now().millisecondsSinceEpoch - startMs;
+      _logFrame('WARN', 'recv-timeout', id, {
+        'elapsed_ms': elapsed,
+        'event': event,
+      });
+      throw TimeoutException('ws requestRawEvent timeout: event=$event');
     });
   }
 
@@ -134,7 +180,7 @@ class TaskWsClient implements TaskWs {
     _logFrame('INFO', 'send-stream', id, {
       'fun': fun,
       'seat': seat,
-      'merchantId': merchantId,
+      'merchant_id': merchantId,
       'data': data,
     });
     ensureConnected().then((_) {
@@ -162,7 +208,7 @@ class TaskWsClient implements TaskWs {
     _logFrame('INFO', 'send-ff', id, {
       'fun': fun,
       'seat': seat,
-      'merchantId': merchantId,
+      'merchant_id': merchantId,
       'data': data,
     });
     _send(_buildFrame(id, fun, seat, merchantId, data));
@@ -335,7 +381,7 @@ class TaskWsClient implements TaskWs {
           'elapsed_ms': elapsed,
           'fun': entry.fun,
           'seat': entry.seat,
-          'merchantId': entry.merchantId,
+          'merchant_id': entry.merchantId,
           'reason': 'cmdlogon',
           'payload': payload,
         });
@@ -346,7 +392,7 @@ class TaskWsClient implements TaskWs {
           'elapsed_ms': elapsed,
           'fun': entry.fun,
           'seat': entry.seat,
-          'merchantId': entry.merchantId,
+          'merchant_id': entry.merchantId,
           'chunk': payload,
         });
       }
@@ -355,7 +401,7 @@ class TaskWsClient implements TaskWs {
         'elapsed_ms': elapsed,
         'fun': entry.fun,
         'seat': entry.seat,
-        'merchantId': entry.merchantId,
+        'merchant_id': entry.merchantId,
         'req': entry.reqData,
         'resp': payload,
       });

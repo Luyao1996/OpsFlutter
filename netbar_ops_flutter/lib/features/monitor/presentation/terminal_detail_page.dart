@@ -1153,6 +1153,12 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
             _buildSectionTitle('电源管理'),
             const SizedBox(height: 12),
             _buildPowerGrid(terminal, isNarrow: isNarrow),
+            if (terminal.mode == 1) ...[
+              const SizedBox(height: 24),
+              _buildSectionTitle('服务管理'),
+              const SizedBox(height: 12),
+              _buildServiceGrid(terminal, isNarrow: isNarrow),
+            ],
             const SizedBox(height: 24),
             _buildSectionTitle('最近日志'),
             const SizedBox(height: 12),
@@ -1203,16 +1209,15 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     setState(() => _refreshing = true);
     try {
       final api = ref.read(terminalApiProvider);
-      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
 
       // Step 1: fetch /terminals via central HTTP and update UI immediately
       final hb = await api.getHeartbeat(terminalId, merchantId: ownerNetbarId);
       if (mounted) setState(() => _liveTerminal = hb);
 
-      // Step 2: fetch realtime hwinfo via frp HTTP in background, update UI when ready
+      // Step 2: fetch realtime hwinfo via WebSocket in background, update UI when ready
       final seatId = hb.seatId.isNotEmpty ? hb.seatId : (_liveTerminal?.seatId ?? '');
-      if (seatId.isNotEmpty && domain.isNotEmpty && hb.status > 0) {
-        api.getHardwareRealtime(seatId, domain: domain).then((rt) {
+      if (seatId.isNotEmpty && hb.status > 0) {
+        api.getHardwareRealtime(seatId, merchantId: ownerNetbarId).then((rt) {
           if (!mounted) return;
           double cpu = hb.cpuUsage, gpu = hb.gpuUsage, ram = hb.ramUsage;
           double disk = hb.diskUsage;
@@ -1267,6 +1272,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                 uptime: hb.uptime, screenshotUrl: hb.screenshotUrl,
                 lastOnline: hb.lastOnline, lastHeartbeat: hb.lastHeartbeat,
                 createdAt: hb.createdAt, updatedAt: hb.updatedAt, remote: hb.remote,
+                mode: hb.mode, // 透传 mode，否则刷新心跳后服务管理按钮会消失
               );
             });
           }
@@ -1330,6 +1336,149 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         onConfirm: onConfirm,
       ),
     );
+  }
+
+  /// 服务管理按钮区（仅 mode==1 的 server 终端展示）。
+  /// 4 个按钮：重启反代/协助/路由 + 断开远程服务。
+  /// 与电源管理同款卡片样式；点击后弹简单确认对话框（"确认X吗？"）再发 WS。
+  Widget _buildServiceGrid(Terminal terminal, {required bool isNarrow}) {
+    final items = <_ServiceItem>[
+      const _ServiceItem(label: '重启反代服务', name: '反代服务', type: 'frpc'),
+      const _ServiceItem(label: '重启协助服务', name: '协助服务', type: 'client'),
+      const _ServiceItem(label: '重启路由服务', name: '路由服务', type: 'router'),
+      // 特殊 type 标记：路由到 _disconnectRemoteService（走 fun:'remote' enable:false）
+      const _ServiceItem(
+        label: '断开远程服务',
+        name: '远程服务',
+        type: '__disconnect_remote__',
+        icon: LucideIcons.unplug,
+      ),
+    ];
+    Widget card(_ServiceItem it, {bool compact = false}) {
+      return _buildPowerCard(
+        it.label,
+        it.icon,
+        () => _confirmRestartService(terminal, it),
+        compact: compact,
+      );
+    }
+
+    if (!isNarrow) {
+      return Row(
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0) const SizedBox(width: 12),
+            Expanded(child: card(items[i])),
+          ],
+        ],
+      );
+    }
+    // 窄屏：两行各 2 个
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(child: card(items[0], compact: true)),
+            const SizedBox(width: 12),
+            Expanded(child: card(items[1], compact: true)),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(child: card(items[2], compact: true)),
+            const SizedBox(width: 12),
+            Expanded(child: card(items[3], compact: true)),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// 简单确认对话框（"确认X吗？"），与电源管理的强校验对话框不同：
+  /// 服务管理操作明确选用了简单 AlertDialog，避免每次让用户打字（用户决策 selection B）。
+  /// `__disconnect_remote__` 走 [_disconnectRemoteService]，其余走 [_restartService]。
+  void _confirmRestartService(Terminal terminal, _ServiceItem item) {
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(item.label),
+        content: Text('确认${item.label}吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    ).then((ok) {
+      if (ok != true) return;
+      if (item.type == '__disconnect_remote__') {
+        _disconnectRemoteService(terminal);
+      } else {
+        _restartService(terminal, item.type, item.name);
+      }
+    });
+  }
+
+  Future<void> _restartService(Terminal terminal, String type, String name) async {
+    if (!_ensureSameNetbar('restartService:$type')) return;
+    final netbar = ref.read(currentNetbarProvider);
+    final merchantId = netbar.id;
+    if (merchantId == null) {
+      if (mounted) {
+        showTopNotice(context, '当前网吧 id 为空', level: NoticeLevel.error);
+      }
+      return;
+    }
+    try {
+      final api = ref.read(terminalApiProvider);
+      await api.restartService(type, merchantId: merchantId);
+      ref.read(operationLogApiProvider).add(
+            event: 'service.restart',
+            description: '重启$name: ${terminal.name}',
+          );
+      if (mounted) {
+        showTopNotice(context, '$name 重启指令已下发', level: NoticeLevel.success);
+      }
+    } catch (e) {
+      if (mounted) {
+        showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
+      }
+    }
+  }
+
+  /// 断开远程服务 —— 复用 [TerminalApi.remote] 的 disconnect 分支
+  /// （fun:'remote', data:{enable:false}），seat 用 terminal.seatId（一般是 ServerChannel）。
+  Future<void> _disconnectRemoteService(Terminal terminal) async {
+    if (!_ensureSameNetbar('disconnectRemoteService')) return;
+    final netbar = ref.read(currentNetbarProvider);
+    final merchantId = netbar.id;
+    if (merchantId == null) {
+      if (mounted) {
+        showTopNotice(context, '当前网吧 id 为空', level: NoticeLevel.error);
+      }
+      return;
+    }
+    try {
+      final api = ref.read(terminalApiProvider);
+      await api.remote(terminal.seatId, 'disconnect', merchantId: merchantId);
+      ref.read(operationLogApiProvider).add(
+            event: 'remote.disconnect',
+            description: '断开远程服务: ${terminal.name}',
+          );
+      if (mounted) {
+        showTopNotice(context, '断开指令已下发', level: NoticeLevel.success);
+      }
+    } catch (e) {
+      if (mounted) {
+        showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
+      }
+    }
   }
 
   Widget _buildPowerCard(String label, IconData icon, VoidCallback onTap, {bool compact = false}) {
@@ -1606,6 +1755,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                     port: 443,
                     wsUrl: wsUrl,
                   ),
+                  // RemoteScreen 默认 viewOnly=true（只读）。必须把用户在
+                  // _showRemoteReadOnlyDialog 选的结果显式透传，否则即使
+                  // 用户选"控制模式"也会以只读启动。wsUrl 里的 viewonly query
+                  // 是历史保留，新版包按此 viewOnly 参数为准。
+                  viewOnly: viewOnly,
                   onDisconnect: () => Navigator.pop(ctx),
                 ),
               ),
@@ -1820,17 +1974,32 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     if (!_ensureSameNetbar('remoteAction:$action')) return;
     try {
       final api = ref.read(terminalApiProvider);
-      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
+      final netbar = ref.read(currentNetbarProvider);
+      final terminalName = _liveTerminal?.name ?? seatId;
       if (action == 'wakeup') {
+        // wakeOnLan 仍走 frp HTTP（见 terminal_api.dart 同方法 TODO 注释）
+        final domain = netbar.subdomainFull ?? '';
         await api.wakeOnLan(seatId, domain: domain);
         // 唤醒成功上报操作日志（fire-and-forget）
-        final terminalName = _liveTerminal?.name ?? seatId;
         ref.read(operationLogApiProvider).add(
               event: 'remote.awaken',
               description: '唤醒: $terminalName',
             );
       } else {
-        await api.controlPc(seatId, action, domain: domain);
+        // 电源控制（controlPc）走 WebSocket
+        final merchantId = netbar.id;
+        if (merchantId == null) {
+          if (mounted) {
+            showTopNotice(context, '当前网吧 id 为空', level: NoticeLevel.error);
+          }
+          return;
+        }
+        await api.controlPc(seatId, action, merchantId: merchantId);
+        // 电源操作成功上报操作日志（fire-and-forget）
+        ref.read(operationLogApiProvider).add(
+              event: 'remote.controlPc',
+              description: '电源[$action]: $terminalName',
+            );
       }
       if (mounted) {
         showTopNotice(context, '指令 [$action] 已发送', level: NoticeLevel.success);
@@ -1841,6 +2010,21 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       }
     }
   }
+}
+
+/// 服务管理按钮项（仅在 _buildServiceGrid 内部使用）。
+class _ServiceItem {
+  final String label; // 按钮文字 / 弹窗标题（如 "重启反代服务"）
+  final String name; // 服务中文名（如 "反代服务"，用于 toast / operationLog 文案）
+  final String type; // WS data.type（'frpc' / 'client' / 'router' /
+  // '__disconnect_remote__' 特殊值：路由到断开远程逻辑）
+  final IconData icon;
+  const _ServiceItem({
+    required this.label,
+    required this.name,
+    required this.type,
+    this.icon = LucideIcons.refreshCw,
+  });
 }
 
 class _ConfirmActionDialog extends StatefulWidget {

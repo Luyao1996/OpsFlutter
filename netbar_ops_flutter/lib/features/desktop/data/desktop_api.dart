@@ -249,7 +249,13 @@ class IconApi {
 
 /// 远程截图API
 class ScreenshotApi {
-  /// 请求远程截图
+  /// 请求远程截图。
+  ///
+  /// TODO(WS): 文档《WebSocket 升级接口改动清单》A3 要求改 WebSocket（fun:'Screenshot'），
+  /// 回包结构会变 JSON `{base64|url, width, height}`（不再是 bytes 流）。
+  /// 后端尚未支持 WS Screenshot，暂保持 frp HTTP；后端 ready 后切换：
+  ///   `await taskWs.request(fun:'Screenshot', seat:seatId, merchantId:..., data:{})`
+  /// 然后用 `ScreenshotResult.base64 / url` 解析回包。
   Future<ScreenshotResult> requestScreenshot({
     required String domain,
     required String seatId,

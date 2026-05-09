@@ -70,6 +70,8 @@ class TerminalWindowBridge {
             return await _wsFireAndForget(args);
           case 'ws/getState':
             return {'state': TaskWsClient.instance.currentState.name};
+          case 'ws/requestRawEvent':
+            return await _wsRequestRawEvent(args);
         }
       },
     );
@@ -114,6 +116,25 @@ class TerminalWindowBridge {
         seat: seat,
         merchantId: merchantId,
         data: data,
+        timeout: Duration(milliseconds: timeoutMs),
+      );
+      return {'ok': true, 'data': result};
+    } catch (e) {
+      return {'ok': false, 'msg': e.toString()};
+    }
+  }
+
+  static Future<Map<String, dynamic>> _wsRequestRawEvent(
+      Map<String, dynamic> args) async {
+    try {
+      final event = args['event'] as String;
+      final fields = args['customFields'] is Map
+          ? Map<String, dynamic>.from(args['customFields'] as Map)
+          : <String, dynamic>{};
+      final timeoutMs = (args['timeoutMs'] as int?) ?? 15000;
+      final result = await TaskWsClient.instance.requestRawEvent(
+        event: event,
+        customFields: fields,
         timeout: Duration(milliseconds: timeoutMs),
       );
       return {'ok': true, 'data': result};

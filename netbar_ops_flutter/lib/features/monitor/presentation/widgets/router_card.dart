@@ -94,7 +94,13 @@ class _RouterCardState extends State<RouterCard> {
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
       child: GestureDetector(
-        onTap: widget.onTap,
+        onTap: widget.onTap == null
+            ? null
+            : () {
+                debugPrint(
+                    '[RouterCard] onTap fired: id=${widget.router.id} name=${widget.router.name} enabled=${widget.router.enabled}');
+                widget.onTap!.call();
+              },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 300),
           transform: Matrix4.identity()..scale(_isHovered ? 1.02 : 1.0),

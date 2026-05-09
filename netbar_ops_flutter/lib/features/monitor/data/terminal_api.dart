@@ -229,7 +229,8 @@ class TerminalApi {
       merchantId: merchantId,
       data: {
         'enable': action != 'disconnect',
-        'type': action == 'disconnect' ? null : action,
+        // 断开时不传 type；开启时才带（与 toolboxPage useRemoteAwaken.js:183 对齐）
+        if (action != 'disconnect') 'type': action,
         if (user != null) 'user': user,
       },
     );
@@ -287,47 +288,37 @@ class TerminalApi {
     }
   }
 
-  /// 获取进程列表（平面列表，兼容旧版）
-  Future<List<TerminalProcess>> getProcesses(String seatId, {required String domain}) async {
+  /// 获取进程列表（平面列表，兼容旧版）—— 走 WebSocket（fun:'processTree'）。
+  Future<List<TerminalProcess>> getProcesses(String seatId, {required int merchantId}) async {
     try {
-      final response = await _netbarPost(
-        domain,
-        '/task',
-        queryParameters: {'seat': seatId},
-        data: {'fun': 'processTree', 'data': {}},
+      final res = await _ws.request(
+        fun: 'processTree',
+        seat: seatId,
+        merchantId: merchantId,
+        data: const {},
       );
-      final data = _unwrapResponse(response);
-      if (data is Map<String, dynamic>) {
-        // 后端返回嵌套的进程树，展平为列表
-        return _flattenProcessTree(data);
-      }
-      if (data is List) {
-        return data.map((e) => TerminalProcess.fromJson(e)).toList();
-      }
-      return [];
+      final data = _extractWsBusinessData(res);
+      if (data == null) return [];
+      // 后端返回嵌套的进程树，展平为列表
+      return _flattenProcessTree(data);
     } catch (e) {
       if (_shouldReturnEmpty(e)) return TerminalMockData.processes(seatId.hashCode);
       rethrow;
     }
   }
 
-  /// 获取进程树（保持树形结构）
-  Future<List<TerminalProcess>> getProcessTree(String seatId, {required String domain}) async {
+  /// 获取进程树（保持树形结构）—— 走 WebSocket（fun:'processTree'）。
+  Future<List<TerminalProcess>> getProcessTree(String seatId, {required int merchantId}) async {
     try {
-      final response = await _netbarPost(
-        domain,
-        '/task',
-        queryParameters: {'seat': seatId},
-        data: {'fun': 'processTree', 'data': {}},
+      final res = await _ws.request(
+        fun: 'processTree',
+        seat: seatId,
+        merchantId: merchantId,
+        data: const {},
       );
-      final data = _unwrapResponse(response);
-      if (data is Map<String, dynamic>) {
-        return _parseProcessTree(data);
-      }
-      if (data is List) {
-        return data.map((e) => TerminalProcess.fromJson(e)).toList();
-      }
-      return [];
+      final data = _extractWsBusinessData(res);
+      if (data == null) return [];
+      return _parseProcessTree(data);
     } catch (e) {
       if (_shouldReturnEmpty(e)) return [];
       rethrow;
@@ -370,32 +361,39 @@ class TerminalApi {
     return result;
   }
 
-  /// 结束进程
-  /// [killTree] 为 true 时结束整棵进程树
-  Future<void> killProcess(String seatId, int pid, {required String domain, String? processName, bool killTree = false}) async {
+  /// 结束进程 —— 走 WebSocket（fun:'processEnd'）。
+  /// [killTree] 为 true 时结束整棵进程树。
+  Future<void> killProcess(String seatId, int pid, {required int merchantId, String? processName, bool killTree = false}) async {
     try {
-      await _netbarPost(
-        domain,
-        '/task',
-        queryParameters: {'seat': seatId},
+      final res = await _ws.request(
+        fun: 'processEnd',
+        seat: seatId,
+        merchantId: merchantId,
         data: {
-          'fun': 'processEnd',
-          'data': {
-            'type': killTree ? 'ProcessTree' : 'ProcessId',
-            'ProcessId': pid,
-            if (processName != null) 'ProcessName': processName,
-          },
+          'type': killTree ? 'ProcessTree' : 'ProcessId',
+          'ProcessId': pid,
+          if (processName != null) 'ProcessName': processName,
         },
       );
+      if (res is Map) {
+        final code = res['code'];
+        if (code != null && code != 0 && code != '0') {
+          throw ApiError(
+            code: code is int ? code : int.tryParse(code.toString()),
+            message: (res['msg'] ?? res['message'] ?? '结束进程失败').toString(),
+            raw: res,
+          );
+        }
+      }
     } catch (e) {
       if (_shouldReturnEmpty(e)) return;
       rethrow;
     }
   }
 
-  /// 获取文件列表
-  /// path 为空字符串时返回磁盘列表
-  Future<List<TerminalFile>> getFiles(String seatId, String path, {required String domain}) async {
+  /// 获取文件列表 —— 走 WebSocket（fun:'fileList'）。
+  /// path 为空字符串时返回磁盘列表。
+  Future<List<TerminalFile>> getFiles(String seatId, String path, {required int merchantId}) async {
     try {
       // 清理路径：移除开头的反斜杠，保持 C: 或 C:\xxx 格式
       var cleanPath = path.trim();
@@ -403,16 +401,22 @@ class TerminalApi {
         cleanPath = cleanPath.substring(1);
       }
 
-      final response = await _netbarPost(
-        domain,
-        '/task',
-        queryParameters: {'seat': seatId},
-        data: {
-          'fun': 'fileList',
-          'data': {'path': cleanPath},
-        },
+      final res = await _ws.request(
+        fun: 'fileList',
+        seat: seatId,
+        merchantId: merchantId,
+        data: {'path': cleanPath},
       );
-      final data = _unwrapResponse(response);
+      // WS 协议：成功 code=0；失败返回空列表（与旧 HTTP 行为一致）。
+      // 注意 fileList 的 data 字段在某些情况下可能是 List（磁盘列表），
+      // _extractWsBusinessData 仅处理 Map 类型，所以这里直接取剥外壳后的原始 data。
+      dynamic data;
+      if (res is Map) {
+        final code = res['code'];
+        if (code == null || code == 0 || code == '0') {
+          data = res['data'];
+        }
+      }
 
       // cleanPath 为空时，返回磁盘列表
       if (cleanPath.isEmpty) {
@@ -535,36 +539,36 @@ class TerminalApi {
     }
   }
 
-  /// 获取硬件信息（静态 + 实时合并）—— 走 frp HTTP（后端 WS 协议返回
-  /// `code:10 msg:"请使用http协议拉取本数据"`，明确要求 HTTP 拉取）。
+  /// 获取硬件信息（静态 + 实时合并）—— 走 WebSocket（fun:'hwinfo' type:'info'/'realtime'）。
+  /// 历史曾收到 `code:10 请使用http协议`，后端 2026-05 已放开，按文档 A9 切 WS。
   Future<List<Map<String, dynamic>>> getHardwareInfo(
     String seatId, {
-    required String domain,
+    required int merchantId,
   }) async {
-    if (domain.isEmpty || seatId.isEmpty) return [];
+    if (seatId.isEmpty) return [];
     try {
-      final infoResponse = await _netbarPost(
-        domain,
-        '/task',
-        queryParameters: {'seat': seatId},
-        data: {'fun': 'hwinfo', 'data': {'type': 'info'}},
+      final infoRes = await _ws.request(
+        fun: 'hwinfo',
+        seat: seatId,
+        merchantId: merchantId,
+        data: const {'type': 'info'},
       );
-      final infoData = _unwrapResponse(infoResponse);
+      final infoData = _extractWsBusinessData(infoRes);
 
       // 尝试获取实时数据（可选，失败不影响静态信息展示）
       Map<String, dynamic> realtimeData = {};
       try {
-        final rtResponse = await _netbarPost(
-          domain,
-          '/task',
-          queryParameters: {'seat': seatId},
-          data: {'fun': 'hwinfo', 'data': {'type': 'realtime'}},
+        final rtRes = await _ws.request(
+          fun: 'hwinfo',
+          seat: seatId,
+          merchantId: merchantId,
+          data: const {'type': 'realtime'},
         );
-        final rtRaw = _unwrapResponse(rtResponse);
-        if (rtRaw is Map<String, dynamic>) realtimeData = rtRaw;
+        final rtRaw = _extractWsBusinessData(rtRes);
+        if (rtRaw != null) realtimeData = rtRaw;
       } catch (_) {}
 
-      if (infoData is Map<String, dynamic>) {
+      if (infoData != null) {
         return _transformHardwareInfo(infoData, realtimeData);
       }
       return [];
@@ -574,22 +578,20 @@ class TerminalApi {
     }
   }
 
-  /// 获取硬件实时信息（供网络监控等周期调用）—— 走 frp HTTP（后端 WS 不支持，同上）。
+  /// 获取硬件实时信息（供网络监控等周期调用）—— 走 WebSocket。
   Future<Map<String, dynamic>> getHardwareRealtime(
     String seatId, {
-    required String domain,
+    required int merchantId,
   }) async {
-    if (domain.isEmpty || seatId.isEmpty) return {};
+    if (seatId.isEmpty) return {};
     try {
-      final response = await _netbarPost(
-        domain,
-        '/task',
-        queryParameters: {'seat': seatId},
-        data: {'fun': 'hwinfo', 'data': {'type': 'realtime'}},
+      final res = await _ws.request(
+        fun: 'hwinfo',
+        seat: seatId,
+        merchantId: merchantId,
+        data: const {'type': 'realtime'},
       );
-      final data = _unwrapResponse(response);
-      if (data is Map<String, dynamic>) return data;
-      return {};
+      return _extractWsBusinessData(res) ?? {};
     } catch (e) {
       if (_shouldReturnEmpty(e)) return {};
       rethrow;
@@ -597,8 +599,7 @@ class TerminalApi {
   }
 
   /// 剥 WS 业务包装层 `{code, msg, data, fun}` → 返回 `data` 字段（Map）。
-  /// code != 0 时返回 null。当前 hwinfo 已还原 HTTP，本方法保留供未来 WS 化复用。
-  // ignore: unused_element
+  /// code != 0 时返回 null。供 fileList/processTree/hwinfo 等 WS 化方法复用。
   Map<String, dynamic>? _extractWsBusinessData(dynamic res) {
     if (res is! Map) return null;
     final code = res['code'];
@@ -608,15 +609,25 @@ class TerminalApi {
     return null;
   }
 
-  /// 电源控制（关机/重启/注销/锁定）
-  Future<void> controlPc(String seatId, String type, {required String domain}) async {
+  /// 电源控制（关机/重启/注销/锁定）—— 走 WebSocket（fun:'controlPc'）。
+  Future<void> controlPc(String seatId, String type, {required int merchantId}) async {
     try {
-      await _netbarPost(
-        domain,
-        '/task',
-        queryParameters: {'seat': seatId},
-        data: {'fun': 'controlPc', 'data': {'type': type}},
+      final res = await _ws.request(
+        fun: 'controlPc',
+        seat: seatId,
+        merchantId: merchantId,
+        data: {'type': type},
       );
+      if (res is Map) {
+        final code = res['code'];
+        if (code != null && code != 0 && code != '0') {
+          throw ApiError(
+            code: code is int ? code : int.tryParse(code.toString()),
+            message: (res['msg'] ?? res['message'] ?? '电源操作失败').toString(),
+            raw: res,
+          );
+        }
+      }
     } catch (e) {
       if (_shouldReturnEmpty(e)) return;
       rethrow;
@@ -643,7 +654,34 @@ class TerminalApi {
     return TerminalMockData.commandOutput(id, command);
   }
 
-  /// 远程唤醒 (WOL)
+  /// 重启远端服务（反代/协助/路由）—— 走 WebSocket **裸 event 帧**（非 peer 包装）。
+  /// [type] = 'frpc'（反代）/ 'client'（协助）/ 'router'（路由）
+  /// 协议：`{event:'sys.restart', id:<auto>, merchant_id, data:{type}}`
+  /// 仅 mode==1 的 server 终端展示该入口；后端按 merchant_id 路由。
+  Future<void> restartService(String type, {required int merchantId}) async {
+    final res = await _ws.requestRawEvent(
+      event: 'sys.restart',
+      customFields: {
+        'merchant_id': merchantId,
+        'data': {'type': type},
+      },
+    );
+    if (res is Map) {
+      final code = res['code'];
+      if (code != null && code != 0 && code != '0') {
+        throw ApiError(
+          code: code is int ? code : int.tryParse(code.toString()),
+          message: (res['msg'] ?? res['message'] ?? '重启服务失败').toString(),
+          raw: res,
+        );
+      }
+    }
+  }
+
+  /// 远程唤醒 (WOL) —— **保持 frp HTTP**，未走 WS。
+  /// TODO(WS): 后端 peer 通道暂不支持 fun:'awaken'。WOL 魔术包需由本地网关广播，
+  /// 目标机器关机时 peer 通道无在线 agent 可代发；后端支持后再切 WS。
+  /// 参考 toolboxPage `useRemoteAwaken.js:152` 同步保留 HTTP。
   Future<void> wakeOnLan(String seatId, {required String domain}) async {
     await _netbarGet(domain, '/awaken', queryParameters: {'seat': seatId});
   }

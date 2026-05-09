@@ -20,6 +20,7 @@ import '../../../shared/utils/open_in_new_tab.dart';
 import '../data/terminal_api.dart';
 import '../data/router_api.dart';
 import '../../desktop/data/desktop_api.dart';
+import '../../logs/data/operation_log_api.dart';
 import 'widgets/terminal_card.dart';
 import 'widgets/router_card.dart';
 import 'widgets/router_edit_modal.dart';
@@ -125,13 +126,13 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     }
   }
 
-  /// 批量获取在线终端的 hwinfo realtime（CPU/GPU/RAM）—— 走 frp HTTP
+  /// 批量获取在线终端的 hwinfo realtime（CPU/GPU/RAM）—— 走 WebSocket
   Future<void> _loadRealtimeStats(List<Terminal> terminals) async {
     if (_realtimeLoading) return;
     _realtimeLoading = true;
     final api = ref.read(terminalApiProvider);
-    final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
-    if (domain.isEmpty) { _realtimeLoading = false; return; }
+    final merchantId = ref.read(currentNetbarProvider).id;
+    if (merchantId == null) { _realtimeLoading = false; return; }
 
     final online = terminals.where((t) => t.status > 0 && t.seatId.isNotEmpty).toList();
 
@@ -139,7 +140,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     final futures = <Future>[];
     for (final t in online) {
       futures.add(
-        api.getHardwareRealtime(t.seatId, domain: domain).then((rt) {
+        api.getHardwareRealtime(t.seatId, merchantId: merchantId).then((rt) {
           if (!mounted) return;
           final stats = <String, double>{};
           // CPU
@@ -203,6 +204,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
       screenshotUrl: t.screenshotUrl, lastOnline: t.lastOnline,
       lastHeartbeat: t.lastHeartbeat, createdAt: t.createdAt,
       updatedAt: t.updatedAt, remote: t.remote,
+      mode: t.mode, // 透传 mode 字段，避免下游 mode==1 判断误判
     );
   }
 
@@ -1060,11 +1062,17 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
 
     try {
       final api = ref.read(terminalApiProvider);
+      final terminalName = _selectedTerminal!.name;
       await api.remote(_selectedTerminal!.seatId, action, merchantId: merchantId);
+      // 上报操作日志（fire-and-forget）—— 与 terminal_detail_page 同入口埋点对齐
+      ref.read(operationLogApiProvider).add(
+            event: 'remote.connect',
+            description: '远程连接 $terminalName',
+          );
       if (mounted) {
         showTopNotice(
           context,
-          '操作 $action 已发送到 ${_selectedTerminal!.name}',
+          '操作 $action 已发送到 $terminalName',
           level: NoticeLevel.success,
         );
       }
@@ -1075,7 +1083,10 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     }
   }
 
-  void _openRouterInBrowser(RouterInfo router, {required int? expectedNetbarId}) {
+  Future<void> _openRouterInBrowser(RouterInfo router,
+      {required int? expectedNetbarId}) async {
+    debugPrint(
+        '[Router] _openRouterInBrowser entry: id=${router.id} name=${router.name} proxyUrl=${router.proxyUrl}');
     final token = TokenStore.getToken() ?? '';
     final netbar = ref.read(currentNetbarProvider);
     // 不变量：卡片渲染时绑定的 netbarId 必须与点击瞬间的当前 netbar 一致。
@@ -1085,9 +1096,11 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     if (expectedNetbarId != netbar.id) {
       assert(false,
           '[Router] netbarId 不变量被破坏：expected=$expectedNetbarId current=${netbar.id} proxyUrl=${router.proxyUrl}');
-      debugPrint('[Router] abort open: expectedNetbarId=$expectedNetbarId currentId=${netbar.id}');
+      debugPrint(
+          '[Router] abort open: expectedNetbarId=$expectedNetbarId currentId=${netbar.id}');
       if (mounted) {
-        showTopNotice(context, '网吧已切换，请重新操作', level: NoticeLevel.warning);
+        showTopNotice(context, '网吧已切换，请重新操作',
+            level: NoticeLevel.warning);
       }
       return;
     }
@@ -1101,8 +1114,23 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
         'Authorization': 'Bearer $token',
       },
     );
-    debugPrint('[Router] opening url=$newUri');
-    launchUrl(newUri, mode: LaunchMode.externalApplication);
+    final urlStr = newUri.toString();
+    debugPrint('[Router] opening url(len=${urlStr.length})=$urlStr');
+    try {
+      final ok = await launchUrl(newUri, mode: LaunchMode.externalApplication);
+      debugPrint('[Router] launchUrl returned ok=$ok');
+      if (!ok && mounted) {
+        showTopNotice(
+            context, '打开浏览器失败：系统未返回成功状态（可能 URL 过长或无默认浏览器）',
+            level: NoticeLevel.error);
+      }
+    } catch (e, st) {
+      debugPrint('[Router] launchUrl exception: $e\n$st');
+      if (mounted) {
+        showTopNotice(context, '打开浏览器异常: $e',
+            level: NoticeLevel.error);
+      }
+    }
   }
 
   void _showRouterEditModal({RouterInfo? router, required int? netbarId}) {

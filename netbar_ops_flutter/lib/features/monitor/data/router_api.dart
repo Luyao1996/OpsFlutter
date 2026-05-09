@@ -39,7 +39,9 @@ class RouterInfo {
       user: json['user']?.toString() ?? '',
       pass: json['pass']?.toString() ?? '',
       enabled: json['enabled'] == true,
-      proxyUrl: json['proxyUrl']?.toString() ?? '',
+      // 兼容两种命名：后端历史上把字段从驼峰 proxyUrl 改成蛇形 proxy_url，
+      // 优先取驼峰兜底蛇形（与 toolboxPage RemoteWakePage.vue:333 一致）。
+      proxyUrl: (json['proxyUrl'] ?? json['proxy_url'])?.toString() ?? '',
       isIp: json['isIp'] == true,
     );
   }
@@ -132,8 +134,9 @@ class RouterApi {
   RouterApi({required String subdomainFull, required int merchantId})
       : _merchantId = merchantId {
     // subdomainFull may already contain port (e.g. "xxx.frps.wwls.net")
-    // 仅供未迁移的方法（create/update/delete/getTraffic/getScriptTypes）使用，
-    // getAll 已切换到中央 HTTP，不再依赖此 _dio。
+    // 当前仅供 getTraffic 使用（流量接口尚未中央 HTTP 化，文档《WebSocket 升级
+    // 接口改动清单》C 表标 ⚠️ "待后端确认"）。其余 CRUD/getScriptTypes 已迁移
+    // 到 ApiClient.instance（中央 HTTP）。getTraffic 中央 HTTP 化后即可删此 _dio。
     final hostOnly = subdomainFull.split(':').first;
     final baseUrl = 'https://router-$hostOnly/api';
     _dio = createDio(BaseOptions(

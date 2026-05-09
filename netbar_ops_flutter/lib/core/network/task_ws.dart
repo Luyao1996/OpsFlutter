@@ -89,4 +89,16 @@ abstract class TaskWs {
   /// 生成一个全局唯一的 sessionId，供 [requestStream] 与 [fireAndForget] 复用同一会话。
   /// 主窗口直接生成；子窗口走 IPC 由主窗口生成（命名空间隔离）。
   String generateSessionId();
+
+  /// 发送一条裸 event 帧（非 peer 包装），等待同 id 的响应。
+  ///
+  /// 帧格式：`{event, id:<auto>, ...customFields}`
+  /// 适用：sys.restart 等后端约定的特殊事件（不走 peer 任务通道）。
+  /// id 由实现层自动生成并写入帧顶层；customFields 不应包含 'event' 或 'id'。
+  /// 服务端按 id 推回响应帧，由 recv 路由完成 Completer。
+  Future<dynamic> requestRawEvent({
+    required String event,
+    required Map<String, dynamic> customFields,
+    Duration timeout = const Duration(seconds: 15),
+  });
 }

@@ -31,9 +31,16 @@ class _HardwareInfoTabState extends ConsumerState<HardwareInfoTab> {
     });
     try {
       final api = ref.read(terminalApiProvider);
-      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
-      debugPrint('[HardwareInfoTab] domain=$domain');
-      final list = await api.getHardwareInfo(widget.seatId, domain: domain);
+      final merchantId = ref.read(currentNetbarProvider).id;
+      if (merchantId == null) {
+        setState(() {
+          _loading = false;
+          _error = '当前网吧 id 为空';
+        });
+        return;
+      }
+      debugPrint('[HardwareInfoTab] merchantId=$merchantId');
+      final list = await api.getHardwareInfo(widget.seatId, merchantId: merchantId);
       debugPrint('[HardwareInfoTab] 获取到 ${list.length} 项硬件信息');
       if (mounted) {
         setState(() {

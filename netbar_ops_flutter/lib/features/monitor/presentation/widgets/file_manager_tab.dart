@@ -66,8 +66,15 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
     });
     try {
       final api = ref.read(terminalApiProvider);
-      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
-      final drives = await api.getFiles(widget.seatId, '', domain: domain);
+      final merchantId = ref.read(currentNetbarProvider).id;
+      if (merchantId == null) {
+        setState(() {
+          _drivesLoading = false;
+          _error = '当前网吧 id 为空';
+        });
+        return;
+      }
+      final drives = await api.getFiles(widget.seatId, '', merchantId: merchantId);
       if (mounted) {
         setState(() {
           _drives = drives;
@@ -96,9 +103,16 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
     });
     try {
       final api = ref.read(terminalApiProvider);
-      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
-      debugPrint('[FileManager] Loading files: seatId=${widget.seatId}, path="$path", domain=$domain');
-      final list = await api.getFiles(widget.seatId, path, domain: domain);
+      final merchantId = ref.read(currentNetbarProvider).id;
+      if (merchantId == null) {
+        setState(() {
+          _loading = false;
+          _error = '当前网吧 id 为空';
+        });
+        return;
+      }
+      debugPrint('[FileManager] Loading files: seatId=${widget.seatId}, path="$path", merchantId=$merchantId');
+      final list = await api.getFiles(widget.seatId, path, merchantId: merchantId);
       debugPrint('[FileManager] Loaded ${list.length} files');
       if (mounted) {
         setState(() {
@@ -252,8 +266,11 @@ class _FileManagerTabState extends ConsumerState<FileManagerTab> {
     _treeLoading.add(p);
     try {
       final api = ref.read(terminalApiProvider);
-      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
-      final items = await api.getFiles(widget.seatId, p, domain: domain);
+      final merchantId = ref.read(currentNetbarProvider).id;
+      if (merchantId == null) {
+        return;
+      }
+      final items = await api.getFiles(widget.seatId, p, merchantId: merchantId);
       final dirs = items.where((f) => f.isDirectory).toList();
       final children = dirs
           .map(

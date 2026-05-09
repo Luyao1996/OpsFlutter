@@ -51,14 +51,14 @@ class _NetworkMonitorTabState extends ConsumerState<NetworkMonitorTab> {
     _fetching = true;
     try {
       final api = ref.read(terminalApiProvider);
-      final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
-      debugPrint('[NetworkMonitorTab] _fetchRealtime seatId=${widget.seatId}, domain=$domain');
-      if (domain.isEmpty) {
-        debugPrint('[NetworkMonitorTab] domain 为空，跳过');
+      final merchantId = ref.read(currentNetbarProvider).id;
+      debugPrint('[NetworkMonitorTab] _fetchRealtime seatId=${widget.seatId}, merchantId=$merchantId');
+      if (merchantId == null) {
+        debugPrint('[NetworkMonitorTab] merchantId 为空，跳过');
         return;
       }
 
-      final data = await api.getHardwareRealtime(widget.seatId, domain: domain);
+      final data = await api.getHardwareRealtime(widget.seatId, merchantId: merchantId);
       if (!mounted) return;
 
       debugPrint('[NetworkMonitorTab] 返回数据 keys: ${data.keys.toList()}');

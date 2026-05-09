@@ -22,6 +22,7 @@ class Terminal {
   final String? createdAt;
   final String? updatedAt;
   final List<dynamic>? remote; // 远程连接用户列表
+  final int? mode; // 中央 HTTP 字段：0=client, 1=server。旧 /seatlist 格式留 null
 
   Terminal({
     required this.id,
@@ -46,6 +47,7 @@ class Terminal {
     this.createdAt,
     this.updatedAt,
     this.remote,
+    this.mode,
   });
 
   /// 解析后端 seatlist 返回的在线状态
@@ -112,16 +114,15 @@ class Terminal {
       status = json['status'] ?? 0;
     }
 
-    // 设备类型：中央 HTTP 用 mode (0=client, 1=server) 或座位号 ServerChannel；
-    //         旧格式优先用 json['type']
+    // 设备类型：中央 HTTP 严格按 mode 字段判定（0=client, 1=server）。
+    // 历史曾用 `mode == 1 || seatId == 'ServerChannel'` 兜底判 server，
+    // 现统一为 `mode == 1`，与详情页"服务管理"按钮判断对齐，避免 seatId
+    // 漂移导致 isKeyDevice / 业务分支误判。
+    // 旧 /seatlist 格式优先用 json['type']（已无活跃调用方，仅保留兼容）。
     final String type;
     if (isCentralFormat) {
       final mode = json['mode'];
-      if (mode == 1 || parsedSeatId == 'ServerChannel') {
-        type = 'server';
-      } else {
-        type = 'client';
-      }
+      type = (mode == 1) ? 'server' : 'client';
     } else {
       type = (json['type']?.toString().isNotEmpty == true)
           ? json['type'].toString()
@@ -153,6 +154,8 @@ class Terminal {
       createdAt: json['created_at'],
       updatedAt: json['updated_at'],
       remote: remoteList,
+      // 仅中央 HTTP 透传 mode；旧 /seatlist 格式不带此字段，留 null
+      mode: isCentralFormat ? (json['mode'] is int ? json['mode'] as int : null) : null,
     );
   }
 
@@ -177,6 +180,7 @@ class Terminal {
         'last_heartbeat': lastHeartbeat,
         'created_at': createdAt,
         'updated_at': updatedAt,
+        'mode': mode,
       };
 
   /// 获取状态字符串
