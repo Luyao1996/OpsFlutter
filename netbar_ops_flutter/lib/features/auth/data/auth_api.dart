@@ -263,6 +263,16 @@ class AuthApi {
     }, options: Options(extra: {'ignoreUnauthorized': true}));
   }
 
+  /// 获取 2FA 一次性验证码 —— GET /passport/twoFactorCode
+  /// 返回示例：`{"code":"169557","period":30,"expires_in":22}`
+  /// 由"个人中心 → 复制 2FA"调用；后端基于当前登录态生成 TOTP 码。
+  Future<Map<String, dynamic>> getTwoFactorCode() async {
+    final response = await _client.get('/passport/twoFactorCode');
+    final data = response.data;
+    if (data is Map<String, dynamic>) return data;
+    return <String, dynamic>{};
+  }
+
   /// 刷新Token（ignoreUnauthorized 防止 401 死循环）
   Future<TokenResponse> refreshToken() async {
     final response = await _client.post('/passport/refresh',

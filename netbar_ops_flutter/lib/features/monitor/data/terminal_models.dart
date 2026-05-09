@@ -23,6 +23,7 @@ class Terminal {
   final String? updatedAt;
   final List<dynamic>? remote; // 远程连接用户列表
   final int? mode; // 中央 HTTP 字段：0=client, 1=server。旧 /seatlist 格式留 null
+  final String? version; // 终端程序版本号（中央 HTTP 字段：version）。旧格式留 null
 
   Terminal({
     required this.id,
@@ -48,6 +49,7 @@ class Terminal {
     this.updatedAt,
     this.remote,
     this.mode,
+    this.version,
   });
 
   /// 解析后端 seatlist 返回的在线状态
@@ -156,6 +158,8 @@ class Terminal {
       remote: remoteList,
       // 仅中央 HTTP 透传 mode；旧 /seatlist 格式不带此字段，留 null
       mode: isCentralFormat ? (json['mode'] is int ? json['mode'] as int : null) : null,
+      // version 中央 HTTP 直接带；旧 /seatlist 格式不带，留 null
+      version: json['version']?.toString(),
     );
   }
 
@@ -181,6 +185,7 @@ class Terminal {
         'created_at': createdAt,
         'updated_at': updatedAt,
         'mode': mode,
+        'version': version,
       };
 
   /// 获取状态字符串

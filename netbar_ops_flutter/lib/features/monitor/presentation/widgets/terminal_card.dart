@@ -147,6 +147,18 @@ class _TerminalCardState extends State<TerminalCard> {
                   ),
                 ),
                 const SizedBox(width: 4),
+                // 版本号（仅非空时显示）—— 略淡于 uptime，区分次要信息
+                if (t.version != null && t.version!.isNotEmpty) ...[
+                  Text(
+                    'v${t.version}',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Colors.white.withValues(alpha: 0.7),
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                ],
                 Text(
                   t.uptime.isNotEmpty ? t.uptime : '0天',
                   style: TextStyle(

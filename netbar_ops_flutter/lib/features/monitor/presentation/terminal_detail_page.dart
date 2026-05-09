@@ -503,7 +503,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      '${terminal.statusString} | ${terminal.ip}',
+                      '${terminal.statusString} | ${terminal.ip}'
+                      '${(terminal.version != null && terminal.version!.isNotEmpty) ? ' | v${terminal.version}' : ''}',
                       style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
                     ),
                   ],
@@ -634,7 +635,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
-                            '${terminal.statusString} | ${terminal.ip}',
+                            '${terminal.statusString} | ${terminal.ip}'
+                            '${(terminal.version != null && terminal.version!.isNotEmpty) ? ' | v${terminal.version}' : ''}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
@@ -1273,6 +1275,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                 lastOnline: hb.lastOnline, lastHeartbeat: hb.lastHeartbeat,
                 createdAt: hb.createdAt, updatedAt: hb.updatedAt, remote: hb.remote,
                 mode: hb.mode, // 透传 mode，否则刷新心跳后服务管理按钮会消失
+                version: hb.version, // 透传 version，否则刷新心跳后卡片版本号会丢失
               );
             });
           }

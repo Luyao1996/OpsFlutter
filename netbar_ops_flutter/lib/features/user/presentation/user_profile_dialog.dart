@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -24,6 +25,7 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
   bool _autoConnect = false;
   bool _is2FAEnabled = true;
   bool _changingPassword = false;
+  bool _copying2FA = false;
 
   late final TextEditingController _currentPasswordController;
   late final TextEditingController _newPasswordController;
@@ -86,6 +88,33 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
       showTopNotice(context, '更新密码失败：$e', level: NoticeLevel.error);
     } finally {
       if (mounted) setState(() => _changingPassword = false);
+    }
+  }
+
+  /// 点击"复制 2FA" pill：拉一次性 TOTP 码，写到剪贴板，toast 提示完整 code + 剩余秒数。
+  /// 复用 ApiClient（自带 Authorization 头），与 fetch demo 行为一致。
+  Future<void> _handleCopy2FA() async {
+    if (_copying2FA) return;
+    setState(() => _copying2FA = true);
+    try {
+      final api = ref.read(authApiProvider);
+      final res = await api.getTwoFactorCode();
+      final code = res['code']?.toString() ?? '';
+      final expiresIn = res['expires_in'];
+      if (code.isEmpty) {
+        throw Exception('2FA 码为空');
+      }
+      await Clipboard.setData(ClipboardData(text: code));
+      if (!mounted) return;
+      final msg = expiresIn is int
+          ? '2FA 已复制（$code，剩 $expiresIn 秒）'
+          : '2FA 已复制：$code';
+      showTopNotice(context, msg, level: NoticeLevel.success);
+    } catch (e) {
+      if (!mounted) return;
+      showTopNotice(context, '复制 2FA 失败：$e', level: NoticeLevel.error);
+    } finally {
+      if (mounted) setState(() => _copying2FA = false);
     }
   }
 
@@ -613,6 +642,7 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
                                   ],
                                 ),
                               ),
+                              _buildCopy2FAPill(),
                             ],
                           ),
                         ],
@@ -695,6 +725,7 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
                                         ],
                                       ),
                                     ),
+                                    _buildCopy2FAPill(),
                                   ],
                                 ),
                               ],
@@ -782,6 +813,53 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
         border: Border.all(color: border ?? Colors.white.withOpacity(0.1)),
       ),
       child: child,
+    );
+  }
+
+  /// "复制 2FA"可点击 pill —— 嵌在账户概览顶部彩色卡片的 Wrap 行内，
+  /// 与 "账号" / "在线" 两个被动 pill 并列。
+  /// 视觉：白底（半透明）+ 蓝色文字/图标，loading 时禁用并切文案。
+  Widget _buildCopy2FAPill() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _copying2FA ? null : _handleCopy2FA,
+        borderRadius: BorderRadius.circular(4),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.85),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: Colors.white.withOpacity(0.4)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_copying2FA)
+                const SizedBox(
+                  width: 10,
+                  height: 10,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5,
+                    valueColor: AlwaysStoppedAnimation(Color(0xFF2563EB)),
+                  ),
+                )
+              else
+                const Icon(LucideIcons.shieldCheck,
+                    size: 12, color: Color(0xFF2563EB)),
+              const SizedBox(width: 4),
+              Text(
+                _copying2FA ? '获取中...' : '复制 2FA',
+                style: const TextStyle(
+                  color: Color(0xFF2563EB),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
