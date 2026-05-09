@@ -59,6 +59,7 @@ class Netbar {
   final NetbarRemoteStatus? remoteStatus;
   final String? screenshotUrl;
   final NetbarServerMetrics? serverMetrics;
+  final String? serverPwd; // 后端 server_pwd：服务端 Windows 当前密码（敏感字段，仅用于编辑回填）
 
   // 兼容旧代码的getter
   String get code => token;
@@ -88,6 +89,7 @@ class Netbar {
     this.remoteStatus,
     this.screenshotUrl,
     this.serverMetrics,
+    this.serverPwd,
   });
 
   factory Netbar.fromJson(Map<String, dynamic> json) {
@@ -114,6 +116,7 @@ class Netbar {
       serverMetrics: json['server_metrics'] != null
           ? NetbarServerMetrics.fromJson(json['server_metrics'] as Map<String, dynamic>)
           : null,
+      serverPwd: json['server_pwd']?.toString(),
     );
   }
 
@@ -328,11 +331,13 @@ class NetbarApi {
     await _client.delete('/merchant/$id');
   }
 
-  /// 设置商户登录密码
+  /// 设置/重置商户 Windows 密码 —— `POST /merchant/setPwd/{id}`
+  /// - reset=false（保存）：body 仅 `{password}`
+  /// - reset=true（重置）：body `{password, reset: 1}`（数字 1，与 toolboxPage / 接口示例对齐）
   Future<void> setPassword(int id, {required String password, bool reset = false}) async {
     await _client.post('/merchant/setPwd/$id', data: {
       'password': password,
-      'reset': reset ? '1' : '0',
+      if (reset) 'reset': 1,
     });
   }
 

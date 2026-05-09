@@ -24,6 +24,7 @@ import 'package:win32/win32.dart' as win32;
 import '../../../../core/logging/webrtc_crash_logger.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
+import '../../../../core/config/app_config.dart';
 import '../data/terminal_api.dart';
 import '../../desktop/data/desktop_api.dart';
 import '../../logs/data/operation_log_api.dart';
@@ -515,6 +516,12 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                 ),
               ],
             ),
+            const SizedBox(width: 4),
+            // 标题后联系人 hover 按钮
+            _PersonnelHoverButton(
+              netbarName: _netbarName,
+              merchantId: ref.watch(currentNetbarProvider).id,
+            ),
             const SizedBox(width: 16),
             Expanded(
               child: MouseRegion(
@@ -650,6 +657,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                     ),
                   ],
                 ),
+              ),
+              // 标题后联系人 hover 按钮（窄屏）
+              _PersonnelHoverButton(
+                netbarName: _netbarName,
+                merchantId: ref.watch(currentNetbarProvider).id,
               ),
               IconButton(
                 onPressed: _refreshing ? null : () => _refreshHeartbeat(terminal.id),
@@ -1221,6 +1233,10 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
               _buildServiceGrid(terminal, isNarrow: isNarrow),
             ],
             const SizedBox(height: 24),
+            _buildSectionTitle('终端管理'),
+            const SizedBox(height: 12),
+            _buildTerminalManageGrid(terminal, isNarrow: isNarrow),
+            const SizedBox(height: 24),
             _buildSectionTitle('最近日志'),
             const SizedBox(height: 12),
             _buildRecentLogsTable(),
@@ -1409,12 +1425,13 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       const _ServiceItem(label: '重启反代服务', name: '反代服务', type: 'frpc'),
       const _ServiceItem(label: '重启协助服务', name: '协助服务', type: 'client'),
       const _ServiceItem(label: '重启路由服务', name: '路由服务', type: 'router'),
-      // 特殊 type 标记：路由到 _disconnectRemoteService（走 fun:'remote' enable:false）
+      // 特殊 type 标记：路由到 _openWindowsPasswordDialog（HTTP set/reset/clear）
+      // 区块本身仅 mode==1 显示，所以此项天然只在服务端可见
       const _ServiceItem(
-        label: '断开远程服务',
-        name: '远程服务',
-        type: '__disconnect_remote__',
-        icon: LucideIcons.unplug,
+        label: 'Windows密码',
+        name: 'Windows密码',
+        type: '__windows_pwd__',
+        icon: LucideIcons.keyRound,
       ),
     ];
     Widget card(_ServiceItem it, {bool compact = false}) {
@@ -1460,8 +1477,16 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   /// 简单确认对话框（"确认X吗？"），与电源管理的强校验对话框不同：
   /// 服务管理操作明确选用了简单 AlertDialog，避免每次让用户打字（用户决策 selection B）。
-  /// `__disconnect_remote__` 走 [_disconnectRemoteService]，其余走 [_restartService]。
+  /// 路由：
+  ///   - `__windows_pwd__` → 直接弹自定义 dialog（不走简单确认）
+  ///   - `__disconnect_remote__` → 简单确认 → [_disconnectRemoteService]
+  ///   - 其它（frpc/client/router） → 简单确认 → [_restartService]
   void _confirmRestartService(Terminal terminal, _ServiceItem item) {
+    // Windows 密码自有完整 dialog（设置/重置/清除），跳过简单确认直接打开
+    if (item.type == '__windows_pwd__') {
+      _openWindowsPasswordDialog(terminal);
+      return;
+    }
     showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1536,6 +1561,231 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           );
       if (mounted) {
         showTopNotice(context, '断开指令已下发', level: NoticeLevel.success);
+      }
+    } catch (e) {
+      if (mounted) {
+        showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
+      }
+    }
+  }
+
+  // ============= 终端管理（更新 / 唤醒 / Windows密码 / 编辑） =============
+  // 本批次仅实现：更新 + 唤醒。后两项分批做（待 WS 协议 / API 调研）。
+
+  /// 终端管理按钮区。所有终端都展示；按钮列表按状态/mode 动态过滤。
+  Widget _buildTerminalManageGrid(Terminal terminal, {required bool isNarrow}) {
+    final items = <_ManageItem>[
+      _ManageItem(
+        label: terminal.version != null && terminal.version!.isNotEmpty
+            ? '更新(v${terminal.version})'
+            : '更新',
+        confirmText:
+            '确定要将当前版本 ${terminal.version ?? "未知"} 更新至最新版本吗？',
+        icon: LucideIcons.downloadCloud,
+        onConfirm: () => _doUpdateProgram(terminal),
+      ),
+      // 唤醒：仅离线（status==0）显示；toolboxPage 等价 useRemoteAwaken.wakeUp 入口
+      if (terminal.status == 0)
+        _ManageItem(
+          label: '唤醒',
+          confirmText: '确定要唤醒此终端吗？',
+          icon: LucideIcons.power,
+          onConfirm: () => _doAwaken(terminal),
+        ),
+      // 断开远程服务：所有终端可用（无 mode 限制）
+      _ManageItem(
+        label: '断开远程服务',
+        confirmText: '确定要断开远程服务吗？',
+        icon: LucideIcons.unplug,
+        onConfirm: () => _disconnectRemoteService(terminal),
+      ),
+    ];
+
+    Widget card(_ManageItem it, {bool compact = false}) {
+      return _buildPowerCard(
+        it.label,
+        it.icon,
+        () => _confirmManageAction(it),
+        compact: compact,
+      );
+    }
+
+    if (!isNarrow) {
+      return Row(
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0) const SizedBox(width: 12),
+            Expanded(child: card(items[i])),
+          ],
+          // 不足 4 列时右侧补占位，与服务管理对齐
+          for (var i = items.length; i < 4; i++) ...[
+            const SizedBox(width: 12),
+            const Expanded(child: SizedBox()),
+          ],
+        ],
+      );
+    }
+    // 窄屏：每行 2 个
+    final rows = <Widget>[];
+    for (var i = 0; i < items.length; i += 2) {
+      rows.add(Row(
+        children: [
+          Expanded(child: card(items[i], compact: true)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: i + 1 < items.length
+                ? card(items[i + 1], compact: true)
+                : const SizedBox(),
+          ),
+        ],
+      ));
+      if (i + 2 < items.length) rows.add(const SizedBox(height: 12));
+    }
+    return Column(children: rows);
+  }
+
+  /// 终端管理统一确认对话框（与 _confirmRestartService 同款简单 AlertDialog）。
+  /// skipDefaultConfirm=true 时直接执行（用于自定义 dialog 场景，如 Windows 密码）。
+  void _confirmManageAction(_ManageItem item) {
+    if (item.skipDefaultConfirm) {
+      item.onConfirm();
+      return;
+    }
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(item.label),
+        content: Text(item.confirmText),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    ).then((ok) {
+      if (ok == true) item.onConfirm();
+    });
+  }
+
+  /// 触发远端程序自更新（fun:'update'）。
+  Future<void> _doUpdateProgram(Terminal terminal) async {
+    if (!_ensureSameNetbar('updateProgram')) return;
+    final netbar = ref.read(currentNetbarProvider);
+    final merchantId = netbar.id;
+    if (merchantId == null) {
+      if (mounted) {
+        showTopNotice(context, '当前网吧 id 为空', level: NoticeLevel.error);
+      }
+      return;
+    }
+    try {
+      final api = ref.read(terminalApiProvider);
+      await api.updateProgram(terminal.seatId, merchantId: merchantId);
+      ref.read(operationLogApiProvider).add(
+            event: 'terminal.update',
+            description: '更新程序: ${terminal.name} (v${terminal.version ?? "?"})',
+          );
+      if (mounted) {
+        showTopNotice(context, '更新指令已下发', level: NoticeLevel.success);
+      }
+    } catch (e) {
+      if (mounted) {
+        showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
+      }
+    }
+  }
+
+  /// 打开 Windows 密码对话框（仅 mode==1 服务端入口）。
+  /// dialog 内部走 set/reset/clear 三种 WS 协议，详见 [_WindowsPasswordDialog]。
+  /// 打开前实时拉一次 `GET /merchant?keyword={网吧名称}` 取最新 server_pwd 回填，
+  /// 避免缓存导致显示旧密码（保存/重置/清除后下次打开看到的也是最新值）。
+  /// 注意：keyword 是模糊查询，可能返回多条结果，需用 name 全匹配二次筛选。
+  Future<void> _openWindowsPasswordDialog(Terminal terminal) async {
+    if (_winPwdOpening) return; // 防重入：拉取期间用户重复点不再触发
+    if (!_ensureSameNetbar('openWinPwdDialog')) return;
+    final netbar = ref.read(currentNetbarProvider);
+    final merchantId = netbar.id;
+    final merchantName = netbar.name;
+    if (merchantId == null) {
+      if (mounted) {
+        showTopNotice(context, '当前网吧 id 为空', level: NoticeLevel.error);
+      }
+      return;
+    }
+    if (merchantName == null || merchantName.isEmpty) {
+      if (mounted) {
+        showTopNotice(context, '当前网吧名称为空，无法查询密码',
+            level: NoticeLevel.error);
+      }
+      return;
+    }
+    _winPwdOpening = true;
+    String initialPassword = '';
+    try {
+      // 用 keyword 模糊查询，再用 name 全匹配筛选（避免同名前缀干扰）
+      final list = await netbar_api.NetbarApi().getList(keyword: merchantName);
+      netbar_api.Netbar? matched;
+      for (final m in list) {
+        if (m.name == merchantName) {
+          matched = m;
+          break;
+        }
+      }
+      initialPassword = matched?.serverPwd ?? '';
+      debugPrint(
+          '[WinPwd] keyword=$merchantName matched=${matched?.id} hasPwd=${initialPassword.isNotEmpty}');
+    } catch (e) {
+      // 拉取失败不阻塞 UX：用空字符串兜底，用户可重新输入
+      debugPrint('[WinPwd] 拉取 server_pwd 失败: $e');
+    } finally {
+      _winPwdOpening = false;
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _WindowsPasswordDialog(
+        terminalName: terminal.name,
+        merchantId: merchantId,
+        initialPassword: initialPassword,
+      ),
+    );
+  }
+
+  bool _winPwdOpening = false;
+
+  /// 唤醒（fun:'awaken'，data:{mac}）。
+  Future<void> _doAwaken(Terminal terminal) async {
+    if (!_ensureSameNetbar('awakenViaWs')) return;
+    if (terminal.mac.isEmpty) {
+      if (mounted) {
+        showTopNotice(context, '终端缺少 MAC 地址，无法唤醒',
+            level: NoticeLevel.error);
+      }
+      return;
+    }
+    final netbar = ref.read(currentNetbarProvider);
+    final merchantId = netbar.id;
+    if (merchantId == null) {
+      if (mounted) {
+        showTopNotice(context, '当前网吧 id 为空', level: NoticeLevel.error);
+      }
+      return;
+    }
+    try {
+      final api = ref.read(terminalApiProvider);
+      await api.awakenViaWs(terminal.mac, merchantId: merchantId);
+      ref.read(operationLogApiProvider).add(
+            event: 'terminal.awaken',
+            description: '唤醒: ${terminal.name}',
+          );
+      if (mounted) {
+        showTopNotice(context, '唤醒指令已下发', level: NoticeLevel.success);
       }
     } catch (e) {
       if (mounted) {
@@ -2073,6 +2323,26 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       }
     }
   }
+}
+
+/// 终端管理按钮项（仅在 _buildTerminalManageGrid 内部使用）。
+/// 与 _ServiceItem 的差异：服务管理用固定 type 字符串路由分支，
+/// 终端管理直接绑定 onConfirm 闭包，更灵活（每按钮逻辑独立）。
+class _ManageItem {
+  final String label; // 按钮文字 / 弹窗标题
+  final String confirmText; // 弹窗 content（"确定要…吗？"），skipDefaultConfirm=true 时不使用
+  final IconData icon;
+  final Future<void> Function() onConfirm;
+  /// true：跳过 _confirmManageAction 的简单 AlertDialog，直接调 onConfirm
+  /// （onConfirm 内部应自行弹自定义 dialog，如 Windows 密码场景）
+  final bool skipDefaultConfirm;
+  const _ManageItem({
+    required this.label,
+    required this.confirmText,
+    required this.icon,
+    required this.onConfirm,
+    this.skipDefaultConfirm = false,
+  });
 }
 
 /// 服务管理按钮项（仅在 _buildServiceGrid 内部使用）。
@@ -2721,6 +2991,711 @@ class _RemarkEditDialogState extends State<_RemarkEditDialog> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 联系电话 hover 气泡按钮（终端详情头部）。
+/// 鼠标进入按钮 → 加载并显示 Overlay 气泡；首次加载后 State 内缓存（按钮生命周期内不再重复请求）。
+/// 鼠标在 按钮 ↔ 气泡 之间切换不会消失（200ms 延迟 + 气泡内 MouseRegion 标记）；
+/// 鼠标完全离开 200ms 后关闭气泡。
+class _PersonnelHoverButton extends ConsumerStatefulWidget {
+  final String netbarName;
+  final int? merchantId;
+  const _PersonnelHoverButton({required this.netbarName, required this.merchantId});
+
+  @override
+  ConsumerState<_PersonnelHoverButton> createState() =>
+      _PersonnelHoverButtonState();
+}
+
+class _PersonnelHoverButtonState extends ConsumerState<_PersonnelHoverButton> {
+  final GlobalKey _btnKey = GlobalKey();
+  OverlayEntry? _overlay;
+  Timer? _hideTimer;
+  bool _hoveringPopover = false;
+
+  // 缓存
+  bool _loaded = false;
+  bool _loading = false;
+  String? _error;
+  List<Map<String, dynamic>> _personnel = [];
+  Map<String, dynamic> _roleMap = {};
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    _overlay?.remove();
+    _overlay = null;
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    if (_loaded || _loading || widget.merchantId == null) return;
+    _loading = true;
+    _refreshOverlay();
+    try {
+      final api = ref.read(terminalApiProvider);
+      final data = await api.getMerchantPersonnel(widget.merchantId!);
+      if (!mounted) return;
+      _personnel = (data['personnel'] as List?)
+              ?.whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList() ??
+          [];
+      _roleMap = data['roleMap'] is Map
+          ? Map<String, dynamic>.from(data['roleMap'] as Map)
+          : <String, dynamic>{};
+      _loaded = true;
+      _loading = false;
+      _refreshOverlay();
+    } catch (e) {
+      if (!mounted) return;
+      _error = e.toString();
+      _loading = false;
+      _refreshOverlay();
+    }
+  }
+
+  void _refreshOverlay() {
+    _overlay?.markNeedsBuild();
+  }
+
+  void _showPopover() {
+    _hideTimer?.cancel();
+    if (_overlay != null) return;
+
+    final renderBox = _btnKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+    final btnPos = renderBox.localToGlobal(Offset.zero);
+    final btnSize = renderBox.size;
+    final screenSize = MediaQuery.of(context).size;
+    final isPhone = context.isPhone;
+
+    // 自适应宽度：手机端 = 屏宽 - 16；桌面端默认 420，但仍受屏宽约束
+    const sidePadding = 8.0;
+    const desktopMaxWidth = 420.0;
+    final popoverWidth = (isPhone
+            ? screenSize.width - sidePadding * 2
+            : desktopMaxWidth)
+        .clamp(220.0, screenSize.width - sidePadding * 2);
+
+    // 自适应水平位置：默认与按钮左对齐；右溢出则贴屏右；左溢出贴屏左
+    double popoverLeft = btnPos.dx;
+    if (popoverLeft + popoverWidth + sidePadding > screenSize.width) {
+      popoverLeft = screenSize.width - popoverWidth - sidePadding;
+    }
+    if (popoverLeft < sidePadding) popoverLeft = sidePadding;
+
+    _overlay = OverlayEntry(
+      builder: (ctx) => Stack(
+        children: [
+          // Barrier：仅手机端启用。桌面端 barrier 的 opaque hit test 会
+          // 屏蔽按钮 MouseRegion → 鼠标在按钮位置被判"离开" → 200ms 关闭
+          // → barrier 消失 → MouseRegion 重新感知 → 再开，形成弹/关循环。
+          // 桌面端依赖 hover-out 自动关，无需 barrier。
+          if (isPhone)
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _closeImmediately,
+                onPanDown: (_) => _closeImmediately(),
+                child: const SizedBox.expand(),
+              ),
+            ),
+          Positioned(
+            left: popoverLeft,
+            top: btnPos.dy + btnSize.height + 4,
+            child: MouseRegion(
+              onEnter: (_) {
+                _hoveringPopover = true;
+                _hideTimer?.cancel();
+              },
+              onExit: (_) {
+                _hoveringPopover = false;
+                _scheduleHide();
+              },
+              child: Material(
+                elevation: 8,
+                borderRadius: BorderRadius.circular(12),
+                color: Colors.white,
+                child: Container(
+                  width: popoverWidth,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: _buildPopoverContent(),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    Overlay.of(context).insert(_overlay!);
+    // 首次显示时触发加载（已缓存则秒开）
+    _load();
+  }
+
+  /// 立即关闭气泡（barrier 点击触发；不走延迟）。
+  void _closeImmediately() {
+    _hideTimer?.cancel();
+    _hoveringPopover = false;
+    _overlay?.remove();
+    _overlay = null;
+  }
+
+  void _scheduleHide() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(milliseconds: 200), () {
+      if (!_hoveringPopover && _overlay != null) {
+        _overlay!.remove();
+        _overlay = null;
+      }
+    });
+  }
+
+  String _resolveAvatarUrl(String avatar) {
+    if (avatar.isEmpty) return '';
+    if (avatar.startsWith('http')) return avatar;
+    // baseUrl=https://admin.wwls.net/api → origin=https://admin.wwls.net
+    final origin = Uri.parse(AppConfig.baseUrl).origin;
+    final cleaned = avatar.startsWith('/') ? avatar.substring(1) : avatar;
+    return '$origin/$cleaned';
+  }
+
+  String _resolveRoleLabel(dynamic roleTag) {
+    if (roleTag == null) return '未设置角色';
+    final v = _roleMap[roleTag.toString()];
+    return v?.toString() ?? '未设置角色';
+  }
+
+  Future<void> _copyPhone(String phone, String name) async {
+    if (phone.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: phone));
+    if (!mounted) return;
+    showTopNotice(context, '已复制 $name 的电话: $phone',
+        level: NoticeLevel.success);
+  }
+
+  /// 手机端拉起系统拨号面板（tel: URL scheme）。
+  /// 桌面/Web 端不调用此方法（按钮仅在 isPhone 时显示）。
+  Future<void> _dialPhone(String phone, String name) async {
+    if (phone.isEmpty) return;
+    final uri = Uri(scheme: 'tel', path: phone);
+    try {
+      final ok = await launchUrl(uri);
+      if (!ok && mounted) {
+        showTopNotice(context, '无法拉起拨号面板：$phone',
+            level: NoticeLevel.error);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      showTopNotice(context, '拨号失败: $e', level: NoticeLevel.error);
+    }
+  }
+
+  Widget _buildPopoverContent() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              '${widget.netbarName} - 联系电话',
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Divider(height: 1),
+          ),
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.all(20),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_error != null)
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Text('加载失败: $_error',
+                  style: const TextStyle(color: Colors.red, fontSize: 12)),
+            )
+          else if (_personnel.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(20),
+              child: Center(
+                  child: Text('暂无联系人',
+                      style: TextStyle(color: Colors.grey, fontSize: 12))),
+            )
+          else
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 400),
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
+                itemCount: _personnel.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 2),
+                itemBuilder: (_, i) => _buildItem(_personnel[i]),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildItem(Map<String, dynamic> p) {
+    final nickname = p['nickname']?.toString() ?? '';
+    final avatar = p['avatar']?.toString() ?? '';
+    final phone = p['phone_number']?.toString() ?? '';
+    final roleLabel = _resolveRoleLabel(p['role_tag']);
+    final avatarUrl = _resolveAvatarUrl(avatar);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
+        children: [
+          ClipOval(
+            child: SizedBox(
+              width: 36,
+              height: 36,
+              child: avatarUrl.isEmpty
+                  ? _avatarFallback(nickname)
+                  : Image.network(
+                      avatarUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _avatarFallback(nickname),
+                    ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(nickname,
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEFF6FF),
+                        borderRadius: BorderRadius.circular(3),
+                        border: Border.all(color: const Color(0xFFBFDBFE)),
+                      ),
+                      child: Text(roleLabel,
+                          style: const TextStyle(
+                              fontSize: 10, color: Color(0xFF2563EB))),
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(phone,
+                          style: TextStyle(
+                              fontSize: 11, color: Colors.grey.shade600),
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 6),
+          OutlinedButton.icon(
+            onPressed: phone.isEmpty ? null : () => _copyPhone(phone, nickname),
+            icon: const Icon(LucideIcons.copy,
+                size: 12, color: Color(0xFF2563EB)),
+            label: const Text('复制',
+                style: TextStyle(fontSize: 11, color: Color(0xFF2563EB))),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(56, 28),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              side: const BorderSide(color: Color(0xFFBFDBFE)),
+              backgroundColor: const Color(0xFFEFF6FF),
+              shape:
+                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+            ),
+          ),
+          // 手机端：额外加"拨打"按钮，调系统 tel: URL scheme 拉起拨号面板
+          if (context.isPhone) ...[
+            const SizedBox(width: 6),
+            OutlinedButton.icon(
+              onPressed: phone.isEmpty ? null : () => _dialPhone(phone, nickname),
+              icon: const Icon(LucideIcons.phone,
+                  size: 12, color: Color(0xFF16A34A)),
+              label: const Text('拨打',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF16A34A))),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(56, 28),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                side: const BorderSide(color: Color(0xFFBBF7D0)), // green-200
+                backgroundColor: const Color(0xFFF0FDF4), // green-50
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(4)),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _avatarFallback(String nickname) {
+    return Container(
+      color: const Color(0xFFE5E7EB),
+      alignment: Alignment.center,
+      child: Text(
+        nickname.isNotEmpty ? nickname.characters.first : '?',
+        style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF6B7280)),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => _showPopover(),
+      onExit: (_) => _scheduleHide(),
+      child: Tooltip(
+        message: '联系电话',
+        child: InkWell(
+          key: _btnKey,
+          onTap: _showPopover, // 触屏 / 无鼠标设备点击触发
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            width: 28,
+            height: 28,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: const Color(0xFFEFF6FF), // 浅蓝底
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: const Color(0xFFBFDBFE)),
+            ),
+            child: const Icon(
+              LucideIcons.phone,
+              size: 14,
+              color: Color(0xFF2563EB),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 服务端 Windows 密码对话框（仅 mode==1 终端可用）。
+/// 参考 toolboxPage `ServerWindowsPasswordDialog.vue` 设计：
+///   - step='set'：初始密码（≥8 位）→ update.windows_pass
+///   - step='reset'：忘记密码后强口令重置（≥8+大写+小写+数字）→ update.reset_windows_pass
+///   - 清除：弹二次确认 → update.clear_windows_pass
+class _WindowsPasswordDialog extends ConsumerStatefulWidget {
+  final String terminalName;
+  final int merchantId;
+  /// set step 输入框的初始值（一般是后端 server_pwd 当前密码）。
+  /// reset step 切换时不沿用此值（强口令场景必须用户重新输入）。
+  final String initialPassword;
+  const _WindowsPasswordDialog({
+    required this.terminalName,
+    required this.merchantId,
+    this.initialPassword = '',
+  });
+
+  @override
+  ConsumerState<_WindowsPasswordDialog> createState() =>
+      _WindowsPasswordDialogState();
+}
+
+class _WindowsPasswordDialogState
+    extends ConsumerState<_WindowsPasswordDialog> {
+  // step：'set' 设置初始密码 / 'reset' 重置（强口令）
+  String _step = 'set';
+  final TextEditingController _pwdCtrl = TextEditingController();
+  String? _errorText;
+  bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 回填当前已设置的密码（仅 set step 默认显示；reset 切换时清空）
+    _pwdCtrl.text = widget.initialPassword;
+  }
+
+  @override
+  void dispose() {
+    _pwdCtrl.dispose();
+    super.dispose();
+  }
+
+  /// 设置场景校验：≥8 位
+  String? _validateSet(String v) {
+    if (v.isEmpty) return '请输入密码';
+    if (v.length < 8) return '密码至少 8 位';
+    return null;
+  }
+
+  /// 重置场景校验：≥8 + 大写 + 小写 + 数字（与 toolboxPage 一致）
+  String? _validateReset(String v) {
+    if (v.isEmpty) return '请输入密码';
+    if (v.length < 8) return '密码至少 8 位';
+    if (!RegExp(r'[A-Z]').hasMatch(v)) return '密码必须包含大写字母';
+    if (!RegExp(r'[a-z]').hasMatch(v)) return '密码必须包含小写字母';
+    if (!RegExp(r'[0-9]').hasMatch(v)) return '密码必须包含数字';
+    return null;
+  }
+
+  Future<void> _handleSubmit() async {
+    if (_submitting) return;
+    final pwd = _pwdCtrl.text;
+    final err = _step == 'set' ? _validateSet(pwd) : _validateReset(pwd);
+    if (err != null) {
+      setState(() => _errorText = err);
+      return;
+    }
+    setState(() {
+      _errorText = null;
+      _submitting = true;
+    });
+    try {
+      // HTTP：POST /merchant/setPwd/{id}
+      // - 保存（set）：body {password}
+      // - 重置（reset）：body {password, reset:1}
+      await netbar_api.NetbarApi().setPassword(
+        widget.merchantId,
+        password: pwd,
+        reset: _step == 'reset',
+      );
+      ref.read(operationLogApiProvider).add(
+            event: _step == 'set' ? 'win.pwd.set' : 'win.pwd.reset',
+            description:
+                '${_step == "set" ? "保存" : "重置"} Windows 密码: ${widget.terminalName}',
+          );
+      if (!mounted) return;
+      showTopNotice(context,
+          _step == 'set' ? 'Windows 密码已保存' : 'Windows 密码已重置',
+          level: NoticeLevel.success);
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (!mounted) return;
+      showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<void> _handleClear() async {
+    if (_submitting) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清除 Windows 密码'),
+        content: const Text('确定要清除当前服务端 Windows 密码吗？'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('确认')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _submitting = true);
+    try {
+      // HTTP：POST /merchant/clearAllPwd FormData merchant_ids[]={id}
+      await netbar_api.NetbarApi()
+          .clearAllPasswords(merchantIds: [widget.merchantId]);
+      ref.read(operationLogApiProvider).add(
+            event: 'win.pwd.clear',
+            description: '清除 Windows 密码: ${widget.terminalName}',
+          );
+      if (!mounted) return;
+      showTopNotice(context, 'Windows 密码已清除',
+          level: NoticeLevel.success);
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (!mounted) return;
+      showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  void _switchStep(String newStep) {
+    setState(() {
+      _step = newStep;
+      _pwdCtrl.clear();
+      _errorText = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isReset = _step == 'reset';
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 标题
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      isReset ? '重置服务端windows密码' : '服务端windows密码',
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(LucideIcons.x, size: 18),
+                    splashRadius: 18,
+                    onPressed: _submitting
+                        ? null
+                        : () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // 描述（仅 set step 显示）
+            if (!isReset)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+                child: Text(
+                  '设置安装服务端电脑 windows 密码，用于同步登录',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+              ),
+            // 输入框
+            Padding(
+              padding: EdgeInsets.fromLTRB(20, isReset ? 16 : 8, 20, 8),
+              child: TextField(
+                controller: _pwdCtrl,
+                obscureText: false, // 与 toolboxPage 一致：明文显示便于复制
+                enabled: !_submitting,
+                decoration: InputDecoration(
+                  labelText: isReset ? '新密码' : null,
+                  hintText: isReset ? '请输入新密码' : '请输入密码',
+                  errorText: _errorText,
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(6)),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+                ),
+                onChanged: (_) {
+                  if (_errorText != null) {
+                    setState(() => _errorText = null);
+                  }
+                },
+                onSubmitted: (_) => _handleSubmit(),
+              ),
+            ),
+            // 强口令提示（reset step）
+            if (isReset)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+                child: Text(
+                  '密码必须大于等于 8 位（大写 + 小写 + 数字）',
+                  style: TextStyle(
+                      fontSize: 11, color: Colors.red.shade600),
+                ),
+              ),
+            // 链接区
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+              child: Row(
+                children: [
+                  if (!isReset)
+                    InkWell(
+                      onTap: _submitting ? null : () => _switchStep('reset'),
+                      child: Text(
+                        '忘记密码？重置 windows 密码',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _submitting
+                              ? Colors.grey.shade400
+                              : const Color(0xFF409EFF),
+                        ),
+                      ),
+                    )
+                  else
+                    InkWell(
+                      onTap: _submitting ? null : () => _switchStep('set'),
+                      child: Text(
+                        '返回设置密码',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _submitting
+                              ? Colors.grey.shade400
+                              : const Color(0xFF409EFF),
+                        ),
+                      ),
+                    ),
+                  const Spacer(),
+                  InkWell(
+                    onTap: _submitting ? null : _handleClear,
+                    child: Text(
+                      '清除密码',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _submitting
+                            ? Colors.grey.shade400
+                            : Colors.red.shade600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // 底部按钮
+            Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: _submitting
+                        ? null
+                        : () => Navigator.of(context).pop(),
+                    child: const Text('取消'),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: _submitting ? null : _handleSubmit,
+                    child: _submitting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white))
+                        : const Text('保存'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

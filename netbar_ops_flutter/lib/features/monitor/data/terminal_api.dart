@@ -417,33 +417,47 @@ class TerminalApi {
           data = res['data'];
         }
       }
+      // 诊断日志：定位"磁盘列表渲染 0 条"问题
+      debugPrint('[getFiles] cleanPath="$cleanPath" '
+          'data.runtimeType=${data?.runtimeType} '
+          'data isMap<String,dynamic>=${data is Map<String, dynamic>} '
+          'data isMap=${data is Map} '
+          'firstKey=${data is Map && (data as Map).isNotEmpty ? (data as Map).keys.first : "(empty)"}');
 
       // cleanPath 为空时，返回磁盘列表
       if (cleanPath.isEmpty) {
+        // 兼容后端两种 key 格式：'C:' 或 'C:\'（带尾部反斜杠）
+        // 统一剥掉尾部反斜杠，使下游 path 一律为 'C:' 形式（[isDriveRoot] 判断依赖此）
+        final driveRegex = RegExp(r'^[A-Za-z]:\\?$');
         // 可能是数组 ['C:', 'D:', 'E:'] 或对象 {'C:': {...}, 'D:': {...}}
         if (data is List) {
           return data
-              .where((d) => d is String && RegExp(r'^[A-Za-z]:$').hasMatch(d))
-              .map((d) => TerminalFile(
-                    name: d.toString(),
-                    path: d.toString(),
-                    isDirectory: true,
-                    size: 0,
-                    updatedAt: '',
-                    isDrive: true,
-                  ))
+              .where((d) => d is String && driveRegex.hasMatch(d))
+              .map((d) {
+                final normalized =
+                    d.toString().replaceAll(RegExp(r'\\+$'), '');
+                return TerminalFile(
+                  name: normalized,
+                  path: normalized,
+                  isDirectory: true,
+                  size: 0,
+                  updatedAt: '',
+                  isDrive: true,
+                );
+              })
               .toList();
         }
         if (data is Map<String, dynamic>) {
           return data.entries
-              .where((e) => RegExp(r'^[A-Za-z]:$').hasMatch(e.key))
+              .where((e) => driveRegex.hasMatch(e.key))
               .map((e) {
             final info = e.value is Map<String, dynamic>
                 ? e.value as Map<String, dynamic>
                 : <String, dynamic>{};
+            final normalized = e.key.replaceAll(RegExp(r'\\+$'), '');
             return TerminalFile(
-              name: e.key,
-              path: e.key,
+              name: normalized,
+              path: normalized,
               isDirectory: true,
               size: 0,
               updatedAt: info['lwtime'] ?? '',
@@ -678,6 +692,16 @@ class TerminalApi {
     }
   }
 
+  /// 获取网吧联系人列表 —— 中央 HTTP `GET /merchant/{merchantId}/personnel`
+  /// 返回 raw map：`{personnel: [{id, nickname, avatar, phone_number, role_tag}], roleMap: {1:'网维',...}}`
+  /// 由终端详情页"联系电话" hover 气泡使用。
+  Future<Map<String, dynamic>> getMerchantPersonnel(int merchantId) async {
+    final response = await _client.get('/merchant/$merchantId/personnel');
+    final data = response.data;
+    if (data is Map<String, dynamic>) return data;
+    return <String, dynamic>{};
+  }
+
   /// 保存终端备注 —— 中央 HTTP `POST /terminals/{id}/remark`
   /// body: `{"remark": "<p>...</p>"}`，content-type: application/json
   /// remark 是 HTML 字符串（由富文本编辑器 Delta → HTML 转换得到）。
@@ -689,11 +713,36 @@ class TerminalApi {
   }
 
   /// 远程唤醒 (WOL) —— **保持 frp HTTP**，未走 WS。
-  /// TODO(WS): 后端 peer 通道暂不支持 fun:'awaken'。WOL 魔术包需由本地网关广播，
-  /// 目标机器关机时 peer 通道无在线 agent 可代发；后端支持后再切 WS。
-  /// 参考 toolboxPage `useRemoteAwaken.js:152` 同步保留 HTTP。
+  /// 历史路径：兼容旧入口 (`_remoteAction(seatId, 'wakeup')`) 不动。
+  /// 新入口"终端管理 → 唤醒"使用 [awakenViaWs]（WS + 携带 mac）。
+  /// 参考 toolboxPage `useRemoteAwaken.js:152` 同步保留 HTTP 兜底。
   Future<void> wakeOnLan(String seatId, {required String domain}) async {
     await _netbarGet(domain, '/awaken', queryParameters: {'seat': seatId});
+  }
+
+  /// 唤醒终端（WOL）—— 走 WebSocket **裸 event 帧**（非 peer 包装）。
+  /// 协议：`{event:'awaken', id:<auto>, merchant_id, data:{mac}}`
+  /// 由"终端管理 → 唤醒"按钮调用，仅离线终端显示入口。
+  /// 与 [wakeOnLan] 区别：本方法走后端 peer/awaken 转发，依赖网吧内仍在线的 agent
+  /// 代发魔术包；旧 [wakeOnLan] 走 frp HTTP 直接由网吧本地网关发。
+  Future<void> awakenViaWs(String mac, {required int merchantId}) async {
+    final res = await _ws.requestRawEvent(
+      event: 'awaken',
+      customFields: {
+        'merchant_id': merchantId,
+        'data': {'mac': mac},
+      },
+    );
+    if (res is Map) {
+      final code = res['code'];
+      if (code != null && code != 0 && code != '0') {
+        throw ApiError(
+          code: code is int ? code : int.tryParse(code.toString()),
+          message: (res['msg'] ?? res['message'] ?? '唤醒失败').toString(),
+          raw: res,
+        );
+      }
+    }
   }
 
   // ===== 硬件信息格式化辅助 =====
