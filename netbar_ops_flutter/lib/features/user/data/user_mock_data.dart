@@ -67,6 +67,9 @@ class User {
   final List<int> netbarIds;
   /// 该用户在当前网吧内所属的组ID列表（网吧成员接口返回）
   final List<int> netbarGroupIds;
+  /// 可控网吧 ID 列表（用户管理弹窗的"可控网吧"穿梭框数据源）
+  /// 兼容后端两种返回格式：merchants[{id,...}] 或 merchant_ids[]
+  final List<int> merchantIds;
   final String? email;
   final String? phone;
   final bool is2FABound;
@@ -91,6 +94,7 @@ class User {
     this.isBind2fa = false,
     this.netbarIds = const [],
     this.netbarGroupIds = const [],
+    this.merchantIds = const [],
     this.email,
     this.phone,
     this.is2FABound = false,
@@ -100,6 +104,29 @@ class User {
 
   /// 登录有效时长（小时）
   double? get refreshTtlHours => tokenRefreshTtl != null ? tokenRefreshTtl! / 3600 : null;
+
+  /// 解析"可控网吧"ID 列表：优先 merchants[{id,...}]，回退 merchant_ids[]
+  static List<int> _parseMerchantIds(Map<String, dynamic> json) {
+    final raw = json['merchants'];
+    if (raw is List) {
+      final ids = <int>[];
+      for (final e in raw) {
+        if (e is Map && e['id'] != null) {
+          final id = int.tryParse(e['id'].toString()) ?? 0;
+          if (id > 0) ids.add(id);
+        }
+      }
+      return ids;
+    }
+    final rawIds = json['merchant_ids'];
+    if (rawIds is List) {
+      return rawIds
+          .map((e) => int.tryParse(e.toString()) ?? 0)
+          .where((v) => v > 0)
+          .toList();
+    }
+    return const [];
+  }
 
   factory User.fromJson(Map<String, dynamic> json) {
     // 判断是否是管理员
@@ -170,6 +197,7 @@ class User {
       isBind2fa: json['is_bind_2fa'] == true || json['is_bind_2fa'] == 1,
       netbarIds: netbarIds,
       netbarGroupIds: groupIds,
+      merchantIds: _parseMerchantIds(json),
       email: json['email']?.toString(),
       phone: json['phone']?.toString() ?? json['phone_number']?.toString(),
       is2FABound: json['is_bind_2fa'] == true || json['is_bind_2fa'] == 1 || json['is_2fa_bound'] == true,

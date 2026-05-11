@@ -9,6 +9,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../data/user_api.dart';
+import 'merchant_transfer.dart';
 
 /// 业主权限分组ID（对标 Vue 端 UserPage.vue 第 625 行）
 const int _ownerGroupId = 21;
@@ -40,6 +41,7 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
   bool _isManager = false;
   List<int> _selectedRoleIds = [];
   List<int> _selectedPermissionIds = [];
+  List<int> _selectedMerchantIds = [];
   List<Role> _roleList = [];
   List<PermissionObject> _permissionList = [];
   bool _creating = false;
@@ -173,6 +175,7 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
         isManager: _isManager,
         roleIds: finalRoleIds.isNotEmpty ? finalRoleIds : null,
         permissionIds: finalPermissionIds.isNotEmpty ? finalPermissionIds : null,
+        merchantIds: _selectedMerchantIds,
       );
       if (!mounted) return;
       showTopNotice(context, '用户创建成功', level: NoticeLevel.success);
@@ -188,12 +191,16 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
   @override
   Widget build(BuildContext context) {
     final isNarrow = context.isNarrow;
-    final dialogWidth = isNarrow ? MediaQuery.of(context).size.width * 0.95 : 500.0;
+    final screenSize = MediaQuery.of(context).size;
+    final dialogWidth = isNarrow ? screenSize.width * 0.95 : 760.0;
+    final dialogMaxHeight = screenSize.height * 0.85 < 820
+        ? screenSize.height * 0.85
+        : 820.0;
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: dialogWidth, maxHeight: 600),
+        constraints: BoxConstraints(maxWidth: dialogWidth, maxHeight: dialogMaxHeight),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -349,6 +356,15 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
               ],
             ],
           ),
+        ),
+        const SizedBox(height: 16),
+
+        // 可控网吧（对标 Vue 端 UserPage.vue 第 263-339 行的穿梭框）
+        _buildLabel('可控网吧'),
+        const SizedBox(height: 6),
+        MerchantTransfer(
+          selectedIds: _selectedMerchantIds,
+          onChanged: (ids) => setState(() => _selectedMerchantIds = ids),
         ),
       ],
     );

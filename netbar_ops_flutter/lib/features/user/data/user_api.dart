@@ -133,6 +133,7 @@ class UserApi {
     bool isManager = false,
     List<int>? roleIds,
     List<int>? permissionIds,
+    List<int>? merchantIds,
   }) async {
     final formData = FormData();
     formData.fields.add(MapEntry('username', username));
@@ -152,6 +153,11 @@ class UserApi {
         formData.fields.add(MapEntry('permission_ids[]', id.toString()));
       }
     }
+    if (merchantIds != null) {
+      for (final id in merchantIds) {
+        formData.fields.add(MapEntry('merchant_ids[]', id.toString()));
+      }
+    }
 
     await _client.post('/user', data: formData);
   }
@@ -166,6 +172,7 @@ class UserApi {
     bool? isManager,
     List<int>? roleIds,
     List<int>? permissionIds,
+    List<int>? merchantIds,
   }) async {
     final formData = FormData();
     if (username != null) formData.fields.add(MapEntry('username', username));
@@ -187,6 +194,11 @@ class UserApi {
     if (permissionIds != null) {
       for (final id in permissionIds) {
         formData.fields.add(MapEntry('permission_ids[]', id.toString()));
+      }
+    }
+    if (merchantIds != null) {
+      for (final id in merchantIds) {
+        formData.fields.add(MapEntry('merchant_ids[]', id.toString()));
       }
     }
 
