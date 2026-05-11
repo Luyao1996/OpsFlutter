@@ -263,11 +263,15 @@ class AuthApi {
     }, options: Options(extra: {'ignoreUnauthorized': true}));
   }
 
-  /// 获取 2FA 一次性验证码 —— GET /passport/twoFactorCode
+  /// 获取 2FA 一次性验证码 —— GET /passport/twoFactorCode?terminal_id={id}
   /// 返回示例：`{"code":"169557","period":30,"expires_in":22}`
-  /// 由"个人中心 → 复制 2FA"调用；后端基于当前登录态生成 TOTP 码。
-  Future<Map<String, dynamic>> getTwoFactorCode() async {
-    final response = await _client.get('/passport/twoFactorCode');
+  /// 由"终端详情 → 服务管理 → 复制 2FA"调用；后端基于当前登录态 + 目标终端生成 TOTP 码。
+  /// [terminalId] 必传：后端按终端 id 区分密钥（不同终端 TOTP 不同）。
+  Future<Map<String, dynamic>> getTwoFactorCode({required int terminalId}) async {
+    final response = await _client.get(
+      '/passport/twoFactorCode',
+      queryParameters: {'terminal_id': terminalId},
+    );
     final data = response.data;
     if (data is Map<String, dynamic>) return data;
     return <String, dynamic>{};

@@ -692,6 +692,28 @@ class TerminalApi {
     }
   }
 
+  /// 获取终端操作日志 —— 中央 HTTP `GET /terminals/{id}/operationLogs`
+  /// 用于"操作日志" Tab，显示 2FA 解锁记录等操作历史。
+  /// 返回 raw map：`{paginator: {data:[...], current_page, last_page, per_page, total, ...}, eventMap:{event:中文名}}`
+  /// [event] 可选过滤（如 'unlock.manual' / 'unlock.local'，不传则后端返回全部）
+  /// [page] 页码（默认 1，per_page 由后端控制，当前为 20）
+  Future<Map<String, dynamic>> getOperationLogs(
+    int terminalId, {
+    String? event,
+    int? page,
+  }) async {
+    final response = await _client.get(
+      '/terminals/$terminalId/operationLogs',
+      queryParameters: <String, dynamic>{
+        if (event != null && event.isNotEmpty) 'event': event,
+        if (page != null) 'page': page,
+      },
+    );
+    final data = response.data;
+    if (data is Map<String, dynamic>) return data;
+    return <String, dynamic>{};
+  }
+
   /// 获取网吧联系人列表 —— 中央 HTTP `GET /merchant/{merchantId}/personnel`
   /// 返回 raw map：`{personnel: [{id, nickname, avatar, phone_number, role_tag}], roleMap: {1:'网维',...}}`
   /// 由终端详情页"联系电话" hover 气泡使用。

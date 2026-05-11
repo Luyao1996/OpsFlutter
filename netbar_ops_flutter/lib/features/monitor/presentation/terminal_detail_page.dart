@@ -171,7 +171,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     {'icon': LucideIcons.terminal, 'label': '终端命令'},
     {'icon': LucideIcons.cpu, 'label': '硬件配置'},
     {'icon': LucideIcons.network, 'label': '网络监控'},
-    {'icon': LucideIcons.fileSpreadsheet, 'label': '日志分析'},
+    {'icon': LucideIcons.fileSpreadsheet, 'label': '操作日志'},
   ];
 
   @override
@@ -502,13 +502,13 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                       width: 6,
                       height: 6,
                       decoration: BoxDecoration(
-                        color: terminal.status == 1 ? AppColors.green : Colors.grey,
+                        color: terminal.status == 0 ? Colors.grey : AppColors.green,
                         shape: BoxShape.circle,
                       ),
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      '${terminal.statusString} | ${terminal.ip}'
+                      '${terminal.status == 0 ? '离线' : '在线'} | ${terminal.ip}'
                       '${(terminal.version != null && terminal.version!.isNotEmpty) ? ' | v${terminal.version}' : ''}',
                       style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
                     ),
@@ -639,14 +639,14 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                           width: 6,
                           height: 6,
                           decoration: BoxDecoration(
-                            color: terminal.status == 1 ? AppColors.green : Colors.grey,
+                            color: terminal.status == 0 ? Colors.grey : AppColors.green,
                             shape: BoxShape.circle,
                           ),
                         ),
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
-                            '${terminal.statusString} | ${terminal.ip}'
+                            '${terminal.status == 0 ? '离线' : '在线'} | ${terminal.ip}'
                             '${(terminal.version != null && terminal.version!.isNotEmpty) ? ' | v${terminal.version}' : ''}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -1257,7 +1257,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       return HardwareInfoTab(terminalId: terminal.id, seatId: terminal.seatId);
     } else if (_selectedTab == '网络监控') {
       return NetworkMonitorTab(seatId: terminal.seatId);
-    } else if (_selectedTab == '日志分析') {
+    } else if (_selectedTab == '操作日志') {
       return LogManagerTab(terminalId: terminal.id);
     }
     return Center(child: Text('功能模块 [$_selectedTab] 开发中...'));
@@ -1433,6 +1433,14 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         type: '__windows_pwd__',
         icon: LucideIcons.keyRound,
       ),
+      // 复制 2FA：服务管理整体仅 mode==1 显示，与你需求一致。
+      // 不弹 dialog，调 authApi.getTwoFactorCode 拿一次性 code → 写剪贴板 + toast
+      const _ServiceItem(
+        label: '复制2FA',
+        name: '2FA',
+        type: '__copy_2fa__',
+        icon: LucideIcons.shieldCheck,
+      ),
     ];
     Widget card(_ServiceItem it, {bool compact = false}) {
       return _buildPowerCard(
@@ -1453,38 +1461,42 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         ],
       );
     }
-    // 窄屏：两行各 2 个
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(child: card(items[0], compact: true)),
-            const SizedBox(width: 12),
-            Expanded(child: card(items[1], compact: true)),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(child: card(items[2], compact: true)),
-            const SizedBox(width: 12),
-            Expanded(child: card(items[3], compact: true)),
-          ],
-        ),
-      ],
-    );
+    // 窄屏：每行 2 个，动态适应 items.length（最后一行不满则右侧留白）
+    // 历史 bug：曾经写死 items[0..3]，新增"复制2FA"后第 5 个按钮被吞。
+    final rows = <Widget>[];
+    for (var i = 0; i < items.length; i += 2) {
+      rows.add(Row(
+        children: [
+          Expanded(child: card(items[i], compact: true)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: i + 1 < items.length
+                ? card(items[i + 1], compact: true)
+                : const SizedBox(),
+          ),
+        ],
+      ));
+      if (i + 2 < items.length) rows.add(const SizedBox(height: 12));
+    }
+    return Column(children: rows);
   }
 
   /// 简单确认对话框（"确认X吗？"），与电源管理的强校验对话框不同：
   /// 服务管理操作明确选用了简单 AlertDialog，避免每次让用户打字（用户决策 selection B）。
   /// 路由：
   ///   - `__windows_pwd__` → 直接弹自定义 dialog（不走简单确认）
+  ///   - `__copy_2fa__` → 直接调 [_handleCopy2FA]（无确认，立即复制 + toast）
   ///   - `__disconnect_remote__` → 简单确认 → [_disconnectRemoteService]
   ///   - 其它（frpc/client/router） → 简单确认 → [_restartService]
   void _confirmRestartService(Terminal terminal, _ServiceItem item) {
     // Windows 密码自有完整 dialog（设置/重置/清除），跳过简单确认直接打开
     if (item.type == '__windows_pwd__') {
       _openWindowsPasswordDialog(terminal);
+      return;
+    }
+    // 复制 2FA 是无副作用动作（仅本地剪贴板 + 调一次接口），不走二次确认
+    if (item.type == '__copy_2fa__') {
+      _handleCopy2FA();
       return;
     }
     showDialog<bool>(
@@ -1699,6 +1711,36 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       }
     }
   }
+
+  /// 复制 2FA 一次性验证码 —— 调 authApi.getTwoFactorCode(terminalId) 拿 6 位 code，
+  /// 写入剪贴板 + toast 提示完整 code + 剩余秒数。不弹 dialog。
+  /// 后端按 terminal_id 区分 TOTP 密钥，必须传当前终端 id。
+  Future<void> _handleCopy2FA() async {
+    if (_copying2FA) return;
+    setState(() => _copying2FA = true);
+    try {
+      final api = ref.read(authApiProvider);
+      final res = await api.getTwoFactorCode(terminalId: widget.terminalId);
+      final code = res['code']?.toString() ?? '';
+      final expiresIn = res['expires_in'];
+      if (code.isEmpty) {
+        throw Exception('2FA 码为空');
+      }
+      await Clipboard.setData(ClipboardData(text: code));
+      if (!mounted) return;
+      final msg = expiresIn is int
+          ? '2FA 已复制（$code，剩 $expiresIn 秒）'
+          : '2FA 已复制：$code';
+      showTopNotice(context, msg, level: NoticeLevel.success);
+    } catch (e) {
+      if (!mounted) return;
+      showTopNotice(context, '复制 2FA 失败：$e', level: NoticeLevel.error);
+    } finally {
+      if (mounted) setState(() => _copying2FA = false);
+    }
+  }
+
+  bool _copying2FA = false;
 
   /// 打开 Windows 密码对话框（仅 mode==1 服务端入口）。
   /// dialog 内部走 set/reset/clear 三种 WS 协议，详见 [_WindowsPasswordDialog]。
