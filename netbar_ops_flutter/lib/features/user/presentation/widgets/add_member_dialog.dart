@@ -4,10 +4,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
-import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/utils/top_notice.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/user_api.dart';
 import 'merchant_transfer.dart';
 
@@ -190,57 +190,11 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final isNarrow = context.isNarrow;
-    final screenSize = MediaQuery.of(context).size;
-    final dialogWidth = isNarrow ? screenSize.width * 0.95 : 760.0;
-    final dialogMaxHeight = screenSize.height * 0.85 < 820
-        ? screenSize.height * 0.85
-        : 820.0;
-
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: dialogWidth, maxHeight: dialogMaxHeight),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildHeader(),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: _buildForm(),
-              ),
-            ),
-            _buildFooter(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
-      ),
-      child: Row(
-        children: [
-          const Icon(LucideIcons.userPlus, size: 20, color: AppColors.iosBlue),
-          const SizedBox(width: 10),
-          const Expanded(
-            child: Text(
-              '添加成员',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-          ),
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(LucideIcons.x, size: 18),
-            splashRadius: 18,
-          ),
-        ],
-      ),
+    return ResponsiveDialogScaffold(
+      title: '添加成员',
+      maxWidth: 760,
+      body: _buildForm(),
+      footer: _buildFooter(),
     );
   }
 
@@ -537,38 +491,32 @@ class _AddMemberDialogState extends ConsumerState<AddMemberDialog> {
   }
 
   Widget _buildFooter() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFFE5E7EB))),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        const SizedBox(width: 12),
+        ElevatedButton(
+          onPressed: _creating ? null : _handleCreate,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.iosBlue,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            elevation: 0,
           ),
-          const SizedBox(width: 12),
-          ElevatedButton(
-            onPressed: _creating ? null : _handleCreate,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.iosBlue,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              elevation: 0,
-            ),
-            child: _creating
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
-                : const Text('确认添加'),
-          ),
-        ],
-      ),
+          child: _creating
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : const Text('确认添加'),
+        ),
+      ],
     );
   }
 }

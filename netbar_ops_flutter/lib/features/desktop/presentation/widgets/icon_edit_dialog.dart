@@ -6,7 +6,9 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/config/app_config.dart';
 import '../../../../core/storage/token_store.dart';
 import '../../../../core/utils/icon_loader.dart';
+import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/utils/top_notice.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/desktop_model.dart';
 import '../../data/desktop_api.dart';
 import 'file_select_dialog.dart';
@@ -234,9 +236,10 @@ class _IconEditDialogState extends State<IconEditDialog> {
   }
 
   Future<void> _openFileDialog() async {
-    final file = await showDialog<ServerFile>(
-      context: context,
-      builder: (context) => const FileSelectDialog(),
+    final file = await showAdaptive<ServerFile>(
+      context,
+      (context) => const FileSelectDialog(),
+      routeName: '/dialog/file-select',
     );
     if (file == null) return;
 
@@ -323,48 +326,11 @@ class _IconEditDialogState extends State<IconEditDialog> {
   Widget build(BuildContext context) {
     final isEditing = widget.initialIcon != null;
 
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: SizedBox(
-        width: 640,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              decoration: const BoxDecoration(
-                border: Border(bottom: BorderSide(color: Color(0xFFF0F2F5))),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    isEditing ? '编辑图标' : '添加图标',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF1F2937),
-                    ),
-                  ),
-                  InkWell(
-                    onTap: () => Navigator.pop(context),
-                    borderRadius: BorderRadius.circular(4),
-                    child: const Padding(
-                      padding: EdgeInsets.all(4),
-                      child: Icon(LucideIcons.x, size: 20, color: Colors.grey),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // Content
-            Padding(
-              padding: const EdgeInsets.all(24),
-              child: Row(
+    return ResponsiveDialogScaffold(
+      title: isEditing ? '编辑图标' : '添加图标',
+      maxWidth: 640,
+      bodyPadding: const EdgeInsets.all(24),
+      body: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Left: Form
@@ -426,45 +392,31 @@ class _IconEditDialogState extends State<IconEditDialog> {
                     ),
                   ),
                 ],
-              ),
+      ),
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.grey.shade700,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
-
-            // Footer
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: Color(0xFFE3E8F5))),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.grey.shade700,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                    ),
-                    child: const Text('取消'),
-                  ),
-                  const SizedBox(width: 40),
-                  ElevatedButton(
-                    onPressed: _confirm,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.iosBlue,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child: const Text('确定'),
-                  ),
-                ],
-              ),
+            child: const Text('取消'),
+          ),
+          const SizedBox(width: 40),
+          ElevatedButton(
+            onPressed: _confirm,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.iosBlue,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
-          ],
-        ),
+            child: const Text('确定'),
+          ),
+        ],
       ),
     );
   }

@@ -5,8 +5,10 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/providers/app_providers.dart';
+import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../data/startup_item_api.dart';
 import '../../data/resource_api.dart' as res;
@@ -24,7 +26,6 @@ class AddStartupItemModal extends ConsumerStatefulWidget {
   final bool isAdmin;
   final List<NetbarArea> areas;
   final VoidCallback onSuccess;
-  final bool fullscreenSheet;
 
   const AddStartupItemModal({
     super.key,
@@ -36,7 +37,6 @@ class AddStartupItemModal extends ConsumerStatefulWidget {
     this.isAdmin = false,
     this.areas = const [],
     required this.onSuccess,
-    this.fullscreenSheet = false,
   });
 
   @override
@@ -260,8 +260,7 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
 
   @override
   Widget build(BuildContext context) {
-    final isSheet = widget.fullscreenSheet;
-    final sheetHeight = MediaQuery.sizeOf(context).height * 0.92;
+    final isSheet = context.isNarrow;
     final content = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -307,23 +306,10 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
     );
 
     if (isSheet) {
-      return SafeArea(
-        top: false,
-        child: Material(
-          color: Colors.transparent,
-          child: Container(
-            height: sheetHeight,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(18),
-                topRight: Radius.circular(18),
-              ),
-              boxShadow: AppShadows.xl,
-            ),
-            child: content,
-          ),
-        ),
+      // 全屏页（通过 showAdaptive 推入 PageRoute）
+      return Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(child: content),
       );
     }
 
@@ -875,9 +861,10 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
 
   Future<void> _pickLocalePath(_LocaleFileEntry file) async {
     final visibleZones = _buildVisibleZones();
-    final selected = await showDialog<res.Resource>(
-      context: context,
-      builder: (context) => ExePickerDialog(visibleZones: visibleZones, exeOnly: false),
+    final selected = await showAdaptive<res.Resource>(
+      context,
+      (context) => ExePickerDialog(visibleZones: visibleZones, exeOnly: false),
+      routeName: '/dialog/exe-picker',
     );
     if (!mounted || selected == null) return;
 

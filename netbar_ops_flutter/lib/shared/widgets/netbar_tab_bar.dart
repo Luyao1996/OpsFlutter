@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../core/theme/app_theme.dart';
+import '../utils/adaptive_show.dart';
 import '../../features/netbar/presentation/netbar_selector_modal.dart';
 import '../../features/netbar/presentation/widgets/default_win_pwd_dialog.dart';
 import '../../features/netbar/presentation/widgets/batch_reset_pwd_dialog.dart';
@@ -120,18 +121,14 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
   }
 
   void _openNewTab() {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.all(40),
-        child: NetbarSelectorModal(
-          selectedId: ref.read(netbarTabsProvider).activeTabId,
-          onSelect: (id, name, status, {String? subdomainFull, String? groupName}) {
-            ref.read(netbarTabsProvider.notifier).openTab(id, name, status, subdomainFull: subdomainFull, groupName: groupName);
-            _syncCurrentNetbar();
-          },
-        ),
+    showAdaptive<void>(
+      context,
+      (context) => NetbarSelectorModal(
+        selectedId: ref.read(netbarTabsProvider).activeTabId,
+        onSelect: (id, name, status, {String? subdomainFull, String? groupName}) {
+          ref.read(netbarTabsProvider.notifier).openTab(id, name, status, subdomainFull: subdomainFull, groupName: groupName);
+          _syncCurrentNetbar();
+        },
       ),
     );
   }
@@ -278,31 +275,27 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
   }
 
   void _openNewTabAfter(int afterId) {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.all(40),
-        child: NetbarSelectorModal(
-          selectedId: ref.read(netbarTabsProvider).activeTabId,
-          onSelect: (id, name, status, {String? subdomainFull, String? groupName}) {
-            final existing = ref.read(netbarTabsProvider).tabs;
-            if (existing.any((t) => t.id == id)) {
-              ref.read(netbarTabsProvider.notifier).switchToTab(id);
-            } else {
-              final newTab = OpenedNetbarTab(
-                id: id,
-                name: name,
-                status: status,
-                subdomainFull: subdomainFull,
-                groupName: groupName,
-                openedAt: DateTime.now(),
-              );
-              ref.read(netbarTabsProvider.notifier).insertTabAfter(afterId, newTab);
-            }
-            _syncCurrentNetbar();
-          },
-        ),
+    showAdaptive<void>(
+      context,
+      (context) => NetbarSelectorModal(
+        selectedId: ref.read(netbarTabsProvider).activeTabId,
+        onSelect: (id, name, status, {String? subdomainFull, String? groupName}) {
+          final existing = ref.read(netbarTabsProvider).tabs;
+          if (existing.any((t) => t.id == id)) {
+            ref.read(netbarTabsProvider.notifier).switchToTab(id);
+          } else {
+            final newTab = OpenedNetbarTab(
+              id: id,
+              name: name,
+              status: status,
+              subdomainFull: subdomainFull,
+              groupName: groupName,
+              openedAt: DateTime.now(),
+            );
+            ref.read(netbarTabsProvider.notifier).insertTabAfter(afterId, newTab);
+          }
+          _syncCurrentNetbar();
+        },
       ),
     );
   }
@@ -351,16 +344,16 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
       onSelected: (value) {
         switch (value) {
           case 'defaultWinPwd':
-            showDialog(context: context, builder: (_) => const DefaultWinPwdDialog());
+            showAdaptive<void>(context, (_) => const DefaultWinPwdDialog(), routeName: '/dialog/default-win-pwd');
             break;
           case 'batchResetPwd':
-            showDialog(context: context, builder: (_) => const BatchResetPwdDialog());
+            showAdaptive<void>(context, (_) => const BatchResetPwdDialog(), routeName: '/dialog/batch-reset-pwd');
             break;
           case 'batchUpdate':
-            showDialog(context: context, builder: (_) => const BatchUpdateProgramDialog());
+            showAdaptive<void>(context, (_) => const BatchUpdateProgramDialog(), routeName: '/dialog/batch-update-program');
             break;
           case 'superPwd':
-            showDialog(context: context, builder: (_) => const TotpDialog());
+            showAdaptive<void>(context, (_) => const TotpDialog(), routeName: '/dialog/totp');
             break;
         }
       },

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/utils/top_notice.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/user_api.dart';
 import '../../data/user_mock_data.dart';
 
@@ -136,49 +137,13 @@ class _TwoFactorDialogState extends State<TwoFactorDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: SizedBox(
-        width: 480,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Header
-            _buildHeader(),
-            const Divider(height: 1, color: Color(0xFFF3F4F6)),
-            // Content
-            _buildContent(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            '绑定两步验证 (2FA)',
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
-            ),
-          ),
-          InkWell(
-            onTap: () => Navigator.pop(context),
-            borderRadius: BorderRadius.circular(4),
-            child: const Padding(
-              padding: EdgeInsets.all(4),
-              child: Icon(LucideIcons.x, size: 20, color: Colors.grey),
-            ),
-          ),
-        ],
-      ),
+    return ResponsiveDialogScaffold(
+      title: '绑定两步验证 (2FA)',
+      maxWidth: 480,
+      scrollableBody: false,
+      bodyPadding: EdgeInsets.zero,
+      body: _buildContent(),
+      footer: (_isLoading || _error != null) ? null : _buildButtons(),
     );
   }
 
@@ -212,7 +177,7 @@ class _TwoFactorDialogState extends State<TwoFactorDialog> {
       );
     }
 
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         children: [
@@ -226,10 +191,6 @@ class _TwoFactorDialogState extends State<TwoFactorDialog> {
 
           // 步骤 3: 验证并绑定
           _buildStep3(),
-          const SizedBox(height: 16),
-
-          // 按钮
-          _buildButtons(),
         ],
       ),
     );

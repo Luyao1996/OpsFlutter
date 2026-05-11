@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import '../../../core/responsive/responsive.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../shared/utils/adaptive_show.dart';
 import '../../../shared/utils/top_notice.dart';
 import '../data/netbar_api.dart';
 import '../data/netbar_pinyin_matcher.dart';
@@ -19,13 +21,11 @@ final netbarListProvider = FutureProvider.autoDispose<NetbarListResponse>((ref) 
 class NetbarSelectorModal extends ConsumerStatefulWidget {
   final int? selectedId;
   final Function(int id, String name, String status, {String? subdomainFull, String? groupName})? onSelect;
-  final bool isMobile;
 
   const NetbarSelectorModal({
     super.key,
     this.selectedId,
     this.onSelect,
-    this.isMobile = false,
   });
 
   @override
@@ -65,13 +65,14 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
   }
 
   void _handleEdit(Netbar netbar) {
-    showDialog(
-      context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.2),
-      builder: (context) => EditNetbarModal(
+    showAdaptive<void>(
+      context,
+      (context) => EditNetbarModal(
         netbar: netbar,
         onSaved: () => ref.invalidate(netbarListProvider),
       ),
+      barrierColor: Colors.black.withValues(alpha: 0.2),
+      routeName: '/dialog/edit-netbar',
     );
   }
 
@@ -105,7 +106,7 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
     final netbarsAsync = responseAsync.whenData((r) => r.merchants);
     final size = MediaQuery.of(context).size;
 
-    if (widget.isMobile) {
+    if (context.isNarrow) {
       return Scaffold(
         backgroundColor: Colors.white,
         body: SafeArea(
@@ -167,7 +168,7 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
               children: [
                 const Text('切换网吧', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 4),
-                if (!widget.isMobile)
+                if (!context.isNarrow)
                   Text(
                     '选择您要管理的网吧终端，或点击编辑按钮修改网吧信息',
                     style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
@@ -220,12 +221,13 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
   }
 
   void _handleAdd() {
-    showDialog(
-      context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.2),
-      builder: (context) => EditNetbarModal(
+    showAdaptive<void>(
+      context,
+      (context) => EditNetbarModal(
         onSaved: () => ref.invalidate(netbarListProvider),
       ),
+      barrierColor: Colors.black.withValues(alpha: 0.2),
+      routeName: '/dialog/edit-netbar',
     );
   }
 
@@ -403,7 +405,7 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
   }
 
   Widget _buildTable(List<Netbar> netbars) {
-    if (widget.isMobile) {
+    if (context.isNarrow) {
       return ListView.separated(
         padding: EdgeInsets.zero,
         itemCount: netbars.length,

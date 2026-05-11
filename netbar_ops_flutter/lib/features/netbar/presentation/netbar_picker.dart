@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../shared/utils/adaptive_show.dart';
 import 'netbar_selector_modal.dart';
 
 /// 网吧选择器按钮 - 对应 Vue 的 NetbarPicker.vue
@@ -26,15 +27,16 @@ class _NetbarPickerState extends State<NetbarPicker> {
   bool _isHovered = false;
 
   void _showSelector() {
-    showDialog(
-      context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.5),
-      builder: (context) => NetbarSelectorModal(
+    showAdaptive<void>(
+      context,
+      (context) => NetbarSelectorModal(
         selectedId: widget.selectedId,
         onSelect: (id, name, status) {
           widget.onSelect?.call(id, name, status);
         },
       ),
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      routeName: '/dialog/netbar-selector',
     );
   }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/log_types.dart';
 
 class LogDetailDialog extends StatelessWidget {
@@ -13,22 +14,17 @@ class LogDetailDialog extends StatelessWidget {
     final levelColor = levelConf['color'] as Color;
     final levelBg = levelConf['bg'] as Color;
     final levelLabel = levelConf['label'] as String;
-    final screenSize = MediaQuery.sizeOf(context);
-    final dialogWidth = (screenSize.width - 32).clamp(0.0, 640.0);
-    final dialogMaxHeight = (screenSize.height - 48).clamp(0.0, 700.0);
-
-    return Dialog(
-      backgroundColor: Colors.white,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        width: dialogWidth,
-        constraints: BoxConstraints(maxHeight: dialogMaxHeight),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Header
+    return ResponsiveDialogScaffold(
+      title: '日志详情',
+      maxWidth: 640,
+      maxHeight: 700,
+      scrollableBody: false,
+      bodyPadding: EdgeInsets.zero,
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+            // Header (内部信息卡片)
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -246,32 +242,20 @@ class LogDetailDialog extends StatelessWidget {
                 ),
               ),
             ),
-            // Footer
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade50.withOpacity(0.5),
-                border: Border(top: BorderSide(color: Colors.grey.shade100)),
-              ),
-              alignment: Alignment.centerRight,
-              child: OutlinedButton(
-                onPressed: () => Navigator.pop(context),
-                style: OutlinedButton.styleFrom(
-                  side: BorderSide(color: Colors.grey.shade200),
-                  foregroundColor: Colors.grey.shade700,
-                  backgroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                child: const Text('关闭'),
-              ),
-            ),
-          ],
+        ],
+      ),
+      footer: Align(
+        alignment: Alignment.centerRight,
+        child: OutlinedButton(
+          onPressed: () => Navigator.pop(context),
+          style: OutlinedButton.styleFrom(
+            side: BorderSide(color: Colors.grey.shade200),
+            foregroundColor: Colors.grey.shade700,
+            backgroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+          child: const Text('关闭'),
         ),
       ),
     );

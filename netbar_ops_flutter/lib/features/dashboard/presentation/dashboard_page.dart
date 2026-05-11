@@ -7,6 +7,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/responsive/responsive.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/providers/netbar_tabs_provider.dart';
+import '../../../shared/utils/adaptive_show.dart';
 import '../../netbar/presentation/netbar_selector_modal.dart';
 import '../data/dashboard_api.dart';
 import 'widgets/stat_card.dart';
@@ -233,24 +234,19 @@ class DashboardPage extends ConsumerWidget {
   void _showNetbarSelector(BuildContext context, WidgetRef ref) {
     final tabsNotifier = ref.read(netbarTabsProvider.notifier);
     final current = ref.read(currentNetbarProvider);
-    final isMobile = MediaQuery.of(context).size.width < 768;
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: EdgeInsets.all(isMobile ? 12 : 32),
-        child: NetbarSelectorModal(
-          selectedId: current.id,
-          onSelect: (id, name, status, {subdomainFull, groupName}) {
-            tabsNotifier.openTab(id, name, status,
-                subdomainFull: subdomainFull, groupName: groupName);
-            ref.read(currentNetbarProvider.notifier).setNetbar(id, name, status,
-                subdomainFull: subdomainFull, groupName: groupName);
-            context.go('/monitor');
-          },
-          isMobile: isMobile,
-        ),
+    showAdaptive<void>(
+      context,
+      (context) => NetbarSelectorModal(
+        selectedId: current.id,
+        onSelect: (id, name, status, {subdomainFull, groupName}) {
+          tabsNotifier.openTab(id, name, status,
+              subdomainFull: subdomainFull, groupName: groupName);
+          ref.read(currentNetbarProvider.notifier).setNetbar(id, name, status,
+              subdomainFull: subdomainFull, groupName: groupName);
+          context.go('/monitor');
+        },
       ),
+      routeName: '/dialog/netbar-selector',
     );
   }
 }

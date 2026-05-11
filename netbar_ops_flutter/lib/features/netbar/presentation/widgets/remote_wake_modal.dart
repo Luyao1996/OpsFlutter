@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/providers/app_providers.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 
 class RemoteWakeModal extends ConsumerStatefulWidget {
   final String netbarName;
@@ -57,31 +58,14 @@ class _RemoteWakeModalState extends ConsumerState<RemoteWakeModal> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 400),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(LucideIcons.power, color: AppColors.iosBlue),
-                  const SizedBox(width: 12),
-                  Text(
-                    '远程唤醒 - ${widget.netbarName}',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-
+    return ResponsiveDialogScaffold(
+      title: '远程唤醒 - ${widget.netbarName}',
+      maxWidth: 400,
+      bodyPadding: const EdgeInsets.all(24),
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
               // Mode Selection
               Row(
                 children: [
@@ -175,44 +159,41 @@ class _RemoteWakeModalState extends ConsumerState<RemoteWakeModal> {
                 ),
               ],
 
-              const SizedBox(height: 24),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text(
-                      '关闭',
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  ElevatedButton.icon(
-                    onPressed: _isWaking ? null : _handleWake,
-                    icon: _isWaking
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(LucideIcons.power, size: 16),
-                    label: Text(_isWaking ? '发送中...' : '立即唤醒'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.iosBlue,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+        ],
+      ),
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              '关闭',
+              style: TextStyle(color: Colors.grey),
+            ),
           ),
-        ),
+          const SizedBox(width: 12),
+          ElevatedButton.icon(
+            onPressed: _isWaking ? null : _handleWake,
+            icon: _isWaking
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(LucideIcons.power, size: 16),
+            label: Text(_isWaking ? '发送中...' : '立即唤醒'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.iosBlue,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -15,6 +15,7 @@ import '../../../shared/utils/web_download_helper_stub.dart'
     if (dart.library.html) '../../../shared/utils/web_download_helper_web.dart';
 
 import '../../../core/responsive/responsive.dart';
+import '../../../shared/utils/adaptive_show.dart';
 import '../../channel/presentation/platform_helper.dart';
 import '../../channel/presentation/drop_target_stub.dart'
     if (dart.library.io) 'package:desktop_drop/desktop_drop.dart';
@@ -1120,32 +1121,15 @@ class _ResourceManagementPageState
 
   void _showUploadModal() {
     if (!_ensureCanEdit('上传')) return;
-    if (context.isPhone) {
-      showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        enableDrag: false,
-        builder: (context) => UploadModal(
-          zone: _getZoneString(),
-          parentId: _currentFolderId,
-          netbarId: _getNetbarId(),
-          onSuccess: () => _loadData(),
-          presentation: UploadModalPresentation.sheet,
-        ),
-      );
-      return;
-    }
-
-    showDialog(
-      context: context,
-      builder: (context) => UploadModal(
+    showAdaptive<void>(
+      context,
+      (context) => UploadModal(
         zone: _getZoneString(),
         parentId: _currentFolderId,
         netbarId: _getNetbarId(),
         onSuccess: () => _loadData(),
-        presentation: UploadModalPresentation.dialog,
       ),
+      routeName: '/dialog/upload',
     );
   }
 
@@ -1224,15 +1208,16 @@ class _ResourceManagementPageState
       return;
     }
 
-    showDialog(
-      context: context,
-      builder: (context) => FileEditorModal(
+    showAdaptive<void>(
+      context,
+      (context) => FileEditorModal(
         file: file,
         readOnly: readOnly,
         onSuccess: () {
           _loadData();
         },
       ),
+      routeName: '/dialog/file-editor',
     );
   }
 
@@ -1556,30 +1541,9 @@ class _ResourceManagementPageState
 
     final fullPath = _buildFullPath(file);
 
-    if (context.isPhone) {
-      showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        enableDrag: false,
-        builder: (context) => AddStartupItemModal(
-          zone: _getZoneString(),
-          netbarId: netbarId,
-          resourceId: file.id,
-          defaultPath: fullPath,
-          defaultWorkingDir: deriveDirectoryFromPath(fullPath),
-          isAdmin: _isAdmin,
-          areas: _areas,
-          onSuccess: _loadData,
-          fullscreenSheet: true,
-        ),
-      );
-      return;
-    }
-
-    showDialog(
-      context: context,
-      builder: (context) => AddStartupItemModal(
+    showAdaptive<void>(
+      context,
+      (context) => AddStartupItemModal(
         zone: _getZoneString(),
         netbarId: netbarId,
         resourceId: file.id,
@@ -1589,6 +1553,7 @@ class _ResourceManagementPageState
         areas: _areas,
         onSuccess: _loadData,
       ),
+      routeName: '/dialog/add-startup-item',
     );
   }
 
@@ -3056,62 +3021,29 @@ class _ResourceManagementPageState
 
   void _showAddStartupItemModal() {
     if (!_ensureCanEdit('添加启动项')) return;
-    if (context.isPhone) {
-      showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        enableDrag: false,
-        builder: (context) => AddStartupItemModal(
-          zone: _getZoneString(),
-          netbarId: _getNetbarId(),
-          isAdmin: _isAdmin,
-          areas: _areas,
-          onSuccess: _loadData,
-          fullscreenSheet: true,
-        ),
-      );
-      return;
-    }
-
-    showDialog(
-      context: context,
-      builder: (context) => AddStartupItemModal(
+    showAdaptive<void>(
+      context,
+      (context) => AddStartupItemModal(
         zone: _getZoneString(),
         netbarId: _getNetbarId(),
         isAdmin: _isAdmin,
         areas: _areas,
         onSuccess: _loadData,
       ),
+      routeName: '/dialog/add-startup-item',
     );
   }
 
   void _showStartupConfigModal(TacticItem item) {
-    if (context.isPhone) {
-      showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        enableDrag: false,
-        builder: (context) => StartupConfigModal(
-          item: item,
-          isAdmin: _isAdmin,
-          areas: _areas,
-          onSuccess: _loadData,
-          fullscreenSheet: true,
-        ),
-      );
-      return;
-    }
-
-    showDialog(
-      context: context,
-      builder: (context) => StartupConfigModal(
+    showAdaptive<void>(
+      context,
+      (context) => StartupConfigModal(
         item: item,
         isAdmin: _isAdmin,
         areas: _areas,
         onSuccess: _loadData,
       ),
+      routeName: '/dialog/startup-config',
     );
   }
 

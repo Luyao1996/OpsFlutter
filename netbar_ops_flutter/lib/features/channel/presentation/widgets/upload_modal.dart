@@ -11,15 +11,12 @@ import '../../../../shared/utils/top_notice.dart';
 import '../web_file_picker.dart';
 import 'upload_helper.dart';
 
-enum UploadModalPresentation { dialog, sheet }
-
 /// 上传弹窗
 class UploadModal extends ConsumerStatefulWidget {
   final String zone;
   final int? parentId;
   final int? netbarId;
   final VoidCallback onSuccess;
-  final UploadModalPresentation presentation;
 
   const UploadModal({
     super.key,
@@ -27,7 +24,6 @@ class UploadModal extends ConsumerStatefulWidget {
     this.parentId,
     this.netbarId,
     required this.onSuccess,
-    this.presentation = UploadModalPresentation.dialog,
   });
 
   @override
@@ -253,7 +249,7 @@ class _UploadModalState extends ConsumerState<UploadModal> {
   @override
   Widget build(BuildContext context) {
     final isPhone = context.isPhone;
-    final isSheet = widget.presentation == UploadModalPresentation.sheet;
+    final isSheet = context.isNarrow;
 
     final body = Column(
       mainAxisSize: MainAxisSize.min,
@@ -265,24 +261,9 @@ class _UploadModalState extends ConsumerState<UploadModal> {
     );
 
     if (isSheet) {
-      final height = MediaQuery.sizeOf(context).height;
-      return SafeArea(
-        top: false,
-        child: Material(
-          color: Colors.transparent,
-          child: Container(
-            height: height * 0.92,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(18),
-                topRight: Radius.circular(18),
-              ),
-              boxShadow: AppShadows.xl,
-            ),
-            child: body,
-          ),
-        ),
+      return Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(child: body),
       );
     }
 

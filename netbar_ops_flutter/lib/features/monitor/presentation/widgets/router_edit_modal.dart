@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/router_api.dart';
 
 class RouterEditModal extends ConsumerStatefulWidget {
@@ -116,24 +117,16 @@ class _RouterEditModalState extends ConsumerState<RouterEditModal> {
   Widget build(BuildContext context) {
     final typesAsync = ref.watch(scriptTypesProvider(widget.netbarId));
 
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 440),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Title
-                Text(
-                  _isEdit ? '修改路由器' : '新增路由器',
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 20),
+    return ResponsiveDialogScaffold(
+      title: _isEdit ? '修改路由器' : '新增路由器',
+      maxWidth: 440,
+      bodyPadding: const EdgeInsets.all(24),
+      body: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
                 // Name
                 TextFormField(
                   controller: _nameCtrl,
@@ -206,39 +199,35 @@ class _RouterEditModalState extends ConsumerState<RouterEditModal> {
                   contentPadding: EdgeInsets.zero,
                   activeColor: AppColors.iosBlue,
                 ),
-                const SizedBox(height: 20),
-                // Actions
-                Row(
-                  children: [
-                    if (_isEdit)
-                      ElevatedButton(
-                        onPressed: _busy ? null : _delete,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
-                          foregroundColor: Colors.white,
-                        ),
-                        child: _deleting
-                            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                            : const Text('删除'),
-                      ),
-                    const Spacer(),
-                    TextButton(
-                      onPressed: _busy ? null : () => Navigator.pop(context),
-                      child: const Text('取消'),
-                    ),
-                    const SizedBox(width: 8),
-                    ElevatedButton(
-                      onPressed: _busy ? null : _save,
-                      child: _saving
-                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                          : Text(_isEdit ? '保存' : '新增'),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
+          ],
         ),
+      ),
+      footer: Row(
+        children: [
+          if (_isEdit)
+            ElevatedButton(
+              onPressed: _busy ? null : _delete,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: _deleting
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Text('删除'),
+            ),
+          const Spacer(),
+          TextButton(
+            onPressed: _busy ? null : () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton(
+            onPressed: _busy ? null : _save,
+            child: _saving
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                : Text(_isEdit ? '保存' : '新增'),
+          ),
+        ],
       ),
     );
   }

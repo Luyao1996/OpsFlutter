@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/utils/adaptive_show.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../../netbar/data/area_api.dart';
 import '../../data/startup_item_api.dart';
 
@@ -117,63 +119,12 @@ class _DisableStartupModalState extends State<DisableStartupModal> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      child: Container(
-        width: 500,
-        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.5),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: AppShadows.xl,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildHeader(),
-            Flexible(child: SingleChildScrollView(child: _buildContent())),
-            _buildFooter(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.orange.shade50,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(LucideIcons.pauseCircle, size: 20, color: Colors.orange.shade600),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('禁用启动项', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 2),
-                Text(widget.itemName, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-              ],
-            ),
-          ),
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: Icon(LucideIcons.x, size: 20, color: Colors.grey.shade400),
-            splashRadius: 20,
-          ),
-        ],
-      ),
+    return ResponsiveDialogScaffold(
+      title: '禁用启动项 · ${widget.itemName}',
+      maxWidth: 500,
+      bodyPadding: EdgeInsets.zero,
+      body: _buildContent(),
+      footer: _buildFooter(),
     );
   }
 
@@ -490,16 +441,9 @@ class _DisableStartupModalState extends State<DisableStartupModal> {
   }
 
   Widget _buildFooter() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        border: Border(top: BorderSide(color: Colors.grey.shade100)),
-        borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(16), bottomRight: Radius.circular(16)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
           // 如果当前已禁用，显示"取消禁用"按钮
           if (!widget.currentlyEnabled)
             TextButton.icon(
@@ -538,8 +482,7 @@ class _DisableStartupModalState extends State<DisableStartupModal> {
               ),
             ],
           ),
-        ],
-      ),
+      ],
     );
   }
 }
@@ -552,13 +495,14 @@ Future<EnabledState?> showDisableStartupModal(
   List<NetbarArea> areas = const [],
   EnabledState? currentState,
 }) {
-  return showDialog<EnabledState>(
-    context: context,
-    builder: (context) => DisableStartupModal(
+  return showAdaptive<EnabledState>(
+    context,
+    (context) => DisableStartupModal(
       itemName: itemName,
       currentlyEnabled: currentlyEnabled,
       areas: areas,
       currentState: currentState,
     ),
+    routeName: '/dialog/disable-startup',
   );
 }

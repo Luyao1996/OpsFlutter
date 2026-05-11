@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/utils/top_notice.dart';
+import '../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../data/netbar_api.dart';
 import '../data/group_api.dart' as group_api;
 
@@ -238,76 +239,13 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
 
   @override
   Widget build(BuildContext context) {
-    final screen = MediaQuery.sizeOf(context);
-    final isNarrow = screen.width < 600;
-
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      insetPadding: EdgeInsets.symmetric(
-        horizontal: isNarrow ? 16 : 80,
-        vertical: isNarrow ? 16 : 50,
-      ),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: 500,
-          maxHeight: MediaQuery.of(context).size.height * 0.9,
-        ),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: AppShadows.xl,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildHeader(),
-              Flexible(child: _buildContent()),
-              _buildFooter(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: AppColors.iosBlue.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              LucideIcons.building2,
-              size: 20,
-              color: AppColors.iosBlue,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              widget.isCreateMode ? '新增网吧' : '编辑网吧',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-          ),
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            style: IconButton.styleFrom(
-              backgroundColor: Colors.grey.shade100,
-              shape: const CircleBorder(),
-            ),
-            icon: Icon(LucideIcons.x, size: 16, color: Colors.grey.shade500),
-          ),
-        ],
-      ),
+    return ResponsiveDialogScaffold(
+      title: widget.isCreateMode ? '新增网吧' : '编辑网吧',
+      maxWidth: 500,
+      scrollableBody: false,
+      bodyPadding: EdgeInsets.zero,
+      body: _buildContent(),
+      footer: _buildFooter(),
     );
   }
 
@@ -596,15 +534,8 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
   }
 
   Widget _buildFooter() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50.withValues(alpha: 0.5),
-        border: Border(top: BorderSide(color: Colors.grey.shade100)),
-        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
-      ),
-      child: Row(
-        children: [
+    return Row(
+      children: [
           // 删除按钮（仅编辑模式显示）
           if (!widget.isCreateMode)
             TextButton.icon(
@@ -658,7 +589,6 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
                 : Text(widget.isCreateMode ? '创建' : '保存'),
           ),
         ],
-      ),
     );
   }
 }

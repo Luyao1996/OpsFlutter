@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../../netbar/data/netbar_api.dart';
 import '../../data/desktop_model.dart';
 import '../../data/desktop_api.dart';
@@ -108,117 +109,55 @@ class _CopyLayoutDialogState extends State<CopyLayoutDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      child: SizedBox(
-        width: 400,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              decoration: const BoxDecoration(
-                border: Border(bottom: BorderSide(color: Color(0xFFF0F2F5))),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    '复制其他网吧配置',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF1F2937),
-                    ),
-                  ),
-                  InkWell(
-                    onTap: () => Navigator.pop(context),
-                    borderRadius: BorderRadius.circular(4),
-                    child: const Padding(
-                      padding: EdgeInsets.all(4),
-                      child: Icon(LucideIcons.x, size: 20, color: Colors.grey),
-                    ),
-                  ),
-                ],
-              ),
+    return ResponsiveDialogScaffold(
+      title: '复制其他网吧配置',
+      maxWidth: 400,
+      bodyPadding: const EdgeInsets.all(20),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '选择网吧',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.grey),
+          ),
+          const SizedBox(height: 8),
+          _buildNetbarDropdown(),
+          const SizedBox(height: 16),
+          if (_selectedNetbarId != null) ...[
+            const Text(
+              '选择分辨率',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.grey),
             ),
-
-            // Content
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Netbar selector
-                  const Text(
-                    '选择网吧',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.grey,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  _buildNetbarDropdown(),
-                  const SizedBox(height: 16),
-
-                  // Resolution selector
-                  if (_selectedNetbarId != null) ...[
-                    const Text(
-                      '选择分辨率',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.grey,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    _buildLayoutSelector(),
-                  ],
-                ],
-              ),
-            ),
-
-            // Footer
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: Color(0xFFE3E8F5))),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.grey.shade700,
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                    ),
-                    child: const Text('取消'),
-                  ),
-                  const SizedBox(width: 12),
-                  ElevatedButton(
-                    onPressed: _selectedLayout != null ? _confirm : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.iosBlue,
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor: Colors.grey.shade300,
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child: const Text('确定复制'),
-                  ),
-                ],
-              ),
-            ),
+            const SizedBox(height: 8),
+            _buildLayoutSelector(),
           ],
-        ),
+        ],
+      ),
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.grey.shade700,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            ),
+            child: const Text('取消'),
+          ),
+          const SizedBox(width: 12),
+          ElevatedButton(
+            onPressed: _selectedLayout != null ? _confirm : null,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.iosBlue,
+              foregroundColor: Colors.white,
+              disabledBackgroundColor: Colors.grey.shade300,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('确定复制'),
+          ),
+        ],
       ),
     );
   }

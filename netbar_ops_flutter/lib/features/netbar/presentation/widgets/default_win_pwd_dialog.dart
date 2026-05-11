@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/utils/top_notice.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/group_api.dart';
 
 /// 默认服务端Windows密码对话框
@@ -67,63 +68,52 @@ class _DefaultWinPwdDialogState extends ConsumerState<DefaultWinPwdDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 360),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                '默认Windows密码',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                '请输入服务端Windows默认密码',
-                style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _pwdController,
-                decoration: const InputDecoration(
-                  hintText: '请输入服务端Windows默认密码',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                '密码必须大于等于8位(大写+小写+数字)',
-                style: TextStyle(fontSize: 12, color: Colors.red),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('取消'),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: _saving ? null : _confirm,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.iosBlue,
-                      foregroundColor: Colors.white,
-                    ),
-                    child: _saving
-                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text('确认'),
-                  ),
-                ],
-              ),
-            ],
+    return ResponsiveDialogScaffold(
+      title: '默认Windows密码',
+      maxWidth: 360,
+      bodyPadding: const EdgeInsets.all(24),
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '请输入服务端Windows默认密码',
+            style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
           ),
-        ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _pwdController,
+            decoration: const InputDecoration(
+              hintText: '请输入服务端Windows默认密码',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '密码必须大于等于8位(大写+小写+数字)',
+            style: TextStyle(fontSize: 12, color: Colors.red),
+          ),
+        ],
+      ),
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton(
+            onPressed: _saving ? null : _confirm,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.iosBlue,
+              foregroundColor: Colors.white,
+            ),
+            child: _saving
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Text('确认'),
+          ),
+        ],
       ),
     );
   }

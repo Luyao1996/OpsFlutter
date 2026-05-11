@@ -14,6 +14,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/providers/terminal_dock_provider.dart';
 import '../../../shared/services/terminal_window_bridge.dart';
+import '../../../shared/utils/adaptive_show.dart';
 import '../../../shared/utils/platform_utils.dart';
 import '../../../shared/utils/top_notice.dart';
 import '../../../shared/utils/open_in_new_tab.dart';
@@ -1139,9 +1140,10 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     if (netbarId == null) return;
     final api = ref.read(routerApiProvider(netbarId));
     if (api == null) return;
-    showDialog<bool>(
-      context: context,
-      builder: (_) => RouterEditModal(api: api, router: router, netbarId: netbarId),
+    showAdaptive<bool>(
+      context,
+      (_) => RouterEditModal(api: api, router: router, netbarId: netbarId),
+      routeName: '/dialog/router-edit',
     ).then((saved) {
       if (saved == true) ref.refresh(routersProvider(netbarId));
     });

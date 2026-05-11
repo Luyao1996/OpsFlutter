@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/startup_monitor_models.dart';
 
 class MonitorItemDialog extends StatelessWidget {
@@ -38,14 +39,13 @@ class MonitorItemDialog extends StatelessWidget {
       badgeIcon = LucideIcons.checkCircle2;
     }
 
-    return Dialog(
-      insetPadding: const EdgeInsets.all(16),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 440),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+    return ResponsiveDialogScaffold(
+      title: item.name,
+      maxWidth: 440,
+      bodyPadding: EdgeInsets.zero,
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
             Container(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
               decoration: BoxDecoration(
@@ -70,12 +70,6 @@ class MonitorItemDialog extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          item.name,
-                          style: const TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 4),
                         Text(
                           item.path,
                           style: TextStyle(
@@ -167,34 +161,24 @@ class MonitorItemDialog extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade50,
-                borderRadius:
-                    const BorderRadius.vertical(bottom: Radius.circular(20)),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  if (onEdit != null) ...[
-                    TextButton.icon(
-                      onPressed: onEdit,
-                      icon: const Icon(LucideIcons.pencil, size: 16),
-                      label: const Text('编辑'),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                  TextButton(
-                    onPressed: onClose,
-                    child: const Text('关闭'),
-                  ),
-                ],
-              ),
+        ],
+      ),
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          if (onEdit != null) ...[
+            TextButton.icon(
+              onPressed: onEdit,
+              icon: const Icon(LucideIcons.pencil, size: 16),
+              label: const Text('编辑'),
             ),
+            const SizedBox(width: 8),
           ],
-        ),
+          TextButton(
+            onPressed: onClose,
+            child: const Text('关闭'),
+          ),
+        ],
       ),
     );
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../data/netbar_api.dart';
 import '../edit_netbar_modal.dart';
@@ -364,10 +365,11 @@ class _NetbarListRow extends StatelessWidget {
                   _ActionButton(
                     icon: LucideIcons.monitorPlay,
                     onTap: () {
-                      showDialog(
-                        context: context,
-                        builder: (context) =>
+                      showAdaptive<void>(
+                        context,
+                        (context) =>
                             RemoteWakeModal(netbarName: netbar.name),
+                        routeName: '/dialog/remote-wake',
                       );
                     },
                     tooltip: '控制台',
@@ -376,9 +378,10 @@ class _NetbarListRow extends StatelessWidget {
                   _ActionButton(
                     icon: LucideIcons.moreHorizontal,
                     onTap: () {
-                      showDialog(
-                        context: context,
-                        builder: (context) => EditNetbarModal(netbar: netbar),
+                      showAdaptive<bool>(
+                        context,
+                        (context) => EditNetbarModal(netbar: netbar),
+                        routeName: '/dialog/edit-netbar',
                       ).then((changed) {
                         if (changed == true) onRefresh();
                       });

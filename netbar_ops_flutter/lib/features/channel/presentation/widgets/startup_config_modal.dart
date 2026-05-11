@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/utils/top_notice.dart';
@@ -47,14 +48,12 @@ class StartupConfigModal extends ConsumerStatefulWidget {
   final TacticItem item;
   final bool isAdmin;
   final VoidCallback onSuccess;
-  final bool fullscreenSheet;
 
   const StartupConfigModal({
     super.key,
     required this.item,
     this.isAdmin = false,
     required this.onSuccess,
-    this.fullscreenSheet = false,
     List<dynamic> areas = const [],
   });
 
@@ -359,8 +358,7 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
 
   @override
   Widget build(BuildContext context) {
-    final isSheet = widget.fullscreenSheet;
-    final sheetHeight = MediaQuery.sizeOf(context).height * 0.92;
+    final isSheet = context.isNarrow;
     final content = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -407,23 +405,9 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
     );
 
     if (isSheet) {
-      return SafeArea(
-        top: false,
-        child: Material(
-          color: Colors.transparent,
-          child: Container(
-            height: sheetHeight,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(18),
-                topRight: Radius.circular(18),
-              ),
-              boxShadow: AppShadows.xl,
-            ),
-            child: content,
-          ),
-        ),
+      return Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(child: content),
       );
     }
 

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../data/group_api.dart';
 
 /// 分组列表 Provider
@@ -81,56 +82,19 @@ class _GroupSelectorModalState extends ConsumerState<GroupSelectorModal> {
   Widget build(BuildContext context) {
     final groupsAsync = ref.watch(groupListProvider);
 
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 100, vertical: 50),
-      child: Container(
-        width: 500,
-        height: 600,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: AppShadows.xl,
-        ),
-        child: Column(
-          children: [
-            _buildHeader(),
-            _buildSearch(),
-            Expanded(child: _buildContent(groupsAsync)),
-            _buildFooter(groupsAsync),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50.withValues(alpha: 0.5),
-        border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      child: Row(
+    return ResponsiveDialogScaffold(
+      title: '选择分组',
+      maxWidth: 500,
+      maxHeight: 600,
+      scrollableBody: false,
+      bodyPadding: EdgeInsets.zero,
+      body: Column(
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('选择分组', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 4),
-                Text('请选择网吧所属的分组', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-              ],
-            ),
-          ),
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: Icon(LucideIcons.x, size: 20, color: Colors.grey.shade400),
-            hoverColor: Colors.grey.shade100,
-          ),
+          _buildSearch(),
+          Expanded(child: _buildContent(groupsAsync)),
         ],
       ),
+      footer: _buildFooter(groupsAsync),
     );
   }
 
@@ -254,20 +218,12 @@ class _GroupSelectorModalState extends ConsumerState<GroupSelectorModal> {
 
   Widget _buildFooter(AsyncValue<List<String>> groupsAsync) {
     final count = groupsAsync.whenOrNull(data: (g) => _filterGroups(g).length) ?? 0;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        border: Border(top: BorderSide(color: Colors.grey.shade100)),
-        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
-      ),
-      child: Row(
-        children: [
-          Text('共 $count 个分组', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-          const Spacer(),
-          Text('Esc 关闭', style: TextStyle(fontSize: 12, color: Colors.grey.shade400)),
-        ],
-      ),
+    return Row(
+      children: [
+        Text('共 $count 个分组', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+        const Spacer(),
+        Text('Esc 关闭', style: TextStyle(fontSize: 12, color: Colors.grey.shade400)),
+      ],
     );
   }
 }

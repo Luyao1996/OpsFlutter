@@ -6,6 +6,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/storage/token_store.dart';
 import '../providers/app_providers.dart';
 import '../providers/netbar_tabs_provider.dart';
+import '../utils/adaptive_show.dart';
 import '../../features/netbar/presentation/netbar_selector_modal.dart';
 import '../../features/netbar/data/netbar_api.dart';
 import '../../features/dashboard/presentation/dashboard_page.dart';
@@ -175,16 +176,16 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
       onSelected: (value) {
         switch (value) {
           case 'defaultWinPwd':
-            showDialog(context: context, builder: (_) => const DefaultWinPwdDialog());
+            showAdaptive<void>(context, (_) => const DefaultWinPwdDialog(), routeName: '/dialog/default-win-pwd');
             break;
           case 'batchResetPwd':
-            showDialog(context: context, builder: (_) => const BatchResetPwdDialog());
+            showAdaptive<void>(context, (_) => const BatchResetPwdDialog(), routeName: '/dialog/batch-reset-pwd');
             break;
           case 'batchUpdate':
-            showDialog(context: context, builder: (_) => const BatchUpdateProgramDialog());
+            showAdaptive<void>(context, (_) => const BatchUpdateProgramDialog(), routeName: '/dialog/batch-update-program');
             break;
           case 'superPwd':
-            showDialog(context: context, builder: (_) => const TotpDialog());
+            showAdaptive<void>(context, (_) => const TotpDialog(), routeName: '/dialog/totp');
             break;
         }
       },
@@ -274,24 +275,18 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
   void _showNetbarSelector() {
     final tabsNotifier = ref.read(netbarTabsProvider.notifier);
     final current = ref.read(currentNetbarProvider);
-    final isMobile =
-        platformHelper.isMobile || MediaQuery.of(context).size.width < 768;
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: EdgeInsets.all(isMobile ? 12 : 32),
-        child: NetbarSelectorModal(
-          selectedId: current.id,
-          onSelect: (id, name, status, {subdomainFull, groupName}) {
-            tabsNotifier.openTab(id, name, status, subdomainFull: subdomainFull, groupName: groupName);
-            ref
-                .read(currentNetbarProvider.notifier)
-                .setNetbar(id, name, status, subdomainFull: subdomainFull, groupName: groupName);
-          },
-          isMobile: isMobile,
-        ),
+    showAdaptive<void>(
+      context,
+      (context) => NetbarSelectorModal(
+        selectedId: current.id,
+        onSelect: (id, name, status, {subdomainFull, groupName}) {
+          tabsNotifier.openTab(id, name, status, subdomainFull: subdomainFull, groupName: groupName);
+          ref
+              .read(currentNetbarProvider.notifier)
+              .setNetbar(id, name, status, subdomainFull: subdomainFull, groupName: groupName);
+        },
       ),
+      routeName: '/dialog/netbar-selector',
     );
   }
 
@@ -693,22 +688,11 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
   }
 
   void _showUserProfile(AuthState authState) {
-    final isNarrow = platformHelper.isMobile || context.isNarrow;
-    if (isNarrow) {
-      showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        barrierColor: Colors.black.withOpacity(0.4),
-        builder: (context) => const UserProfileDialog(asBottomSheet: true),
-      );
-      return;
-    }
-
-    showDialog<void>(
-      context: context,
+    showAdaptive<void>(
+      context,
+      (context) => const UserProfileDialog(),
       barrierColor: Colors.black.withOpacity(0.4),
-      builder: (context) => const UserProfileDialog(),
+      routeName: '/dialog/user-profile',
     );
   }
 }

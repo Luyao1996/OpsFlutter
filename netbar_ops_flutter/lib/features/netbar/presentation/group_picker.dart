@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../shared/utils/adaptive_show.dart';
 import 'group_selector_modal.dart';
 
 /// 分组选择器按钮 - 对应 Vue 的 GroupPicker.vue
@@ -24,13 +25,14 @@ class _GroupPickerState extends State<GroupPicker> {
   bool _isHovered = false;
 
   void _openModal() {
-    showDialog(
-      context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.5),
-      builder: (context) => GroupSelectorModal(
+    showAdaptive<void>(
+      context,
+      (context) => GroupSelectorModal(
         selectedGroup: widget.selectedGroup,
         onSelect: widget.onSelect,
       ),
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      routeName: '/dialog/group-selector',
     );
   }
 

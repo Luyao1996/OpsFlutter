@@ -10,9 +10,7 @@ import '../../../core/storage/token_store.dart';
 import '../../../shared/utils/top_notice.dart';
 
 class UserProfileDialog extends ConsumerStatefulWidget {
-  final bool asBottomSheet;
-
-  const UserProfileDialog({super.key, this.asBottomSheet = false});
+  const UserProfileDialog({super.key});
 
   @override
   ConsumerState<UserProfileDialog> createState() => _UserProfileDialogState();
@@ -143,20 +141,12 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
       ),
     );
 
-    if (widget.asBottomSheet) {
-      return SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: SizedBox(
-            height: maxHeight,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: AppShadows.xl,
-              ),
-              child: panel,
-            ),
-          ),
+    // 窄屏：全屏页（A 类弹窗统一改造）
+    if (isNarrow) {
+      return Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(
+          child: _buildMobileBody(userName, userRole, userAccount),
         ),
       );
     }

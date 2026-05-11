@@ -12,6 +12,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/icon_loader.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/providers/netbar_tabs_provider.dart';
+import '../../../shared/utils/adaptive_show.dart';
 import '../../../shared/utils/top_notice.dart';
 import '../../monitor/data/terminal_api.dart';
 import '../data/desktop_api.dart';
@@ -480,12 +481,13 @@ class _DesktopManagementPageImplState extends ConsumerState<DesktopManagementPag
   }
 
   Future<void> _onAddIcon() async {
-    final result = await showDialog<IconEditResult>(
-      context: context,
-      builder: (context) => IconEditDialog(
+    final result = await showAdaptive<IconEditResult>(
+      context,
+      (context) => IconEditDialog(
         groupId: _currentUserGroupId == 0 ? _selectedGroupId : _currentUserGroupId,
         netbarId: _selectedNetbarId,
       ),
+      routeName: '/dialog/icon-edit',
     );
 
     if (result == null) return;
@@ -529,13 +531,14 @@ class _DesktopManagementPageImplState extends ConsumerState<DesktopManagementPag
   }
 
   Future<void> _onEditIcon(DesktopIcon icon) async {
-    final result = await showDialog<IconEditResult>(
-      context: context,
-      builder: (context) => IconEditDialog(
+    final result = await showAdaptive<IconEditResult>(
+      context,
+      (context) => IconEditDialog(
         initialIcon: icon,
         groupId: _currentUserGroupId == 0 ? _selectedGroupId : _currentUserGroupId,
         netbarId: _selectedNetbarId,
       ),
+      routeName: '/dialog/icon-edit',
     );
 
     if (result == null) return;
@@ -672,12 +675,13 @@ class _DesktopManagementPageImplState extends ConsumerState<DesktopManagementPag
       return;
     }
 
-    final layout = await showDialog<DesktopLayout>(
-      context: context,
-      builder: (context) => CopyLayoutDialog(
+    final layout = await showAdaptive<DesktopLayout>(
+      context,
+      (context) => CopyLayoutDialog(
         currentNetbarId: _selectedNetbarId,
         groupId: _currentUserGroupId == 0 ? _selectedGroupId : _currentUserGroupId,
       ),
+      routeName: '/dialog/copy-layout',
     );
 
     if (layout == null) return;

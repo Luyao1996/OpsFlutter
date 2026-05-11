@@ -3,6 +3,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/utils/top_notice.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/desktop_model.dart';
 import '../../data/desktop_asset_api.dart';
 import '../../../../core/storage/token_store.dart';
@@ -90,46 +91,11 @@ class _AddIconDialogState extends State<AddIconDialog> {
   Widget build(BuildContext context) {
     final isEditing = widget.initialIcon != null;
 
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      child: SizedBox(
-        width: 500,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    isEditing ? '编辑桌面图标' : '添加桌面图标',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  InkWell(
-                    onTap: () => Navigator.pop(context),
-                    child: const Icon(
-                      LucideIcons.x,
-                      size: 20,
-                      color: Colors.grey,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1, color: Color(0xFFF3F4F6)),
-
-            // Content
-            Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
+    return ResponsiveDialogScaffold(
+      title: isEditing ? '编辑桌面图标' : '添加桌面图标',
+      maxWidth: 500,
+      bodyPadding: const EdgeInsets.all(24),
+      body: Column(
                 children: [
                   _buildTextField('图标名称', _nameController, hint: '例如：英雄联盟'),
                   const SizedBox(height: 16),
@@ -244,58 +210,44 @@ class _AddIconDialogState extends State<AddIconDialog> {
                   ),
                 ],
               ),
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.grey.shade700,
             ),
-
-            // Footer
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.grey.shade700,
-                    ),
-                    child: const Text('取消'),
-                  ),
-                  const SizedBox(width: 12),
-                  ElevatedButton(
-                    onPressed: () {
-                      if (_nameController.text.isEmpty ||
-                          _pathController.text.isEmpty) {
-                        return; // Validate
-                      }
-                      Navigator.pop(
-                        context,
-                        DesktopIconConfig(
-                          name: _nameController.text,
-                          exePath: _pathController.text,
-                          args: _argsController.text,
-                          workDir: _workDirController.text,
-                          iconPath: _iconPath,
-                        ),
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.iosBlue,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 12,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child: const Text('保存'),
-                  ),
-                ],
-              ),
+            child: const Text('取消'),
+          ),
+          const SizedBox(width: 12),
+          ElevatedButton(
+            onPressed: () {
+              if (_nameController.text.isEmpty ||
+                  _pathController.text.isEmpty) {
+                return;
+              }
+              Navigator.pop(
+                context,
+                DesktopIconConfig(
+                  name: _nameController.text,
+                  exePath: _pathController.text,
+                  args: _argsController.text,
+                  workDir: _workDirController.text,
+                  iconPath: _iconPath,
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.iosBlue,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
-          ],
-        ),
+            child: const Text('保存'),
+          ),
+        ],
       ),
     );
   }

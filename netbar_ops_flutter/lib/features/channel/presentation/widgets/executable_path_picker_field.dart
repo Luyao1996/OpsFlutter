@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../../shared/providers/app_providers.dart';
+import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/utils/resource_path_display.dart';
 import '../../data/resource_api.dart' as res;
 import 'exe_picker_dialog.dart';
@@ -94,9 +95,10 @@ class _ExecutablePathPickerFieldState extends ConsumerState<ExecutablePathPicker
     setState(() => _opening = true);
     try {
       final visibleZones = _buildVisibleZones();
-      final selected = await showDialog<res.Resource>(
-        context: context,
-        builder: (context) => ExePickerDialog(visibleZones: visibleZones),
+      final selected = await showAdaptive<res.Resource>(
+        context,
+        (context) => ExePickerDialog(visibleZones: visibleZones),
+        routeName: '/dialog/exe-picker',
       );
       if (!mounted || selected == null) return;
       _selectedResource = selected;

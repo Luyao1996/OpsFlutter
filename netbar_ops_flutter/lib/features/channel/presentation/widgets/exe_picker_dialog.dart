@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/resource_api.dart' as res;
 
 class ExeZoneOption {
@@ -405,63 +406,47 @@ class _ExePickerDialogState extends State<ExePickerDialog> {
   @override
   Widget build(BuildContext context) {
     final isSearchingMode = _searchController.text.trim().isNotEmpty;
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 720, maxHeight: 600),
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    return ResponsiveDialogScaffold(
+      title: widget.exeOnly ? '选择执行程序' : '选择文件',
+      maxWidth: 720,
+      maxHeight: 600,
+      scrollableBody: false,
+      bodyPadding: EdgeInsets.zero,
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Container(
+              height: 36,
               decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade200),
               ),
-              child: Row(
-                children: [
-                  Text(widget.exeOnly ? '选择执行程序' : '选择文件', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                  const Spacer(),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(LucideIcons.x, size: 18),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Container(
-                height: 36,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey.shade200),
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: widget.exeOnly ? '搜索 exe 文件...' : '搜索文件...',
+                  hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                  prefixIcon: Icon(LucideIcons.search, size: 16, color: Colors.grey.shade400),
+                  suffixIcon: isSearchingMode
+                      ? IconButton(
+                          icon: Icon(LucideIcons.x, size: 16, color: Colors.grey.shade400),
+                          onPressed: () => _searchController.clear(),
+                        )
+                      : null,
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
                 ),
-                child: TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: widget.exeOnly ? '搜索 exe 文件...' : '搜索文件...',
-                    hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
-                    prefixIcon: Icon(LucideIcons.search, size: 16, color: Colors.grey.shade400),
-                    suffixIcon: isSearchingMode
-                        ? IconButton(
-                            icon: Icon(LucideIcons.x, size: 16, color: Colors.grey.shade400),
-                            onPressed: () => _searchController.clear(),
-                          )
-                        : null,
-                    border: InputBorder.none,
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                  ),
-                  style: const TextStyle(fontSize: 13),
-                ),
+                style: const TextStyle(fontSize: 13),
               ),
             ),
-            Expanded(
-              child: isSearchingMode ? _buildSearchArea() : _buildTreeArea(),
-            ),
-          ],
-        ),
+          ),
+          Expanded(
+            child: isSearchingMode ? _buildSearchArea() : _buildTreeArea(),
+          ),
+        ],
       ),
     );
   }

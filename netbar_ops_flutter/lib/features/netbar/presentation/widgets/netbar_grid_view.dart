@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/utils/adaptive_show.dart';
 import '../../data/netbar_api.dart';
 import '../edit_netbar_modal.dart';
 import 'remote_wake_modal.dart';
@@ -303,10 +304,11 @@ class _NetbarGridCard extends StatelessWidget {
                               children: [
                                 InkWell(
                                   onTap: () {
-                                    showDialog(
-                                      context: context,
-                                      builder: (context) =>
+                                    showAdaptive<bool>(
+                                      context,
+                                      (context) =>
                                           EditNetbarModal(netbar: netbar),
+                                      routeName: '/dialog/edit-netbar',
                                     ).then((changed) {
                                       if (changed == true) onRefresh();
                                     });
@@ -324,11 +326,12 @@ class _NetbarGridCard extends StatelessWidget {
                                 const SizedBox(width: 4),
                                 InkWell(
                                   onTap: () {
-                                    showDialog(
-                                      context: context,
-                                      builder: (context) => RemoteWakeModal(
+                                    showAdaptive<void>(
+                                      context,
+                                      (context) => RemoteWakeModal(
                                         netbarName: netbar.name,
                                       ),
+                                      routeName: '/dialog/remote-wake',
                                     );
                                   },
                                   borderRadius: BorderRadius.circular(8),

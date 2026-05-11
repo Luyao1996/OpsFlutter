@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/desktop_api.dart';
 
 /// 文件选择弹窗
@@ -158,99 +159,47 @@ class _FileSelectDialogState extends State<FileSelectDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      child: SizedBox(
-        width: 680,
-        height: 480,
-        child: Column(
-          children: [
-            // Header
-            Container(
-              height: 48,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: const BoxDecoration(
-                border: Border(bottom: BorderSide(color: Color(0xFFE4E7ED))),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    '选择文件',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                  ),
-                  InkWell(
-                    onTap: () => Navigator.pop(context),
-                    borderRadius: BorderRadius.circular(4),
-                    child: const Padding(
-                      padding: EdgeInsets.all(4),
-                      child: Icon(LucideIcons.x, size: 18, color: Colors.grey),
-                    ),
-                  ),
-                ],
-              ),
+    return ResponsiveDialogScaffold(
+      title: '选择文件',
+      maxWidth: 680,
+      maxHeight: 480,
+      scrollableBody: false,
+      bodyPadding: const EdgeInsets.all(16),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildBreadcrumb(),
+          const SizedBox(height: 12),
+          _buildSearchBar(),
+          const SizedBox(height: 12),
+          Expanded(child: _buildFileList()),
+        ],
+      ),
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.grey.shade700,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
             ),
-
-            // Body
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Breadcrumb
-                    _buildBreadcrumb(),
-                    const SizedBox(height: 12),
-
-                    // Search
-                    _buildSearchBar(),
-                    const SizedBox(height: 12),
-
-                    // File list
-                    Expanded(child: _buildFileList()),
-                  ],
-                ),
-              ),
+            child: const Text('取消'),
+          ),
+          const SizedBox(width: 60),
+          ElevatedButton(
+            onPressed: _selected != null ? _confirm : null,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.iosBlue,
+              foregroundColor: Colors.white,
+              disabledBackgroundColor: Colors.grey.shade300,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
             ),
-
-            // Footer
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: Color(0xFFE4E7ED))),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.grey.shade700,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-                    ),
-                    child: const Text('取消'),
-                  ),
-                  const SizedBox(width: 60),
-                  ElevatedButton(
-                    onPressed: _selected != null ? _confirm : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.iosBlue,
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor: Colors.grey.shade300,
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                    ),
-                    child: const Text('确定'),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+            child: const Text('确定'),
+          ),
+        ],
       ),
     );
   }

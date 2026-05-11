@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/utils/top_notice.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/netbar_api.dart';
 import 'netbar_multi_select_table.dart';
 
@@ -62,64 +63,38 @@ class _BatchUpdateProgramDialogState extends State<BatchUpdateProgramDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 640, maxHeight: 560),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text('批量更新程序', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close, size: 20),
-                    splashRadius: 18,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              if (_loading)
-                const Expanded(child: Center(child: CircularProgressIndicator()))
-              else
-                Expanded(
-                  child: NetbarMultiSelectTable(
-                    netbars: _netbars,
-                    groups: _groups,
-                    onSelectionChanged: (ids) => setState(() => _selectedIds = ids),
-                  ),
-                ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('取消'),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: (_submitting || _selectedIds.isEmpty) ? null : _handleConfirm,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.iosBlue,
-                      foregroundColor: Colors.white,
-                    ),
-                    child: _submitting
-                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text('确认更新'),
-                  ),
-                ],
-              ),
-            ],
+    return ResponsiveDialogScaffold(
+      title: '批量更新程序',
+      maxWidth: 640,
+      maxHeight: 560,
+      scrollableBody: false,
+      bodyPadding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : NetbarMultiSelectTable(
+              netbars: _netbars,
+              groups: _groups,
+              onSelectionChanged: (ids) => setState(() => _selectedIds = ids),
+            ),
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
           ),
-        ),
+          const SizedBox(width: 8),
+          ElevatedButton(
+            onPressed: (_submitting || _selectedIds.isEmpty) ? null : _handleConfirm,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.iosBlue,
+              foregroundColor: Colors.white,
+            ),
+            child: _submitting
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Text('确认更新'),
+          ),
+        ],
       ),
     );
   }

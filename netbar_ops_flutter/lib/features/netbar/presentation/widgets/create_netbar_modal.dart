@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/netbar_api.dart';
 
 class CreateNetbarModal extends StatefulWidget {
@@ -71,24 +72,16 @@ class _CreateNetbarModalState extends State<CreateNetbarModal> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 500),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '新增网吧',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 24),
-                
+    return ResponsiveDialogScaffold(
+      title: '新增网吧',
+      maxWidth: 500,
+      bodyPadding: const EdgeInsets.all(24),
+      body: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
                 if (_error != null)
                   Container(
                     width: double.infinity,
@@ -152,34 +145,31 @@ class _CreateNetbarModalState extends State<CreateNetbarModal> {
                   keyboardType: TextInputType.number,
                 ),
 
-                const SizedBox(height: 32),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: TextButton.styleFrom(
-                        foregroundColor: Colors.grey.shade600,
-                      ),
-                      child: const Text('取消'),
-                    ),
-                    const SizedBox(width: 12),
-                    ElevatedButton(
-                      onPressed: _isCreating ? null : _handleCreate,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      ),
-                      child: Text(_isCreating ? '创建中...' : '创建网吧'),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
+          ],
         ),
+      ),
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.grey.shade600,
+            ),
+            child: const Text('取消'),
+          ),
+          const SizedBox(width: 12),
+          ElevatedButton(
+            onPressed: _isCreating ? null : _handleCreate,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: Text(_isCreating ? '创建中...' : '创建网吧'),
+          ),
+        ],
       ),
     );
   }

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
+import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/widgets/search_field.dart';
 import '../data/netbar_api.dart';
 import '../data/netbar_pinyin_matcher.dart';
@@ -209,9 +210,10 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
         const SizedBox(width: 12),
         ElevatedButton.icon(
           onPressed: () {
-            showDialog(
-              context: context,
-              builder: (context) => const CreateNetbarModal(),
+            showAdaptive<bool>(
+              context,
+              (context) => const CreateNetbarModal(),
+              routeName: '/dialog/create-netbar',
             ).then((created) {
               if (created == true) {
                 ref.refresh(netbarListProvider);

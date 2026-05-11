@@ -8,6 +8,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/utils/adaptive_show.dart';
 import '../../../shared/utils/top_notice.dart';
 import '../data/user_api.dart';
 import 'widgets/group_sidebar.dart';
@@ -220,12 +221,13 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   }
 
   void _handleAddUser() async {
-    final changed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AddMemberDialog(
+    final changed = await showAdaptive<bool>(
+      context,
+      (context) => AddMemberDialog(
         groups: _groups,
         initialGroupId: _selectedGroupId,
       ),
+      routeName: '/dialog/add-member',
     );
     if (changed == true) {
       _loadData(); // Reload after add
@@ -276,12 +278,13 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   }
 
   void _handleEditUser(User user) async {
-    final changed = await showDialog<bool>(
-      context: context,
-      builder: (context) => EditUserDialog(
+    final changed = await showAdaptive<bool>(
+      context,
+      (context) => EditUserDialog(
         user: user,
         groups: _groups,
       ),
+      routeName: '/dialog/edit-user',
     );
     if (changed == true) {
       _loadData(); // Reload after edit
@@ -289,9 +292,10 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   }
 
   void _handleBind2FA(User user) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => TwoFactorDialog(user: user),
+    final confirmed = await showAdaptive<bool>(
+      context,
+      (context) => TwoFactorDialog(user: user),
+      routeName: '/dialog/two-factor',
     );
 
     if (confirmed == true) {

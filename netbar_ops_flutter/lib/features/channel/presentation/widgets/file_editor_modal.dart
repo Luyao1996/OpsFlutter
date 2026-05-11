@@ -232,13 +232,26 @@ class _FileEditorModalState extends State<FileEditorModal> {
 
   @override
   Widget build(BuildContext context) {
+    final content = Column(
+      children: [
+        _buildHeader(),
+        Expanded(child: _buildEditor()),
+        _buildFooter(),
+      ],
+    );
+
+    if (context.isNarrow) {
+      return Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(child: content),
+      );
+    }
+
     final size = MediaQuery.of(context).size;
-    final isPhone = context.isPhone;
-    final dialogWidth = _isFullscreen ? size.width * 0.98 : (isPhone ? size.width * 0.96 : 800.0);
-    final dialogHeight = _isFullscreen ? size.height * 0.95 : (isPhone ? size.height * 0.84 : 600.0);
+    final dialogWidth = _isFullscreen ? size.width * 0.98 : 800.0;
+    final dialogHeight = _isFullscreen ? size.height * 0.95 : 600.0;
     return Dialog(
       backgroundColor: Colors.transparent,
-      insetPadding: isPhone ? const EdgeInsets.all(12) : null,
       child: Container(
         width: dialogWidth,
         height: dialogHeight,
@@ -247,13 +260,7 @@ class _FileEditorModalState extends State<FileEditorModal> {
           borderRadius: BorderRadius.circular(16),
           boxShadow: AppShadows.xl,
         ),
-        child: Column(
-          children: [
-            _buildHeader(),
-            Expanded(child: _buildEditor()),
-            _buildFooter(),
-          ],
-        ),
+        child: content,
       ),
     );
   }

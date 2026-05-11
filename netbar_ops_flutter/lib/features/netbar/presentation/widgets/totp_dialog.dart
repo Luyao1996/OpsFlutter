@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/utils/top_notice.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/netbar_api.dart';
 
 /// 超级管理密码生成对话框
@@ -85,30 +86,13 @@ class _TotpDialogState extends State<TotpDialog> {
   Widget build(BuildContext context) {
     final digits = _password.split('');
 
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 450),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 标题
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text('超级管理密码', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close, size: 20),
-                    splashRadius: 18,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
+    return ResponsiveDialogScaffold(
+      title: '超级管理密码',
+      maxWidth: 450,
+      bodyPadding: const EdgeInsets.all(24),
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
               // 时间选择区域（对标 Vue 端 time-section）
               Align(
                 alignment: Alignment.centerLeft,
@@ -248,9 +232,7 @@ class _TotpDialogState extends State<TotpDialog> {
                   ),
                 ],
               ),
-            ],
-          ),
-        ),
+        ],
       ),
     );
   }

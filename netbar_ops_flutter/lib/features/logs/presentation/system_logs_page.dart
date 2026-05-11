@@ -6,6 +6,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../shared/utils/adaptive_show.dart';
 import '../../../shared/utils/top_notice.dart';
 
 import '../../../shared/utils/web_download_helper_stub.dart'
@@ -48,9 +49,10 @@ class _SystemLogsPageState extends State<SystemLogsPage> {
   }
 
   void _handleViewDetail(LogEntry log) {
-    showDialog(
-      context: context,
-      builder: (context) => LogDetailDialog(log: log),
+    showAdaptive<void>(
+      context,
+      (context) => LogDetailDialog(log: log),
+      routeName: '/dialog/log-detail',
     );
   }
 

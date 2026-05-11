@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/utils/top_notice.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/user_api.dart';
 
 class AddUserDialog extends ConsumerStatefulWidget {
@@ -160,51 +161,19 @@ class _AddUserDialogState extends ConsumerState<AddUserDialog> {
   @override
   Widget build(BuildContext context) {
     final isEditing = widget.initialUser != null;
+    return ResponsiveDialogScaffold(
+      title: isEditing ? '编辑成员信息' : '添加成员',
+      maxWidth: 500,
+      bodyPadding: const EdgeInsets.all(24),
+      body: _buildContent(isEditing),
+      footer: _buildFooter(isEditing),
+    );
+  }
 
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-      ), // Sharper corners like Vue
-      child: SizedBox(
-        width: 500, // Slightly wider to match Vue
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    isEditing ? '编辑成员信息' : '添加成员',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  InkWell(
-                    onTap: () => Navigator.pop(context),
-                    child: const Icon(
-                      LucideIcons.x,
-                      size: 20,
-                      color: Colors.grey,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1, color: Color(0xFFF3F4F6)),
-
-            // Content
-            Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+  Widget _buildContent(bool isEditing) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
                   _buildTextField('昵称', _nicknameController),
                   const SizedBox(height: 16),
                   _buildTextField(
@@ -297,63 +266,42 @@ class _AddUserDialogState extends ConsumerState<AddUserDialog> {
                       );
                     },
                   ),
-                ],
-              ),
-            ),
+      ],
+    );
+  }
 
-            // Footer
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-              child: Row(
-                children: [
-                  if (isEditing)
-                    TextButton.icon(
-                      onPressed: _saving ? null : _handleDelete,
-                      icon: const Icon(
-                        LucideIcons.trash2,
-                        size: 16,
-                        color: AppColors.red,
-                      ),
-                      label: const Text(
-                        '删除成员',
-                        style: TextStyle(color: AppColors.red),
-                      ),
-                      style: TextButton.styleFrom(
-                        padding: EdgeInsets.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                    ),
-                  const Spacer(),
-                  TextButton(
-                    onPressed: _saving ? null : () => Navigator.pop(context),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.grey.shade700,
-                    ),
-                    child: const Text('取消'),
-                  ),
-                  const SizedBox(width: 12),
-                  ElevatedButton(
-                    onPressed: _saving ? null : _handleSave,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.iosBlue,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 12,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child: Text(_saving ? '保存中...' : '保存'),
-                  ),
-                ],
-              ),
+  Widget _buildFooter(bool isEditing) {
+    return Row(
+      children: [
+        if (isEditing)
+          TextButton.icon(
+            onPressed: _saving ? null : _handleDelete,
+            icon: const Icon(LucideIcons.trash2, size: 16, color: AppColors.red),
+            label: const Text('删除成员', style: TextStyle(color: AppColors.red)),
+            style: TextButton.styleFrom(
+              padding: EdgeInsets.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-          ],
+          ),
+        const Spacer(),
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          style: TextButton.styleFrom(foregroundColor: Colors.grey.shade700),
+          child: const Text('取消'),
         ),
-      ),
+        const SizedBox(width: 12),
+        ElevatedButton(
+          onPressed: _saving ? null : _handleSave,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.iosBlue,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+          child: Text(_saving ? '保存中...' : '保存'),
+        ),
+      ],
     );
   }
 
