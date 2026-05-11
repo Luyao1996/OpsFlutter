@@ -6,11 +6,12 @@ import '../../data/user_mock_data.dart';
 class GroupSidebar extends StatefulWidget {
   final List<UserGroup> groups;
   final int? selectedGroupId;
-  final ValueChanged<int> onSelectGroup;
+  final ValueChanged<int?> onSelectGroup;
   final VoidCallback onAddGroup;
   final String groupSearchQuery;
   final ValueChanged<String> onGroupSearchChanged;
   final ValueChanged<UserGroup>? onDeleteGroup;
+  final ValueChanged<UserGroup>? onEditGroup;
   final double? width;
 
   const GroupSidebar({
@@ -22,6 +23,7 @@ class GroupSidebar extends StatefulWidget {
     required this.groupSearchQuery,
     required this.onGroupSearchChanged,
     this.onDeleteGroup,
+    this.onEditGroup,
     this.width = 240,
   });
 
@@ -117,28 +119,28 @@ class _GroupSidebarState extends State<GroupSidebar> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             child: InkWell(
-              onTap: () => widget.onSelectGroup(0), // 0 代表所有成员
+              onTap: () => widget.onSelectGroup(null), // null 代表所有成员
               borderRadius: BorderRadius.circular(6),
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
                 decoration: BoxDecoration(
-                  color: widget.selectedGroupId == 0 ? Colors.blue.shade50 : Colors.transparent,
+                  color: widget.selectedGroupId == null ? Colors.blue.shade50 : Colors.transparent,
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Row(
                   children: [
                     Icon(
-                      LucideIcons.user, 
-                      size: 16, 
-                      color: widget.selectedGroupId == 0 ? AppColors.iosBlue : Colors.grey.shade600
+                      LucideIcons.user,
+                      size: 16,
+                      color: widget.selectedGroupId == null ? AppColors.iosBlue : Colors.grey.shade600
                     ),
                     const SizedBox(width: 12),
                     Text(
                       '所有成员',
                       style: TextStyle(
                         fontSize: 14,
-                        color: widget.selectedGroupId == 0 ? AppColors.iosBlue : Colors.grey.shade700,
-                        fontWeight: widget.selectedGroupId == 0 ? FontWeight.w500 : FontWeight.normal,
+                        color: widget.selectedGroupId == null ? AppColors.iosBlue : Colors.grey.shade700,
+                        fontWeight: widget.selectedGroupId == null ? FontWeight.w500 : FontWeight.normal,
                       ),
                     ),
                   ],
@@ -163,7 +165,6 @@ class _GroupSidebarState extends State<GroupSidebar> {
               itemCount: groups.length,
               itemBuilder: (context, index) {
                 final group = groups[index];
-                if (group.id == 0) return const SizedBox.shrink(); // Skip 'All Members' if it's in the list
                 final isSelected = widget.selectedGroupId == group.id;
                 return Container(
                   margin: const EdgeInsets.only(bottom: 2),
@@ -202,8 +203,9 @@ class _GroupSidebarState extends State<GroupSidebar> {
                           ),
                         ),
                       ),
-                      // 分组21不显示操作按钮（对标 Vue 端 UserPage.vue 第 45 行 group.id !== 21）
-                      if (widget.onDeleteGroup != null && group.id != 21)
+                      // 内置分组（is_internal=true，如总部、业主分组）不显示操作按钮
+                      if (!group.isInternal &&
+                          (widget.onDeleteGroup != null || widget.onEditGroup != null))
                         PopupMenuButton<String>(
                           tooltip: '更多',
                           padding: EdgeInsets.zero,
@@ -213,19 +215,32 @@ class _GroupSidebarState extends State<GroupSidebar> {
                             color: Colors.grey.shade500,
                           ),
                           onSelected: (value) {
+                            if (value == 'edit') widget.onEditGroup?.call(group);
                             if (value == 'delete') widget.onDeleteGroup?.call(group);
                           },
                           itemBuilder: (context) => [
-                            PopupMenuItem(
-                              value: 'delete',
-                              child: Row(
-                                children: [
-                                  const Icon(LucideIcons.trash2, size: 16, color: Colors.red),
-                                  const SizedBox(width: 10),
-                                  const Text('删除分组'),
-                                ],
+                            if (widget.onEditGroup != null)
+                              PopupMenuItem(
+                                value: 'edit',
+                                child: Row(
+                                  children: const [
+                                    Icon(LucideIcons.pencil, size: 16, color: Colors.black87),
+                                    SizedBox(width: 10),
+                                    Text('编辑名称'),
+                                  ],
+                                ),
                               ),
-                            ),
+                            if (widget.onDeleteGroup != null)
+                              PopupMenuItem(
+                                value: 'delete',
+                                child: Row(
+                                  children: const [
+                                    Icon(LucideIcons.trash2, size: 16, color: Colors.red),
+                                    SizedBox(width: 10),
+                                    Text('删除分组'),
+                                  ],
+                                ),
+                              ),
                           ],
                         ),
                     ],

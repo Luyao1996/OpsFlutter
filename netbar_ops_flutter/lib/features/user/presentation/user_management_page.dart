@@ -45,7 +45,7 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
       (prev, next) {
         if (prev?.id != next.id || prev?.version != next.version) {
           setState(() {
-            _selectedGroupId = 0;
+            _selectedGroupId = null;
             _searchQuery = '';
             _groupSearchQuery = '';
           });
@@ -74,8 +74,7 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
 
       setState(() {
         _groups = groups;
-        // Default to '0' (All Members) if not set
-        _selectedGroupId ??= 0;
+        // 默认 null 表示"所有成员"
         _isLoading = false;
       });
     } catch (e) {
@@ -88,8 +87,8 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   List<User> get _filteredUsers {
     List<User> result = [];
 
-    // 如果选择了特定分组，只显示该分组的用户
-    if (_selectedGroupId != null && _selectedGroupId != 0) {
+    // 如果选择了特定分组，只显示该分组的用户；null 表示"所有成员"
+    if (_selectedGroupId != null) {
       final group = _groups.firstWhere(
         (g) => g.id == _selectedGroupId,
         orElse: () => UserGroup(id: 0, name: ''),
@@ -141,9 +140,9 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   }
 
   String get _selectedGroupName {
-    if (_selectedGroupId == 0) return '所有成员';
+    if (_selectedGroupId == null) return '所有成员';
     if (_groups.isEmpty) return '加载中...';
-    return _groups.firstWhere((g) => g.id == _selectedGroupId, orElse: () => UserGroup(id: 0, name: '所有成员')).name;
+    return _groups.firstWhere((g) => g.id == _selectedGroupId, orElse: () => UserGroup(id: -1, name: '未知分组')).name;
   }
 
   bool get _isAdmin {
@@ -159,18 +158,26 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   }
 
   // Actions
-  void _handleAddGroup() async {
+  void _handleAddGroup() => _handleGroupDialog();
+
+  void _handleEditGroup(UserGroup group) => _handleGroupDialog(editing: group);
+
+  Future<void> _handleGroupDialog({UserGroup? editing}) async {
     if (!_isSuperAdmin) {
-      _showError('仅总部管理员可创建分组');
+      _showError(editing == null ? '仅总部管理员可创建分组' : '仅总部管理员可编辑分组');
+      return;
+    }
+    if (editing != null && editing.isInternal) {
+      _showError('该分组不可编辑');
       return;
     }
     String? newName;
     await showDialog(
       context: context,
       builder: (context) {
-        final controller = TextEditingController();
+        final controller = TextEditingController(text: editing?.name ?? '');
         return AlertDialog(
-          title: const Text('新建分组'),
+          title: Text(editing == null ? '新建分组' : '编辑分组'),
           content: TextField(
             controller: controller,
             decoration: const InputDecoration(hintText: '请输入分组名称'),
@@ -183,23 +190,32 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
                 newName = controller.text.trim();
                 Navigator.pop(context);
               },
-              child: const Text('确定'),
+              child: Text(editing == null ? '确定' : '保存'),
             ),
           ],
         );
       },
     );
 
-    if (newName != null && newName!.isNotEmpty) {
-      try {
-        final groupApi = ref.read(groupApiProvider);
+    if (newName == null || newName!.isEmpty) return;
+    if (editing != null && newName == editing.name) return;
+
+    try {
+      final groupApi = ref.read(groupApiProvider);
+      if (editing == null) {
         await groupApi.create(name: newName!);
-        if (!mounted) return;
-        showTopNotice(context, '分组创建成功', level: NoticeLevel.success);
-        _loadData();
-      } catch (e) {
-        _showApiError('创建分组', e);
+      } else {
+        await groupApi.update(editing.id, name: newName!);
       }
+      if (!mounted) return;
+      showTopNotice(
+        context,
+        editing == null ? '分组创建成功' : '分组名称已更新',
+        level: NoticeLevel.success,
+      );
+      _loadData();
+    } catch (e) {
+      _showApiError(editing == null ? '创建分组' : '编辑分组', e);
     }
   }
 
@@ -208,7 +224,7 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
       context: context,
       builder: (context) => AddMemberDialog(
         groups: _groups,
-        initialGroupId: _selectedGroupId == 0 ? null : _selectedGroupId,
+        initialGroupId: _selectedGroupId,
       ),
     );
     if (changed == true) {
@@ -217,8 +233,8 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   }
 
   Future<void> _handleDeleteGroup(UserGroup group) async {
-    // 分组21不可操作（对标 Vue 端 editGroup 第 791-793 行）
-    if (group.id == 21) {
+    // 内置分组（is_internal=true，如总部、业主分组）不可删除
+    if (group.isInternal) {
       _showError('该分组不可编辑');
       return;
     }
@@ -250,7 +266,7 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
       await groupApi.delete(group.id);
       if (!mounted) return;
       if (_selectedGroupId == group.id) {
-        setState(() => _selectedGroupId = 0);
+        setState(() => _selectedGroupId = null);
       }
       showTopNotice(context, '已删除分组：${group.name}', level: NoticeLevel.success);
       _loadData();
@@ -436,6 +452,7 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
             groupSearchQuery: _groupSearchQuery,
             onGroupSearchChanged: (v) => setState(() => _groupSearchQuery = v),
             onDeleteGroup: _handleDeleteGroup,
+            onEditGroup: _handleEditGroup,
           );
 
           final main = Column(
@@ -614,6 +631,10 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
             onDeleteGroup: (group) async {
               Navigator.pop(context);
               await _handleDeleteGroup(group);
+            },
+            onEditGroup: (group) {
+              Navigator.pop(context);
+              _handleEditGroup(group);
             },
           ),
         ),

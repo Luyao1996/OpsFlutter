@@ -184,12 +184,14 @@ class UserGroup {
   final int id;
   final String name;
   final int? parentId;
+  final bool isInternal;
   final List<User> users;
 
   UserGroup({
     required this.id,
     required this.name,
     this.parentId,
+    this.isInternal = false,
     this.users = const [],
   });
 
@@ -199,6 +201,7 @@ class UserGroup {
       id: int.tryParse((json['id'] ?? 0).toString()) ?? 0,
       name: (json['name'] ?? '').toString(),
       parentId: json['parent_id'] != null ? int.tryParse(json['parent_id'].toString()) : null,
+      isInternal: json['is_internal'] == true,
       users: usersJson.map((e) => User.fromJson(e as Map<String, dynamic>)).toList(),
     );
   }
