@@ -98,6 +98,11 @@ dependencies:
   web_socket_channel: ^2.4.0
   wakelock_plus: ^1.2.5
 
+  # 应用内更新
+  crypto: ^3.0.3              # MD5 校验
+  package_info_plus: ^8.0.0   # 读取本地 versionCode/buildNumber
+  open_filex: ^4.4.0          # Android 拉起 APK 安装（自带 FileProvider）
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

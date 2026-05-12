@@ -19,6 +19,9 @@ import 'core/network/window_runtime.dart';
 import 'core/theme/app_theme.dart';
 import 'app/router.dart';
 import 'features/monitor/presentation/terminal_detail_window_app.dart';
+import 'features/update/presentation/update_dialog.dart';
+import 'features/update/providers.dart';
+import 'features/update/update_navigator_key.dart';
 import 'shared/providers/app_providers.dart';
 import 'shared/services/window_control.dart';
 
@@ -152,11 +155,47 @@ void main(List<String> args) async {
   });
 }
 
-class NetbarOpsApp extends ConsumerWidget {
+class NetbarOpsApp extends ConsumerStatefulWidget {
   const NetbarOpsApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<NetbarOpsApp> createState() => _NetbarOpsAppState();
+}
+
+class _NetbarOpsAppState extends ConsumerState<NetbarOpsApp> {
+  static bool _updateChecked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkUpdate());
+  }
+
+  Future<void> _checkUpdate() async {
+    if (_updateChecked) return;
+    _updateChecked = true;
+    // 等一下让首屏稳定，避免和登录页/路由跳转抢焦点
+    await Future<void>.delayed(const Duration(milliseconds: 800));
+    if (!mounted) return;
+    try {
+      final result = await ref.read(updateServiceProvider).check();
+      if (!mounted || !result.hasUpdate) return;
+      final ctx = updateNavigatorKey.currentContext;
+      if (ctx == null) return;
+      await showUpdateDialog(ctx, result);
+    } catch (e, st) {
+      WebRtcCrashLogger.I.log(
+        'WARN',
+        'update',
+        'startupCheck',
+        '-',
+        'error=$e stack=${st.toString().split('\n').take(5).join(' | ')}',
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final router = ref.watch(routerProvider);
 
     return MaterialApp.router(

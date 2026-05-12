@@ -16,11 +16,13 @@ import '../shared/widgets/main_layout.dart';
 import '../features/monitor/presentation/terminal_detail_page.dart';
 import '../features/channel/presentation/channel_monitor_page.dart';
 import '../shared/providers/app_providers.dart';
+import '../features/update/update_navigator_key.dart';
 
 /// 路由配置
 final routerProvider = Provider<GoRouter>((ref) {
   final refreshListenable = ref.watch(_routerRefreshListenableProvider);
   return GoRouter(
+    navigatorKey: updateNavigatorKey,
     refreshListenable: refreshListenable,
     initialLocation: '/dashboard',
     redirect: (context, state) {
