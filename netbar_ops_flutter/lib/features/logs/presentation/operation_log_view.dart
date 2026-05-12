@@ -165,15 +165,20 @@ class _OperationLogViewState extends State<OperationLogView> {
   @override
   Widget build(BuildContext context) {
     final isPhone = context.isPhone;
-    final pagePadding = isPhone
-        ? const EdgeInsets.all(12)
-        : const EdgeInsets.all(24);
+    if (isPhone) {
+      // 手机端：toolbar 与列表共用同一个可滚动视图，键盘弹起时整体可滚动，
+      // 不再出现"toolbar 高度 + Expanded(list) 超过可用高度"的 overflow。
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+        child: _buildMobileScrollable(),
+      );
+    }
     return Padding(
-      padding: pagePadding,
+      padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildToolbar(isPhone),
+          _buildToolbar(false),
           const SizedBox(height: 12),
           Expanded(
             child: Container(
@@ -183,7 +188,7 @@ class _OperationLogViewState extends State<OperationLogView> {
                 border: Border.all(color: Colors.grey.shade200),
               ),
               clipBehavior: Clip.hardEdge,
-              child: _buildBody(isPhone),
+              child: _buildDesktopBody(),
             ),
           ),
         ],
@@ -191,31 +196,12 @@ class _OperationLogViewState extends State<OperationLogView> {
     );
   }
 
-  Widget _buildBody(bool isPhone) {
-    if (_error != null && _items.isEmpty) {
-      return _buildError();
-    }
+  Widget _buildDesktopBody() {
+    if (_error != null && _items.isEmpty) return _buildError();
     if (_loading && _items.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (_items.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(LucideIcons.inbox, size: 48, color: Colors.grey.shade300),
-            const SizedBox(height: 8),
-            Text(
-              '暂无数据',
-              style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
-            ),
-          ],
-        ),
-      );
-    }
-    if (isPhone) {
-      return _buildMobileList();
-    }
+    if (_items.isEmpty) return _buildEmptyState();
     return Column(
       children: [
         _buildTableHeader(),
@@ -224,6 +210,22 @@ class _OperationLogViewState extends State<OperationLogView> {
         Divider(height: 1, color: Colors.grey.shade200),
         _buildPagination(),
       ],
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(LucideIcons.inbox, size: 48, color: Colors.grey.shade300),
+          const SizedBox(height: 8),
+          Text(
+            '暂无数据',
+            style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+          ),
+        ],
+      ),
     );
   }
 
@@ -780,92 +782,127 @@ class _OperationLogViewState extends State<OperationLogView> {
     );
   }
 
-  // ===== Mobile List =====
-  Widget _buildMobileList() {
+  // ===== Mobile Scrollable =====
+  /// 手机端整体可滚动列表：toolbar 作为 index 0 跟随滚动，
+  /// 后续是错误/loading/空 / 卡片 / 加载更多 尾部。
+  /// 键盘弹起时整个区域可滚动，不会出现 Column overflow。
+  Widget _buildMobileScrollable() {
+    final hasItems = _items.isNotEmpty;
+    final hasError = _error != null && _items.isEmpty;
+    final isLoadingFirst = _loading && _items.isEmpty;
+    final isEmpty = !hasError && !isLoadingFirst && !hasItems;
+    final hasTail = hasItems && (_loading || _noMore);
+
+    final contentCount = hasItems
+        ? _items.length + (hasTail ? 1 : 0)
+        : 1; // 错误/loading/空 单一占位
+    final totalCount = 1 + contentCount; // +1 for toolbar
+
     return ListView.builder(
       controller: _mobileScrollCtrl,
-      padding: const EdgeInsets.all(8),
-      itemCount: _items.length + 1,
+      // 底部留空，避免最后一项贴底；keyboardDismissBehavior 让滚动时收起键盘。
+      padding: const EdgeInsets.only(bottom: 16),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      itemCount: totalCount,
       itemBuilder: (context, index) {
-        if (index == _items.length) {
-          if (_loading && _items.isNotEmpty) {
-            return const Padding(
-              padding: EdgeInsets.symmetric(vertical: 12),
-              child: Center(
-                child: SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ),
+        if (index == 0) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _buildToolbar(true),
+          );
+        }
+        final i = index - 1;
+        if (!hasItems) {
+          if (hasError) {
+            return SizedBox(height: 280, child: _buildError());
+          }
+          if (isLoadingFirst) {
+            return const SizedBox(
+              height: 200,
+              child: Center(child: CircularProgressIndicator()),
             );
           }
-          if (_noMore) {
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Center(
-                child: Text(
-                  '没有更多了',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
-                ),
-              ),
-            );
+          if (isEmpty) {
+            return SizedBox(height: 200, child: _buildEmptyState());
           }
           return const SizedBox.shrink();
         }
-        final item = _items[index];
-        return Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: Colors.grey.shade200),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        // 有数据：卡片 / 尾部
+        if (i < _items.length) {
+          return _buildMobileCard(_items[i]);
+        }
+        if (_loading) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Center(
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        }
+        if (_noMore) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Center(
+              child: Text(
+                '没有更多了',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+              ),
+            ),
+          );
+        }
+        return const SizedBox.shrink();
+      },
+    );
+  }
+
+  Widget _buildMobileCard(OperationLog item) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Row(
-                children: [
-                  Icon(
-                    LucideIcons.clock,
-                    size: 13,
-                    color: Colors.grey.shade400,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    item.time,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey.shade600,
-                    ),
-                  ),
-                  const Spacer(),
-                  _EventTag(text: item.action),
-                ],
+              Icon(LucideIcons.clock, size: 13, color: Colors.grey.shade400),
+              const SizedBox(width: 4),
+              Text(
+                item.time,
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
               ),
-              const SizedBox(height: 10),
-              _kvRow('操作人', item.operator, icon: LucideIcons.user),
-              const SizedBox(height: 6),
-              _kvRow('IP', item.ip, mono: true),
-              const SizedBox(height: 8),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF9FAFB),
-                  border: Border.all(color: Colors.grey.shade100),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  item.description,
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-                ),
-              ),
+              const Spacer(),
+              _EventTag(text: item.action),
             ],
           ),
-        );
-      },
+          const SizedBox(height: 10),
+          _kvRow('操作人', item.operator, icon: LucideIcons.user),
+          const SizedBox(height: 6),
+          _kvRow('IP', item.ip, mono: true),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF9FAFB),
+              border: Border.all(color: Colors.grey.shade100),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              item.description,
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
