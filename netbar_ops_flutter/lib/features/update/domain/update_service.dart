@@ -49,29 +49,31 @@ class UpdateService {
         return UpdateCheckResult.skipped();
       }
 
+      final local = await _localPackageInfo();
+
       final pm = manifest.forPlatform(platform);
       if (pm == null || pm.releases.isEmpty) {
         _log('INFO', 'check', 'no releases for platform=$platform');
-        return UpdateCheckResult.upToDate(await _localBuildNumber());
+        return UpdateCheckResult.upToDate(local.version, local.build);
       }
 
-      final localBuild = await _localBuildNumber();
       final latest = pm.latest!;
       _log('INFO', 'check',
-          'local=$localBuild latest=${latest.buildNumber} min=${pm.minSupportedBuild}');
+          'localVersion=${local.version} localBuild=${local.build} latest=${latest.buildNumber} min=${pm.minSupportedBuild}');
 
-      if (localBuild >= latest.buildNumber) {
-        return UpdateCheckResult.upToDate(localBuild);
+      if (local.build >= latest.buildNumber) {
+        return UpdateCheckResult.upToDate(local.version, local.build);
       }
 
-      final logs = pm.changelogsSince(localBuild);
-      final isForced = latest.forceUpdate || localBuild < pm.minSupportedBuild;
+      final logs = pm.changelogsSince(local.build);
+      final isForced = latest.forceUpdate || local.build < pm.minSupportedBuild;
       return UpdateCheckResult(
         status: isForced ? UpdateStatus.forced : UpdateStatus.optional,
         latest: latest,
         aggregatedChangelogs: logs,
         host: host,
-        localBuildNumber: localBuild,
+        localVersion: local.version,
+        localBuildNumber: local.build,
       );
     } catch (e, st) {
       _log('ERROR', 'check', 'unhandled error=$e stack=$st');
@@ -115,13 +117,16 @@ class UpdateService {
     return null;
   }
 
-  Future<int> _localBuildNumber() async {
+  Future<({String version, int build})> _localPackageInfo() async {
     try {
       final info = await PackageInfo.fromPlatform();
-      return int.tryParse(info.buildNumber) ?? 0;
+      return (
+        version: info.version,
+        build: int.tryParse(info.buildNumber) ?? 0,
+      );
     } catch (e) {
-      _log('WARN', 'localBuildNumber', 'error=$e');
-      return 0;
+      _log('WARN', 'localPackageInfo', 'error=$e');
+      return (version: '', build: 0);
     }
   }
 

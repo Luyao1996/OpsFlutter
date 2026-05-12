@@ -51,10 +51,15 @@ RestartApplications=yes
 CloseApplicationsFilter=*.exe,*.dll
 
 [Languages]
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
+; 如需中文界面：
+;   1. 从 https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/ChineseSimplified.isl 下载
+;   2. 放到 <InnoSetup安装目录>\Languages\Unofficial\ChineseSimplified.isl
+;   3. 把下面这行的前导分号去掉
+;Name: "chinesesimplified"; MessagesFile: "compiler:Languages\Unofficial\ChineseSimplified.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加图标:"; Flags: unchecked
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
 
 [Files]
 ; 整个 Flutter Release 目录
@@ -62,14 +67,14 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
+Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-; 首次安装：让用户选择是否启动（静默模式下跳过）
-Filename: "{app}\{#MyAppExeName}"; Description: "启动 {#MyAppName}"; \
+; First install: let user choose to launch (skipped in silent mode)
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; \
     Flags: nowait postinstall skipifsilent
-; 静默升级场景：强制重启程序
+; Silent upgrade: force restart the app
 Filename: "{app}\{#MyAppExeName}"; Flags: nowait; Check: WasSilent
 
 [UninstallDelete]

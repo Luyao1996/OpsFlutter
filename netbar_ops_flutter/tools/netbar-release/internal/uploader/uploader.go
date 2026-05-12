@@ -13,8 +13,13 @@ import (
 
 var httpClient = &http.Client{Timeout: 30 * time.Minute}
 
-// UploadFile 通过预签名 URL 上传本地文件。
-// 上传方式：POST + Content-Type: application/octet-stream + 文件二进制 body。
+// UploadFile 通过预签名 URL 上传本地文件（PUT 方式）。
+//
+// 关键约定：
+//   - 必须用 PUT（OSS 预签名 URL 不接受 POST raw body）
+//   - 不发送 Content-Type 头部。原因：阿里云 OSS V1 签名把 Content-Type 纳入 StringToSign，
+//     如果服务端 PHP 签名时 Content-Type 为空，客户端就必须也为空，否则 SignatureDoesNotMatch。
+//     Go 的 net/http 在用户没显式 Set 时不会自动添加 Content-Type。
 func UploadFile(signedURL, filePath string) error {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -30,11 +35,10 @@ func UploadFile(signedURL, filePath string) error {
 	bar := progressbar.DefaultBytes(stat.Size(), "上传中")
 	body := io.TeeReader(f, bar)
 
-	req, err := http.NewRequest(http.MethodPost, signedURL, body)
+	req, err := http.NewRequest(http.MethodPut, signedURL, body)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/octet-stream")
 	req.ContentLength = stat.Size()
 
 	resp, err := httpClient.Do(req)
@@ -49,13 +53,13 @@ func UploadFile(signedURL, filePath string) error {
 	return nil
 }
 
-// UploadBytes 通过预签名 URL 上传内存中的字节。用于上传 version.json。
+// UploadBytes 通过预签名 URL 上传内存中的字节（用于 version.json 等小文件）。
+// 同 UploadFile 的约定：PUT + 不发 Content-Type。
 func UploadBytes(signedURL string, data []byte) error {
-	req, err := http.NewRequest(http.MethodPost, signedURL, bytes.NewReader(data))
+	req, err := http.NewRequest(http.MethodPut, signedURL, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/octet-stream")
 	req.ContentLength = int64(len(data))
 
 	resp, err := httpClient.Do(req)

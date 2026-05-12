@@ -1,10 +1,10 @@
-# 一键打包 Windows setup.exe
-# 用法：
+# Build Windows setup.exe
+# Usage:
 #   .\build.ps1 -Version 1.0.5 -Build 105
 #
-# 前置：
-#   - 已执行 flutter build windows --release
-#   - 已安装 Inno Setup 6（默认路径 C:\Program Files (x86)\Inno Setup 6\）
+# Prerequisite:
+#   - flutter build windows --release has been executed
+#   - Inno Setup 6 installed (default path: C:\Program Files (x86)\Inno Setup 6\)
 
 param(
     [Parameter(Mandatory=$true)][string]$Version,
@@ -17,7 +17,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 if (-not (Test-Path $InnoSetupPath)) {
-    Write-Error "未找到 Inno Setup 编译器: $InnoSetupPath"
+    Write-Error "Inno Setup compiler not found: $InnoSetupPath"
 }
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -25,10 +25,10 @@ Set-Location $scriptDir
 
 $absSource = Resolve-Path (Join-Path $scriptDir $SourceDir) -ErrorAction SilentlyContinue
 if (-not $absSource) {
-    Write-Error "未找到 Flutter 构建产物目录: $SourceDir，请先执行 flutter build windows --release"
+    Write-Error "Flutter build output not found: $SourceDir. Run 'flutter build windows --release' first."
 }
 
-Write-Host "==> 打包 NetBar-Ops $Version (build $Build)" -ForegroundColor Cyan
+Write-Host "==> Packaging NetBar-Ops $Version (build $Build)" -ForegroundColor Cyan
 Write-Host "    Source : $absSource"
 Write-Host "    Output : $OutputDir"
 
@@ -44,14 +44,14 @@ if (-not (Test-Path $OutputDir)) {
     "installer.iss"
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "Inno Setup 编译失败 (exit $LASTEXITCODE)"
+    Write-Error "Inno Setup compile failed (exit $LASTEXITCODE)"
 }
 
 $exeName = "netbar-setup-$Version-$Build.exe"
 $outFile = Join-Path $OutputDir $exeName
 if (Test-Path $outFile) {
     $size = (Get-Item $outFile).Length / 1MB
-    Write-Host "==> 生成: $outFile ({0:N2} MB)" -ForegroundColor Green -f $size
+    Write-Host ("==> Generated: {0} ({1:N2} MB)" -f $outFile, $size) -ForegroundColor Green
 } else {
-    Write-Warning "未找到预期输出文件: $outFile"
+    Write-Warning "Expected output file not found: $outFile"
 }

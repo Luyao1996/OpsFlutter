@@ -24,7 +24,10 @@ class UpdateCheckResult {
   /// 命中的 OSS 公共下载域名（apk/exe 拼接此前缀使用）
   final String? host;
 
-  /// 本地 buildNumber（用于 UI 显示）
+  /// 本地版本号（pubspec.yaml 中 version: 字段冒号前部分，用于 UI 显示）
+  final String localVersion;
+
+  /// 本地 buildNumber（pubspec.yaml 中 version: 字段 + 后的整数，用于版本比较和 UI 显示）
   final int localBuildNumber;
 
   const UpdateCheckResult({
@@ -32,6 +35,7 @@ class UpdateCheckResult {
     this.latest,
     this.aggregatedChangelogs = const [],
     this.host,
+    this.localVersion = '',
     this.localBuildNumber = 0,
   });
 
@@ -42,6 +46,10 @@ class UpdateCheckResult {
   factory UpdateCheckResult.skipped() =>
       const UpdateCheckResult(status: UpdateStatus.skipped);
 
-  factory UpdateCheckResult.upToDate(int localBuild) =>
-      UpdateCheckResult(status: UpdateStatus.upToDate, localBuildNumber: localBuild);
+  factory UpdateCheckResult.upToDate(String localVersion, int localBuild) =>
+      UpdateCheckResult(
+        status: UpdateStatus.upToDate,
+        localVersion: localVersion,
+        localBuildNumber: localBuild,
+      );
 }

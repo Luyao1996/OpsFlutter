@@ -17,7 +17,20 @@ go build -o netbar-release.exe ./cmd
 # 拷贝配置
 copy config.example.yaml config.yaml
 
-# 发布新版本（交互式）
+# ⭐ 一键发布：编译 + 打包 + 上传（推荐）
+.\netbar-release.exe release
+
+# 一键发布 - 半自动（指定平台和版本号）
+.\netbar-release.exe release --platform=windows --version=1.0.2
+
+# 一键发布 - 完全无人值守（CI 友好）
+.\netbar-release.exe release `
+    --platform=both `
+    --version=1.0.2 `
+    --changelog-file=CHANGELOG.txt `
+    --yes
+
+# 上传已编译好的安装包（兜底用）
 .\netbar-release.exe publish
 
 # 查看历史
@@ -29,6 +42,25 @@ copy config.example.yaml config.yaml
 # 调整 minSupportedBuild
 .\netbar-release.exe set-min --platform=android --build=100
 ```
+
+## release 子命令工作流程
+
+```
+1. 拉取当前 version.json，显示各平台最新版本
+2. 用户选择平台（windows / android / both）
+3. 用户输入版本号，工具自动推算 buildNumber（当前 +1）
+4. 用户输入是否强制更新、minSupportedBuild、changelog
+5. 预览所有信息，等用户确认
+6. 自动执行：
+   - flutter build apk/windows --release --build-name=X --build-number=Y
+   - (Windows) Inno Setup 打包 setup.exe
+   - 计算 MD5 + 文件大小
+   - 申请 OSS 签名 URL
+   - PUT 上传到 OSS
+   - 更新并上传 version.json
+```
+
+**核心收益**：三个版本号（编译参数 / Inno Setup / version.json）由工具统一管理，不会再因为人为遗漏 `--build-number` 而出现"版本号说是 1.0.2 但 exe 报告自己是 1.0.0"的 bug。
 
 ## 工作流程
 

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/viper"
 )
@@ -24,21 +25,65 @@ type Config struct {
 	} `mapstructure:"oss"`
 
 	MaxReleases int `mapstructure:"max_releases"`
+
+	// 以下为 release 子命令所需
+
+	Flutter struct {
+		ProjectDir string `mapstructure:"project_dir"`
+		Command    string `mapstructure:"command"`
+	} `mapstructure:"flutter"`
+
+	InnoSetup struct {
+		ISCCPath  string `mapstructure:"iscc_path"`
+		Script    string `mapstructure:"script"`
+		OutputDir string `mapstructure:"output_dir"`
+	} `mapstructure:"inno_setup"`
+
+	Android struct {
+		APKOutput string `mapstructure:"apk_output"`
+	} `mapstructure:"android"`
+
+	// 配置文件所在目录，用于把配置中的相对路径转换为绝对路径
+	BaseDir string `mapstructure:"-"`
+}
+
+// ResolvePath 把可能是相对路径的配置项转换为基于 BaseDir 的绝对路径
+func (c *Config) ResolvePath(p string) string {
+	if p == "" {
+		return ""
+	}
+	if filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(c.BaseDir, p)
 }
 
 func Load(path string) (*Config, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("abs config path: %w", err)
+	}
 	v := viper.New()
-	v.SetConfigFile(path)
+	v.SetConfigFile(absPath)
 	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("read config %s: %w", path, err)
+		return nil, fmt.Errorf("read config %s: %w", absPath, err)
 	}
 	var c Config
 	if err := v.Unmarshal(&c); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
+	c.BaseDir = filepath.Dir(absPath)
+
 	if c.MaxReleases == 0 {
 		c.MaxReleases = 20
 	}
+	if c.Flutter.Command == "" {
+		c.Flutter.Command = "flutter"
+	}
+	if c.Flutter.ProjectDir == "" {
+		c.Flutter.ProjectDir = "../.."
+	}
+
 	if c.Signature.BaseURL == "" || c.Signature.Path == "" {
 		return nil, fmt.Errorf("signature.base_url / signature.path required")
 	}

@@ -12,6 +12,7 @@ import '../../features/netbar/data/netbar_api.dart';
 import '../../features/dashboard/presentation/dashboard_page.dart';
 import '../../features/dashboard/data/dashboard_api.dart';
 import 'netbar_tab_bar.dart';
+import 'app_version_label.dart';
 import '../providers/permission_provider.dart';
 import '../../features/netbar/presentation/widgets/default_win_pwd_dialog.dart';
 import '../../features/netbar/presentation/widgets/batch_reset_pwd_dialog.dart';
@@ -504,6 +505,8 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
             _buildMenuItem('安全中心', '#', LucideIcons.shield, Colors.red),
           ],
         ),
+        // 版本号：PC 端全程显示；手机端仅 /dashboard 首页显示
+        _buildVersionLabel(),
         // 当前页面名称
         if (!isNarrow) ...[
           const SizedBox(width: 12),
@@ -518,6 +521,22 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
           ),
         ],
       ],
+    );
+  }
+
+  /// 版本号显示：
+  /// - PC 端：始终显示
+  /// - 手机端：仅在 /dashboard 首页显示
+  Widget _buildVersionLabel() {
+    if (platformHelper.isMobile) {
+      final location = GoRouterState.of(context).uri.path;
+      if (!location.startsWith('/dashboard')) {
+        return const SizedBox.shrink();
+      }
+    }
+    return const Padding(
+      padding: EdgeInsets.only(left: 8),
+      child: AppVersionLabel(),
     );
   }
 

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -30,8 +31,11 @@ func New(baseURL, path string) *Client {
 }
 
 // Sign 申请一个 OSS 预签名上传 URL。
-// file 形如 "/netbaropsflutter/xxx.apk"，必须以 / 开头。
+// 调用方传入的 file 形如 "/netbaropsflutter/xxx.apk"（带前导斜杠也兼容）。
+// 签名服务要求 file 参数不带前导 '/'，内部斜杠用 %2F 编码，
+// 因此这里先 strip 前导 '/' 再交给 query encoder。
 func (c *Client) Sign(file string) (string, error) {
+	file = strings.TrimLeft(file, "/")
 	u, err := url.Parse(c.baseURL + c.path)
 	if err != nil {
 		return "", fmt.Errorf("parse signature url: %w", err)

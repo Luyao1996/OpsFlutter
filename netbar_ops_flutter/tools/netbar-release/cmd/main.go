@@ -30,6 +30,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVarP(&cfgPath, "config", "c", "config.yaml", "配置文件路径")
 
 	rootCmd.AddCommand(
+		releaseCmd(),
 		publishCmd(),
 		listCmd(),
 		rollbackCmd(),

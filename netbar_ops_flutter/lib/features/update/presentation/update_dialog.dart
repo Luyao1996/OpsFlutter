@@ -37,19 +37,49 @@ class UpdateDialog extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    _versionChip('当前', 'v?? (build ${result.localBuildNumber})',
-                        Colors.grey),
-                    const SizedBox(width: 8),
-                    const Icon(Icons.arrow_forward, size: 16),
-                    const SizedBox(width: 8),
-                    _versionChip(
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final currentChip = _versionChip(
+                      '当前',
+                      'v${result.localVersion.isEmpty ? '?' : result.localVersion}',
+                      Colors.grey,
+                    );
+                    final latestChip = _versionChip(
                       '最新',
-                      'v${latest.version} (build ${latest.buildNumber})',
+                      'v${latest.version}',
                       Theme.of(context).colorScheme.primary,
-                    ),
-                  ],
+                    );
+                    // 宽屏（PC / 平板）一行横排；窄屏（手机）竖排，箭头朝下。
+                    if (constraints.maxWidth >= 400) {
+                      return Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Flexible(child: currentChip),
+                          const SizedBox(width: 8),
+                          const Icon(Icons.arrow_forward, size: 16),
+                          const SizedBox(width: 8),
+                          Flexible(child: latestChip),
+                        ],
+                      );
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        currentChip,
+                        const SizedBox(height: 6),
+                        Icon(
+                          Icons.arrow_downward,
+                          size: 16,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.45),
+                        ),
+                        const SizedBox(height: 6),
+                        latestChip,
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 8),
                 Text(
