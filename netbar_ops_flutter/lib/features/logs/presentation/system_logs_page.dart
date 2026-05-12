@@ -19,7 +19,11 @@ import 'widgets/log_table.dart';
 import 'widgets/log_detail_dialog.dart';
 
 class SystemLogsPage extends StatefulWidget {
-  const SystemLogsPage({super.key});
+  /// 当 [embedded] 为 true 时，不渲染外层 Scaffold 与顶部"系统日志"标题条，
+  /// 便于嵌入到日志中心容器（LogCenterPage）作为子视图。
+  final bool embedded;
+
+  const SystemLogsPage({super.key, this.embedded = false});
 
   @override
   State<SystemLogsPage> createState() => _SystemLogsPageState();
@@ -328,6 +332,12 @@ class _SystemLogsPageState extends State<SystemLogsPage> {
               ),
             ],
           );
+
+    // 嵌入模式：去掉 Scaffold 与顶部"系统日志"标题条，仅返回内容；
+    // 外层（LogCenterPage）负责提供背景与统一标题。
+    if (widget.embedded) {
+      return Padding(padding: pagePadding, child: content);
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F6),

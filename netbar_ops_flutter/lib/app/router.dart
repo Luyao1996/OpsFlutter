@@ -9,7 +9,7 @@ import '../features/monitor/presentation/monitor_page.dart';
 import '../features/netbar/presentation/netbar_list_page.dart';
 import '../features/resource/presentation/resource_management_page.dart';
 import '../features/user/presentation/user_management_page.dart';
-import '../features/logs/presentation/system_logs_page.dart';
+import '../features/logs/presentation/log_center_page.dart';
 import '../features/logs/presentation/slow_request_logs_page.dart';
 import '../features/desktop/presentation/desktop_management_page.dart'; // Import DesktopManagementPage
 import '../shared/widgets/main_layout.dart';
@@ -125,15 +125,33 @@ final routerProvider = Provider<GoRouter>((ref) {
               },
             ),
           ),
+          // 日志中心（默认显示操作日志，可切换系统日志）
+          GoRoute(
+            path: '/log-center',
+            redirect: (context, state) =>
+                state.matchedLocation == '/log-center'
+                    ? '/log-center/operation'
+                    : null,
+          ),
+          GoRoute(
+            path: '/log-center/:tab',
+            pageBuilder: (context, state) {
+              final tab = state.pathParameters['tab'] ?? 'operation';
+              final normalized = (tab == 'system') ? 'system' : 'operation';
+              return CustomTransitionPage(
+                key: ValueKey('log-center-$normalized'),
+                child: LogCenterPage(initialTab: normalized),
+                transitionsBuilder:
+                    (context, animation, secondaryAnimation, child) {
+                      return FadeTransition(opacity: animation, child: child);
+                    },
+              );
+            },
+          ),
+          // 兼容旧路径：/system-logs → 日志中心 · 系统日志
           GoRoute(
             path: '/system-logs',
-            pageBuilder: (context, state) => CustomTransitionPage(
-              key: state.pageKey,
-              child: const SystemLogsPage(),
-              transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                return FadeTransition(opacity: animation, child: child);
-              },
-            ),
+            redirect: (context, state) => '/log-center/system',
           ),
           GoRoute(
             path: '/slow-request-logs',

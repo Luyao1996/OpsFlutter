@@ -291,7 +291,12 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
   }
 
   /// 全局页面路由（不需要显示网吧 Tab 栏）
-  static const _globalRoutes = ['/dashboard', '/user-management', '/system-logs'];
+  static const _globalRoutes = [
+    '/dashboard',
+    '/user-management',
+    '/log-center',
+    '/system-logs', // 兼容旧路径
+  ];
 
   /// 判断当前是否是全局页面
   bool _isGlobalPage() {
@@ -382,8 +387,9 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
       return (name: '用户账户', icon: LucideIcons.users, color: Colors.purple);
     } else if (location.startsWith('/channel-monitor')) {
       return (name: '监控中心', icon: LucideIcons.monitor, color: Colors.green);
-    } else if (location.startsWith('/system-logs')) {
-      return (name: '系统日志', icon: LucideIcons.fileText, color: Colors.grey);
+    } else if (location.startsWith('/log-center') ||
+        location.startsWith('/system-logs')) {
+      return (name: '日志中心', icon: LucideIcons.fileText, color: Colors.grey);
     } else if (location.startsWith('/slow-request-logs')) {
       return (name: '请求日志', icon: LucideIcons.clock, color: Colors.orange);
     } else {
@@ -484,8 +490,8 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
               Colors.green,
             ),
             _buildMenuItem(
-              '系统日志',
-              '/system-logs',
+              '日志中心',
+              '/log-center',
               LucideIcons.fileText,
               Colors.grey,
             ),
