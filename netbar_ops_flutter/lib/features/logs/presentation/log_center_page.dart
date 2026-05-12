@@ -72,19 +72,19 @@ class _LogCenterPageState extends State<LogCenterPage> {
               border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
             ),
             child: isPhone
-                ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                ? Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       const Text(
                         '日志中心',
                         style: TextStyle(
-                          fontSize: 18,
+                          fontSize: 17,
                           fontWeight: FontWeight.bold,
                           color: Colors.black87,
                         ),
                       ),
-                      const SizedBox(height: 10),
-                      _buildSwitcher(),
+                      const SizedBox(width: 12),
+                      Expanded(child: _buildSwitcher(expand: true)),
                     ],
                   )
                 : Row(
@@ -116,7 +116,9 @@ class _LogCenterPageState extends State<LogCenterPage> {
     );
   }
 
-  Widget _buildSwitcher() {
+  /// [expand]=true 时每个按钮 Expanded 平分宽度（手机端整行场景）；
+  /// 否则 mainAxisSize.min，胶囊仅占按钮内容宽度（PC 端贴在标题右侧）。
+  Widget _buildSwitcher({bool expand = false}) {
     return Container(
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
@@ -124,16 +126,18 @@ class _LogCenterPageState extends State<LogCenterPage> {
         borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
         children: List.generate(_tabs.length, (i) {
           final t = _tabs[i];
           final selected = i == _currentIndex;
-          return _PillButton(
+          final btn = _PillButton(
             label: t.label,
             icon: t.icon,
             selected: selected,
+            expand: expand,
             onTap: () => _select(i),
           );
+          return expand ? Expanded(child: btn) : btn;
         }),
       ),
     );
@@ -151,6 +155,7 @@ class _PillButton extends StatelessWidget {
   final String label;
   final IconData icon;
   final bool selected;
+  final bool expand;
   final VoidCallback onTap;
 
   const _PillButton({
@@ -158,6 +163,7 @@ class _PillButton extends StatelessWidget {
     required this.icon,
     required this.selected,
     required this.onTap,
+    this.expand = false,
   });
 
   @override
@@ -167,6 +173,8 @@ class _PillButton extends StatelessWidget {
       borderRadius: BorderRadius.circular(999),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
+        // expand=true 时让胶囊背景撑满 Expanded 宽度
+        width: expand ? double.infinity : null,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           color: selected ? Colors.white : Colors.transparent,
@@ -182,7 +190,8 @@ class _PillButton extends StatelessWidget {
               : null,
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
               icon,

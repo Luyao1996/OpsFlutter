@@ -29,6 +29,7 @@ class _OperationLogViewState extends State<OperationLogView> {
   DateTime _startDate = _todayStart();
   DateTime _endDate = _todayEnd();
   String? _logType;
+  bool _filterExpanded = false; // 手机端详细筛选区是否展开
 
   List<OperationLog> _items = [];
   Map<String, String> _eventMap = const {};
@@ -272,89 +273,212 @@ class _OperationLogViewState extends State<OperationLogView> {
 
   // ===== Toolbar =====
   Widget _buildToolbar(bool isPhone) {
-    final dateFmt = DateFormat('yyyy-MM-dd HH:mm:ss');
-    final children = <Widget>[
-      _datePickerBox(
-        label: '开始时间',
-        text: dateFmt.format(_startDate),
-        onTap: () => _pickDate(isStart: true),
-        width: isPhone ? null : 200,
-      ),
-      _datePickerBox(
-        label: '结束时间',
-        text: dateFmt.format(_endDate),
-        onTap: () => _pickDate(isStart: false),
-        width: isPhone ? null : 200,
-      ),
-      SizedBox(
-        width: isPhone ? double.infinity : 220,
-        child: _input(
-          controller: _keywordCtrl,
-          hint: '文件名/网吧名/关键词',
-          icon: LucideIcons.search,
-          onSubmitted: (_) => _handleSearch(),
-        ),
-      ),
-      SizedBox(
-        width: isPhone ? double.infinity : 140,
-        child: _input(
-          controller: _operatorCtrl,
-          hint: '操作人',
-          icon: LucideIcons.user,
-          onSubmitted: (_) => _handleSearch(),
-        ),
-      ),
-      SizedBox(
-        width: isPhone ? double.infinity : 160,
-        child: _logTypeSelector(),
-      ),
-      Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ElevatedButton.icon(
-            onPressed: _handleSearch,
-            icon: const Icon(LucideIcons.search, size: 14),
-            label: const Text('搜索'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.iosBlue,
-              foregroundColor: Colors.white,
-              elevation: 0,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          OutlinedButton.icon(
-            onPressed: _resetForm,
-            icon: const Icon(LucideIcons.rotateCcw, size: 14),
-            label: const Text('重置'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.grey.shade700,
-              side: BorderSide(color: Colors.grey.shade300),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-          ),
-        ],
-      ),
-    ];
-
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(isPhone ? 10 : 16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.grey.shade200),
       ),
-      child: Wrap(
-        spacing: 12,
-        runSpacing: 12,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: children,
+      child: isPhone ? _buildMobileToolbar() : _buildDesktopToolbar(),
+    );
+  }
+
+  Widget _buildDesktopToolbar() {
+    final dateFmt = DateFormat('yyyy-MM-dd HH:mm:ss');
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        _datePickerBox(
+          label: '开始时间',
+          text: dateFmt.format(_startDate),
+          onTap: () => _pickDate(isStart: true),
+          width: 200,
+        ),
+        _datePickerBox(
+          label: '结束时间',
+          text: dateFmt.format(_endDate),
+          onTap: () => _pickDate(isStart: false),
+          width: 200,
+        ),
+        SizedBox(
+          width: 220,
+          child: _input(
+            controller: _keywordCtrl,
+            hint: '文件名/网吧名/关键词',
+            icon: LucideIcons.search,
+            onSubmitted: (_) => _handleSearch(),
+          ),
+        ),
+        SizedBox(
+          width: 140,
+          child: _input(
+            controller: _operatorCtrl,
+            hint: '操作人',
+            icon: LucideIcons.user,
+            onSubmitted: (_) => _handleSearch(),
+          ),
+        ),
+        SizedBox(width: 160, child: _logTypeSelector()),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _primaryButton(label: '搜索', icon: LucideIcons.search, onTap: _handleSearch),
+            const SizedBox(width: 8),
+            _outlineButton(label: '重置', icon: LucideIcons.rotateCcw, onTap: _resetForm),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// 手机端工具栏：搜索头（始终可见） + AnimatedSize 折叠的详细筛选区。
+  /// 交互对齐 toolboxPage `LogPage.vue` 的 mobile-search-header。
+  Widget _buildMobileToolbar() {
+    final dateFmt = DateFormat('yyyy-MM-dd HH:mm:ss');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // —— 搜索头：关键词 + 搜索 + 漏斗（toggle） ——
+        Row(
+          children: [
+            Expanded(
+              child: _input(
+                controller: _keywordCtrl,
+                hint: '搜索关键词...',
+                icon: LucideIcons.search,
+                onSubmitted: (_) => _handleSearch(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            _primaryButton(
+              label: '搜索',
+              icon: LucideIcons.search,
+              onTap: _handleSearch,
+              compact: true,
+            ),
+            const SizedBox(width: 8),
+            _filterToggleButton(),
+          ],
+        ),
+        // —— 详细筛选区（默认折叠） ——
+        AnimatedSize(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeInOut,
+          alignment: Alignment.topCenter,
+          child: _filterExpanded
+              ? Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _datePickerBox(
+                        label: '开始时间',
+                        text: dateFmt.format(_startDate),
+                        onTap: () => _pickDate(isStart: true),
+                      ),
+                      const SizedBox(height: 8),
+                      _datePickerBox(
+                        label: '结束时间',
+                        text: dateFmt.format(_endDate),
+                        onTap: () => _pickDate(isStart: false),
+                      ),
+                      const SizedBox(height: 8),
+                      _input(
+                        controller: _operatorCtrl,
+                        hint: '操作人',
+                        icon: LucideIcons.user,
+                        onSubmitted: (_) => _handleSearch(),
+                      ),
+                      const SizedBox(height: 8),
+                      _logTypeSelector(),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: _outlineButton(
+                          label: '重置筛选',
+                          icon: LucideIcons.rotateCcw,
+                          onTap: _resetForm,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : const SizedBox(width: double.infinity),
+        ),
+      ],
+    );
+  }
+
+  Widget _filterToggleButton() {
+    final on = _filterExpanded;
+    return InkWell(
+      onTap: () => setState(() => _filterExpanded = !_filterExpanded),
+      borderRadius: BorderRadius.circular(8),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: on
+              ? AppColors.iosBlue.withValues(alpha: 0.10)
+              : Colors.transparent,
+          border: Border.all(
+            color: on ? AppColors.iosBlue : Colors.grey.shade300,
+          ),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(
+          LucideIcons.slidersHorizontal,
+          size: 16,
+          color: on ? AppColors.iosBlue : Colors.grey.shade600,
+        ),
+      ),
+    );
+  }
+
+  Widget _primaryButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback onTap,
+    bool compact = false,
+  }) {
+    return ElevatedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 14),
+      label: Text(label),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: AppColors.iosBlue,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 12 : 14,
+          vertical: 10,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+    );
+  }
+
+  Widget _outlineButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 14),
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: Colors.grey.shade700,
+        side: BorderSide(color: Colors.grey.shade300),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
       ),
     );
   }
