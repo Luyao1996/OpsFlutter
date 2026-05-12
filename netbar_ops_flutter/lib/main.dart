@@ -4,10 +4,12 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'core/logging/logging_binary_messenger.dart';
 import 'core/logging/webrtc_crash_logger.dart';
@@ -22,15 +24,23 @@ import 'shared/services/window_control.dart';
 
 Future<void> _writeCrashLog(String error, String stack) async {
   try {
-    final exeDir = File(Platform.resolvedExecutable).parent;
-    final logDir = Directory('${exeDir.path}\\crash_logs');
+    if (kIsWeb) return;
+    Directory logDir;
+    if (Platform.isAndroid || Platform.isIOS) {
+      final base = await getApplicationDocumentsDirectory();
+      logDir = Directory('${base.path}${Platform.pathSeparator}crash_logs');
+    } else {
+      final exeDir = File(Platform.resolvedExecutable).parent;
+      logDir = Directory('${exeDir.path}${Platform.pathSeparator}crash_logs');
+    }
     if (!logDir.existsSync()) logDir.createSync(recursive: true);
     final now = DateTime.now();
     final ts =
         '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}'
         '_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
-    final file = File('${logDir.path}\\dart_crash_$ts.log');
-    final content = 'Time: $now\n\nError:\n$error\n\nStack Trace:\n$stack\n';
+    final file = File('${logDir.path}${Platform.pathSeparator}dart_crash_$ts.log');
+    final content =
+        'Time: $now\nPlatform: ${Platform.operatingSystem} ${Platform.operatingSystemVersion}\nNumberOfProcessors: ${Platform.numberOfProcessors}\n\nError:\n$error\n\nStack Trace:\n$stack\n';
     await file.writeAsString(content);
   } catch (_) {}
 }

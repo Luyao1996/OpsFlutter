@@ -1,10 +1,15 @@
 import 'dart:ui';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../core/responsive/responsive.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/logging/webrtc_crash_logger.dart';
+import '../../debug/crash_test_sheet.dart';
+import '../../debug/crash_log_viewer_page.dart';
+import '../../debug/crash_log_export_helper.dart' as crash_export;
 import '../../../shared/providers/app_providers.dart';
 import '../../../core/storage/token_store.dart';
 import '../../../shared/utils/top_notice.dart';
@@ -251,10 +256,17 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
             child: _buildOverviewTab(userName, role, account, isNarrow: false),
           ),
         ),
-        // 退出登录按钮
+        // 导出崩溃日志 + 退出登录按钮
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-          child: _buildLogoutButton(),
+          child: Column(
+            children: [
+              _buildViewCrashLogButton(),
+              _buildExportCrashLogButton(),
+              _buildCrashTestButton(),
+              _buildLogoutButton(),
+            ],
+          ),
         ),
       ],
     );
@@ -345,7 +357,14 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: _buildLogoutButton(),
+          child: Column(
+            children: [
+              _buildViewCrashLogButton(),
+              _buildExportCrashLogButton(),
+              _buildCrashTestButton(),
+              _buildLogoutButton(),
+            ],
+          ),
         ),
       ],
     );
@@ -418,6 +437,127 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
                 color: isActive ? const Color(0xFF111827) : const Color(0xFF6B7280),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleExportCrashLog() async {
+    if (kIsWeb) {
+      showTopNotice(context, 'Web 版不支持导出日志', level: NoticeLevel.warning);
+      return;
+    }
+    final files = await crash_export.collectCrashLogFiles();
+    if (files.isEmpty) {
+      if (!mounted) return;
+      final dirPath = WebRtcCrashLogger.I.logDirPath ?? '(未初始化)';
+      showTopNotice(context, '暂无崩溃日志\n目录: $dirPath',
+          level: NoticeLevel.info);
+      return;
+    }
+    if (!mounted) return;
+    await crash_export.shareLogsAsZip(
+      context: context,
+      files: files,
+      onMessage: (msg, {bool isError = false}) {
+        if (!mounted) return;
+        showTopNotice(
+          context,
+          msg,
+          level: isError ? NoticeLevel.error : NoticeLevel.success,
+        );
+      },
+    );
+  }
+
+  // TODO: 验证完崩溃日志机制后整体删除（与 lib/features/debug/ 同步删除）
+  Widget _buildViewCrashLogButton() {
+    return InkWell(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const CrashLogViewerPage()),
+        );
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        width: double.infinity,
+        constraints: const BoxConstraints(minHeight: 48),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Row(
+          children: [
+            Icon(LucideIcons.eye, size: 18, color: Color(0xFF2563EB)), // blue-600
+            SizedBox(width: 12),
+            Text(
+              '查看崩溃日志（含复制）',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF2563EB),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildExportCrashLogButton() {
+    return InkWell(
+      onTap: _handleExportCrashLog,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        width: double.infinity,
+        constraints: const BoxConstraints(minHeight: 48),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Row(
+          children: [
+            Icon(LucideIcons.fileText, size: 18, color: Color(0xFF6B7280)),
+            SizedBox(width: 12),
+            Text(
+              '导出崩溃日志',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF374151),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // TODO: 验证完崩溃日志机制后整体删除（与 lib/features/debug/ 同步删除）
+  Widget _buildCrashTestButton() {
+    return InkWell(
+      onTap: () => CrashTestSheet.show(context),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        width: double.infinity,
+        constraints: const BoxConstraints(minHeight: 48),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Row(
+          children: [
+            Icon(LucideIcons.bug, size: 18, color: Color(0xFFEA580C)), // orange-600
+            SizedBox(width: 12),
+            Text(
+              '崩溃测试（开发者）',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFFEA580C),
               ),
             ),
           ],

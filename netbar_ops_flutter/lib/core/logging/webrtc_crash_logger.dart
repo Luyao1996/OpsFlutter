@@ -1,13 +1,18 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:path_provider/path_provider.dart';
+
 /// 同步落盘的 WebRTC 崩溃定位日志。
 ///
 /// 设计目标：在 native 崩溃（libwebrtc/msvcp140）前一定把最后若干条
 /// Dart 侧的调用参数刷到磁盘。每行写入都 flushSync，保证进程意外退出
 /// 时不会丢失最后一行日志。
 ///
-/// 日志位置：{exeDir}/webrtc_logs/webrtc_YYYYMMDD.log
+/// 日志位置：
+///   - 桌面端: {exeDir}/webrtc_logs/webrtc_YYYYMMDD.log
+///   - 移动端 (Android/iOS/HarmonyOS): {appDocumentsDir}/webrtc_logs/webrtc_YYYYMMDD.log
 /// 日志格式：[ISO8601ms][LEVEL][module][operType][contextId] message
 class WebRtcCrashLogger {
   WebRtcCrashLogger._();
@@ -21,17 +26,31 @@ class WebRtcCrashLogger {
   /// 单条字段最大字节数（SDP / candidate 太大时截断）。
   static const int _maxFieldBytes = 4096;
 
+  /// 日志目录的绝对路径（导出功能使用）。
+  String? get logDirPath => _logDirPath;
+
   Future<void> init() async {
     if (_inited) return;
     try {
-      final exeDir = File(Platform.resolvedExecutable).parent;
-      final dir = Directory('${exeDir.path}${Platform.pathSeparator}webrtc_logs');
+      // Web 平台不落盘
+      if (kIsWeb) return;
+
+      Directory dir;
+      if (Platform.isAndroid || Platform.isIOS) {
+        // 移动端 / HarmonyOS：必须用 app 私有目录，否则没有写权限
+        final base = await getApplicationDocumentsDirectory();
+        dir = Directory('${base.path}${Platform.pathSeparator}webrtc_logs');
+      } else {
+        // 桌面端：exe 同级（保留原行为）
+        final exeDir = File(Platform.resolvedExecutable).parent;
+        dir = Directory('${exeDir.path}${Platform.pathSeparator}webrtc_logs');
+      }
       if (!dir.existsSync()) dir.createSync(recursive: true);
       _logDirPath = dir.path;
       _openForToday();
       _inited = true;
       log('INFO', 'boot', 'logger_init', '-',
-          'WebRtcCrashLogger initialized dir=${dir.path} pid=$pid exe=${Platform.resolvedExecutable}');
+          'WebRtcCrashLogger initialized dir=${dir.path} pid=$pid platform=${Platform.operatingSystem} osVer=${Platform.operatingSystemVersion}');
     } catch (e) {
       // 日志初始化失败不影响主流程
       // ignore: avoid_print
