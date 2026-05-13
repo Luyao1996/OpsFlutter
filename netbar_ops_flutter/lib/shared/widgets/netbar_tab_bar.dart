@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../core/theme/app_theme.dart';
 import '../utils/adaptive_show.dart';
+import '../../features/netbar/data/netbar_api.dart';
+import '../../features/netbar/data/netbar_pinyin_matcher.dart';
 import '../../features/netbar/presentation/netbar_selector_modal.dart';
 import '../../features/netbar/presentation/widgets/default_win_pwd_dialog.dart';
 import '../../features/netbar/presentation/widgets/batch_reset_pwd_dialog.dart';
@@ -177,6 +180,8 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
         if (_showRightArrow) _buildScrollButton(isLeft: false),
         // "+"按钮
         _buildAddButton(),
+        // 搜索按钮 — 点击向右展开搜索框，下方实时显示结果
+        _buildSearchButton(),
         // 视图按钮 — 打开分组总览弹层
         if (tabsState.tabs.length > 1) _buildViewButton(tabsState),
         // 设置按钮 — 齿轮图标下拉菜单（最右侧）
@@ -297,6 +302,21 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
           _syncCurrentNetbar();
         },
       ),
+    );
+  }
+
+  Widget _buildSearchButton() {
+    return _HoverableSearchButton(
+      onSelectNetbar: (n) {
+        ref.read(netbarTabsProvider.notifier).openTab(
+              n.id,
+              n.name,
+              n.status,
+              subdomainFull: n.subdomainFull,
+              groupName: n.group,
+            );
+        _syncCurrentNetbar();
+      },
     );
   }
 
@@ -990,6 +1010,315 @@ class _OverviewTabItemState extends State<_OverviewTabItem> {
                 ),
               ],
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+/// 可展开的搜索按钮：
+/// - 默认：32x32 图标按钮（跟 + / ▣ / ⚙ 同尺寸）
+/// - 点击展开为约 240px 宽搜索框，下方浮层实时显示结果（最多 10 条）
+/// - Esc / 点 ✕ / 选中结果 → 收起
+/// - Enter → 选中第一个结果
+class _HoverableSearchButton extends ConsumerStatefulWidget {
+  final ValueChanged<Netbar> onSelectNetbar;
+  const _HoverableSearchButton({required this.onSelectNetbar});
+
+  @override
+  ConsumerState<_HoverableSearchButton> createState() =>
+      _HoverableSearchButtonState();
+}
+
+class _HoverableSearchButtonState
+    extends ConsumerState<_HoverableSearchButton> {
+  static const double _collapsedWidth = 32;
+  static const double _expandedWidth = 240;
+  static const int _maxResults = 10;
+
+  bool _isExpanded = false;
+  bool _isHovered = false;
+  String _query = '';
+
+  final _focusNode = FocusNode();
+  final _controller = TextEditingController();
+  final _portalController = OverlayPortalController();
+  final _link = LayerLink();
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _expand() {
+    setState(() => _isExpanded = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
+  }
+
+  void _collapse() {
+    _focusNode.unfocus();
+    _portalController.hide();
+    setState(() {
+      _isExpanded = false;
+      _query = '';
+    });
+    _controller.clear();
+  }
+
+  void _onQueryChanged(String v) {
+    setState(() => _query = v);
+    if (v.isNotEmpty) {
+      _portalController.show();
+    } else {
+      _portalController.hide();
+    }
+  }
+
+  List<Netbar> _filterResults(List<Netbar> all) {
+    if (_query.isEmpty) return const [];
+    final filtered =
+        all.where((n) => NetbarMatcher.match(n, _query)).toList();
+    filtered.sort((a, b) => a.id.compareTo(b.id));
+    return filtered.take(_maxResults).toList();
+  }
+
+  void _selectFirst() {
+    final asyncRes = ref.read(netbarListProvider);
+    asyncRes.whenData((response) {
+      final results = _filterResults(response.merchants);
+      if (results.isNotEmpty) {
+        widget.onSelectNetbar(results.first);
+        _collapse();
+      }
+    });
+  }
+
+  void _selectNetbar(Netbar n) {
+    widget.onSelectNetbar(n);
+    _collapse();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CompositedTransformTarget(
+      link: _link,
+      child: OverlayPortal(
+        controller: _portalController,
+        overlayChildBuilder: (_) => _buildOverlay(),
+        child: MouseRegion(
+          cursor: _isExpanded
+              ? SystemMouseCursors.text
+              : SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _isHovered = true),
+          onExit: (_) => setState(() => _isHovered = false),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            width: _isExpanded ? _expandedWidth : _collapsedWidth,
+            height: 32,
+            margin: const EdgeInsets.only(left: 4),
+            decoration: BoxDecoration(
+              color: _isHovered || _isExpanded
+                  ? Colors.grey.shade200
+                  : Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: _isHovered || _isExpanded
+                    ? Colors.grey.shade300
+                    : Colors.grey.shade200,
+              ),
+              boxShadow: _isHovered ? AppShadows.sm : null,
+            ),
+            child: _isExpanded ? _buildExpanded() : _buildCollapsed(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCollapsed() {
+    return GestureDetector(
+      onTap: _expand,
+      behavior: HitTestBehavior.opaque,
+      child: Center(
+        child: Icon(
+          LucideIcons.search,
+          size: 16,
+          color: _isHovered ? Colors.grey.shade700 : Colors.grey.shade500,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildExpanded() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        children: [
+          Icon(LucideIcons.search, size: 14, color: Colors.grey.shade500),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Focus(
+              onKeyEvent: (node, event) {
+                if (event is KeyDownEvent) {
+                  if (event.logicalKey == LogicalKeyboardKey.escape) {
+                    _collapse();
+                    return KeyEventResult.handled;
+                  }
+                  if (event.logicalKey == LogicalKeyboardKey.enter ||
+                      event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+                    _selectFirst();
+                    return KeyEventResult.handled;
+                  }
+                }
+                return KeyEventResult.ignored;
+              },
+              child: TextField(
+                controller: _controller,
+                focusNode: _focusNode,
+                onChanged: _onQueryChanged,
+                decoration: const InputDecoration(
+                  hintText: '搜索网吧...',
+                  hintStyle:
+                      TextStyle(fontSize: 13, color: Color(0xFF9CA3AF)),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
+          ),
+          GestureDetector(
+            onTap: _collapse,
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 4),
+              child: Icon(LucideIcons.x,
+                  size: 14, color: Colors.grey.shade500),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOverlay() {
+    final asyncRes = ref.watch(netbarListProvider);
+    return Positioned(
+      width: 320,
+      child: CompositedTransformFollower(
+        link: _link,
+        showWhenUnlinked: false,
+        targetAnchor: Alignment.bottomLeft,
+        followerAnchor: Alignment.topLeft,
+        offset: const Offset(0, 6),
+        child: Material(
+          elevation: 12,
+          borderRadius: BorderRadius.circular(8),
+          shadowColor: Colors.black.withValues(alpha: 0.2),
+          child: Container(
+            constraints: const BoxConstraints(maxHeight: 360),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: asyncRes.when(
+              loading: () => const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              ),
+              error: (e, _) => Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  '加载失败: $e',
+                  style:
+                      const TextStyle(fontSize: 12, color: Colors.red),
+                ),
+              ),
+              data: (response) {
+                final results = _filterResults(response.merchants);
+                if (results.isEmpty) {
+                  return const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Text(
+                      '未找到匹配的网吧',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  );
+                }
+                return ListView.separated(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  itemCount: results.length,
+                  separatorBuilder: (_, __) => Divider(
+                      height: 1, color: Colors.grey.shade100),
+                  itemBuilder: (ctx, i) {
+                    final n = results[i];
+                    return InkWell(
+                      onTap: () => _selectNetbar(n),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 6,
+                              height: 6,
+                              decoration: BoxDecoration(
+                                color: n.status == 'online'
+                                    ? const Color(0xFF10B981)
+                                    : Colors.grey.shade400,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    n.name,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  if (n.group.isNotEmpty)
+                                    Text(
+                                      n.group,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey.shade500,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
           ),
         ),
       ),
