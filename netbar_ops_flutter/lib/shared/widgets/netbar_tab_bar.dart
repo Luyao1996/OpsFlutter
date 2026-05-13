@@ -208,7 +208,6 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.3),
       builder: (ctx) => _TabOverviewDialog(
-        tabsState: tabsState,
         onSwitch: (id) {
           Navigator.of(ctx).pop();
           ref.read(netbarTabsProvider.notifier).switchToTab(id);
@@ -720,28 +719,30 @@ class _HoverableViewButtonState extends State<_HoverableViewButton> {
 }
 
 /// 标签总览弹层 — 按分组展示所有已开网吧，支持搜索
-class _TabOverviewDialog extends StatefulWidget {
-  final NetbarTabsState tabsState;
+///
+/// 内部用 ref.watch(netbarTabsProvider) 实时拿 tabs 状态，
+/// 这样在 dialog 打开期间关闭/切换 tab 都能立即反映到 UI。
+class _TabOverviewDialog extends ConsumerStatefulWidget {
   final ValueChanged<int> onSwitch;
   final ValueChanged<int> onClose;
 
   const _TabOverviewDialog({
-    required this.tabsState,
     required this.onSwitch,
     required this.onClose,
   });
 
   @override
-  State<_TabOverviewDialog> createState() => _TabOverviewDialogState();
+  ConsumerState<_TabOverviewDialog> createState() =>
+      _TabOverviewDialogState();
 }
 
-class _TabOverviewDialogState extends State<_TabOverviewDialog> {
+class _TabOverviewDialogState extends ConsumerState<_TabOverviewDialog> {
   String _query = '';
 
-  Map<String, List<OpenedNetbarTab>> _buildGrouped() {
+  Map<String, List<OpenedNetbarTab>> _buildGrouped(NetbarTabsState tabsState) {
     final grouped = <String, List<OpenedNetbarTab>>{};
     final q = _query.toLowerCase();
-    for (final tab in widget.tabsState.tabs) {
+    for (final tab in tabsState.tabs) {
       final group = tab.groupName ?? '未分组';
       if (q.isNotEmpty &&
           !tab.name.toLowerCase().contains(q) &&
@@ -755,7 +756,8 @@ class _TabOverviewDialogState extends State<_TabOverviewDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final grouped = _buildGrouped();
+    final tabsState = ref.watch(netbarTabsProvider);
+    final grouped = _buildGrouped(tabsState);
     final sortedGroups = grouped.keys.toList()..sort();
     final matchCount = grouped.values.fold<int>(0, (s, l) => s + l.length);
 
@@ -780,7 +782,7 @@ class _TabOverviewDialogState extends State<_TabOverviewDialog> {
                   Icon(LucideIcons.layoutGrid, size: 18, color: Colors.grey.shade600),
                   const SizedBox(width: 8),
                   Text(
-                    '已打开 ${widget.tabsState.tabs.length} 个网吧',
+                    '已打开 ${tabsState.tabs.length} 个网吧',
                     style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                   ),
                   const Spacer(),
@@ -881,12 +883,12 @@ class _TabOverviewDialogState extends State<_TabOverviewDialog> {
                         ),
                         // 网吧列表
                         ...tabs.map((tab) {
-                          final isActive = tab.id == widget.tabsState.activeTabId;
+                          final isActive = tab.id == tabsState.activeTabId;
                           return _OverviewTabItem(
                             tab: tab,
                             isActive: isActive,
                             groupColor: groupColor,
-                            canClose: widget.tabsState.tabs.length > 1,
+                            canClose: tabsState.tabs.length > 1,
                             onTap: () => widget.onSwitch(tab.id),
                             onClose: () => widget.onClose(tab.id),
                           );
