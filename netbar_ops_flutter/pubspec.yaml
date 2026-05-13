@@ -102,6 +102,7 @@ dependencies:
   crypto: ^3.0.3              # MD5 校验
   package_info_plus: ^8.0.0   # 读取本地 versionCode/buildNumber
   open_filex: ^4.4.0          # Android 拉起 APK 安装（自带 FileProvider）
+  qr_flutter: ^4.1.0          # PC 端"下载 App" hover 二维码
 
 dev_dependencies:
   flutter_test:

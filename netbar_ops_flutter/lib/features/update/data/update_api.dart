@@ -76,6 +76,111 @@ class UpdateApi {
     }
   }
 
+  /// 并发竞速拉取指定 manifest 路径。
+  ///
+  /// 三个 host 同时 GET，第一个返回 200 的获胜，其余请求被取消。
+  /// 一次请求既挑选了最快的 host，又拿到了 manifest 内容，避免了
+  /// "测速路径 vs 实际路径" 不一致导致的 404（例如 /netbaropsflutter/...
+  /// 跟 /StartChannel/release/... 在不同 host 上的可用性不同）。
+  ///
+  /// 返回 (host, body)。所有 host 都失败时抛 [DioException] 或封装异常。
+  Future<({String host, List<int> body})> raceFetchManifest(
+    String path, {
+    CancelToken? cancelToken,
+    Duration timeout = const Duration(seconds: 15),
+    void Function(String msg)? onLog,
+  }) {
+    final completer = Completer<({String host, List<int> body})>();
+    final tokens = <CancelToken>[];
+    var failed = 0;
+    Object? lastError;
+
+    void cancelOthers(CancelToken keep) {
+      for (final t in tokens) {
+        if (t != keep && !t.isCancelled) {
+          t.cancel('another host won');
+        }
+      }
+    }
+
+    // 监听外部 cancelToken
+    cancelToken?.whenCancel.then((_) {
+      if (completer.isCompleted) return;
+      for (final t in tokens) {
+        if (!t.isCancelled) t.cancel('outer cancelled');
+      }
+      completer.completeError(StateError('cancelled'));
+    });
+
+    onLog?.call('hosts 列表 = $hosts');
+    for (final h in hosts) {
+      final url = '$h$path';
+      final token = CancelToken();
+      tokens.add(token);
+      onLog?.call('→ 并发尝试: $url');
+
+      _dio.getUri<List<int>>(
+        Uri.parse(url),
+        options: Options(
+          responseType: ResponseType.bytes,
+          receiveTimeout: const Duration(seconds: 10),
+          validateStatus: (code) => code != null && code < 400,
+        ),
+        cancelToken: token,
+      ).then((resp) {
+        if (completer.isCompleted) return;
+        if (resp.statusCode == 200 && resp.data != null) {
+          onLog?.call('  ✓ 命中: $h (length=${resp.data!.length})');
+          _log('INFO', 'raceFetchManifest', 'win=$h path=$path');
+          completer.complete((host: h, body: resp.data!));
+          cancelOthers(token);
+        } else {
+          failed++;
+          lastError = 'HTTP ${resp.statusCode}';
+          onLog?.call('  ✗ $h HTTP ${resp.statusCode}');
+          if (failed >= hosts.length && !completer.isCompleted) {
+            completer.completeError(
+              StateError('所有下载源都不可用: $lastError'),
+            );
+          }
+        }
+      }).catchError((Object e) {
+        if (completer.isCompleted) return;
+        // 被自己取消（其他 host 赢了 / 外部取消）不计入失败
+        if (e is DioException && e.type == DioExceptionType.cancel) {
+          return;
+        }
+        failed++;
+        lastError = e;
+        onLog?.call('  ✗ $h 失败: $e');
+        if (failed >= hosts.length && !completer.isCompleted) {
+          completer.completeError(
+            StateError('所有下载源都不可用: $lastError'),
+          );
+        }
+      });
+    }
+
+    return completer.future.timeout(timeout, onTimeout: () {
+      for (final t in tokens) {
+        if (!t.isCancelled) t.cancel('timeout');
+      }
+      throw StateError('获取版本信息超时');
+    });
+  }
+
+  /// 取最新 Android APK 的完整下载 URL（用于"扫码下载手机版"等场景）。
+  /// 失败返回 null。内部走完整流程：测速 → 拉 manifest → 取最新 release 路径。
+  Future<String?> fetchLatestApkUrl() async {
+    final host = await pickFastestHost();
+    if (host == null) return null;
+    final manifest = await fetchManifest(host);
+    if (manifest == null) return null;
+    final android = manifest.android;
+    if (android == null || android.releases.isEmpty) return null;
+    return '$host${android.releases.first.path}';
+  }
+
   /// 从指定 host 拉取 version.json（不落盘）。
   Future<VersionManifest?> fetchManifest(String host) async {
     try {
