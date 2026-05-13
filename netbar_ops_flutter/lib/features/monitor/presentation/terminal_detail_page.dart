@@ -1425,6 +1425,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
       const _ServiceItem(label: '重启反代服务', name: '反代服务', type: 'frpc'),
       const _ServiceItem(label: '重启协助服务', name: '协助服务', type: 'client'),
       const _ServiceItem(label: '重启路由服务', name: '路由服务', type: 'router'),
+      const _ServiceItem(label: '重启游戏库服务', name: '游戏库服务', type: 'gamelibray'),
       // 特殊 type 标记：路由到 _openWindowsPasswordDialog（HTTP set/reset/clear）
       // 区块本身仅 mode==1 显示，所以此项天然只在服务端可见
       const _ServiceItem(
