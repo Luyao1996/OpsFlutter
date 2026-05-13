@@ -283,6 +283,26 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
     );
   }
 
+  /// 网吧版本号 chip（紧挨网吧名称右侧）。
+  Widget _buildVersionChip(String version) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Text(
+        version,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+          color: Colors.grey.shade600,
+        ),
+      ),
+    );
+  }
+
   Widget _buildSearchField() {
     return Container(
       height: 44,
@@ -319,13 +339,24 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
             final netbar = filtered[index];
             final isSelected = netbar.id == widget.selectedId;
             return ListTile(
-              title: Text(
-                netbar.name,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: isSelected ? AppColors.iosBlue : Colors.black,
-                ),
+              title: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      netbar.name,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: isSelected ? AppColors.iosBlue : Colors.black,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (netbar.version != null && netbar.version!.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    _buildVersionChip(netbar.version!),
+                  ],
+                ],
               ),
               onTap: () => _handleSelect(netbar),
             );
@@ -541,10 +572,20 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(
-                      netbar.name,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                      overflow: TextOverflow.ellipsis,
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            netbar.name,
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (netbar.version != null && netbar.version!.isNotEmpty) ...[
+                          const SizedBox(width: 6),
+                          _buildVersionChip(netbar.version!),
+                        ],
+                      ],
                     ),
                   ),
                 ],

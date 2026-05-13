@@ -60,6 +60,7 @@ class Netbar {
   final String? screenshotUrl;
   final NetbarServerMetrics? serverMetrics;
   final String? serverPwd; // 后端 server_pwd：服务端 Windows 当前密码（敏感字段，仅用于编辑回填）
+  final String? version; // 后端 version：网吧客户端版本号（显示用，可空）
 
   // 兼容旧代码的getter
   String get code => token;
@@ -90,6 +91,7 @@ class Netbar {
     this.screenshotUrl,
     this.serverMetrics,
     this.serverPwd,
+    this.version,
   });
 
   factory Netbar.fromJson(Map<String, dynamic> json) {
@@ -117,6 +119,7 @@ class Netbar {
           ? NetbarServerMetrics.fromJson(json['server_metrics'] as Map<String, dynamic>)
           : null,
       serverPwd: json['server_pwd']?.toString(),
+      version: json['version']?.toString(),
     );
   }
 
