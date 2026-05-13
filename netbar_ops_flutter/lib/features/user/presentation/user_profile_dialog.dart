@@ -880,6 +880,9 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
                   ctx,
                   ControllerDownloader(),
                   title: '下载被控端',
+                  // 手机端的 .exe 无法打开（Android 不识别 PE），隐藏"打开文件"按钮；
+                  // PC 端不受此参数影响，仍可"打开文件"直接运行 setup.exe
+                  showOpenFile: false,
                 ),
               ),
             ),

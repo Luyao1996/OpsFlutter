@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../data/file_downloader.dart';
@@ -19,21 +20,32 @@ class FileDownloadDialog extends StatefulWidget {
   final FileDownloader downloader;
   final String title;
 
+  /// 完成后是否显示"打开文件"按钮。
+  /// - APK 在手机/PC 都有意义（手机调起安装器、PC 双击执行）
+  /// - 被控端 .exe 在手机端无意义（Android 打不开），调用方传 false
+  final bool showOpenFile;
+
   const FileDownloadDialog({
     super.key,
     required this.downloader,
     required this.title,
+    this.showOpenFile = true,
   });
 
   static Future<void> show(
     BuildContext context,
     FileDownloader downloader, {
     required String title,
+    bool showOpenFile = true,
   }) async {
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => FileDownloadDialog(downloader: downloader, title: title),
+      builder: (_) => FileDownloadDialog(
+        downloader: downloader,
+        title: title,
+        showOpenFile: showOpenFile,
+      ),
     );
   }
 
@@ -102,6 +114,17 @@ class _FileDownloadDialogState extends State<FileDownloadDialog> {
     if (_completedFile == null) return;
     try {
       await OpenFilex.open(_completedFile!.path);
+    } catch (_) {}
+  }
+
+  /// 手机端：通过系统分享面板分享文件（用户可选择微信、QQ 等）。
+  Future<void> _shareFile() async {
+    if (_completedFile == null) return;
+    try {
+      await Share.shareXFiles(
+        [XFile(_completedFile!.path)],
+        subject: widget.downloader.targetFileName,
+      );
     } catch (_) {}
   }
 
@@ -187,8 +210,16 @@ class _FileDownloadDialogState extends State<FileDownloadDialog> {
               child: const Text('关闭'),
             ),
           ] else if (_completedFile != null) ...[
-            TextButton(onPressed: _openFolder, child: const Text('打开文件夹')),
-            TextButton(onPressed: _openFile, child: const Text('打开文件')),
+            // 手机端：分享（弹系统分享面板，可选微信/QQ 等）；桌面端：打开文件夹
+            if (Platform.isAndroid || Platform.isIOS)
+              TextButton(onPressed: _shareFile, child: const Text('分享'))
+            else
+              TextButton(onPressed: _openFolder, child: const Text('打开文件夹')),
+            // "打开文件" 按钮：
+            // - 桌面端：始终显示（exe/apk 都能本机直接打开）
+            // - 手机端：按 showOpenFile 控制（APK=true，被控端.exe=false）
+            if (!(Platform.isAndroid || Platform.isIOS) || widget.showOpenFile)
+              TextButton(onPressed: _openFile, child: const Text('打开文件')),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(),
               child: const Text('完成'),
