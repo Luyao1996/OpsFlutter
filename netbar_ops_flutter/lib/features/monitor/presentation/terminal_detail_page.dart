@@ -25,6 +25,7 @@ import '../../../../core/logging/webrtc_crash_logger.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/config/app_config.dart';
+import '../../../../core/storage/token_store.dart';
 import '../data/terminal_api.dart';
 import '../../desktop/data/desktop_api.dart';
 import '../../logs/data/operation_log_api.dart';
@@ -2116,6 +2117,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
                   // 用户选"控制模式"也会以只读启动。wsUrl 里的 viewonly query
                   // 是历史保留，新版包按此 viewOnly 参数为准。
                   viewOnly: viewOnly,
+                  // 锁定/解锁鉴权参数（webrtc_remote ≥ feature/optimization）。
+                  // 任一为 null 时锁定按钮无效，但不影响连接/画面/键鼠。
+                  // 包内部会自动给 token 加 "Bearer " 前缀，此处传原始字符串。
+                  accessToken: TokenStore.getToken(),
+                  merchantId: _ownerNetbarId?.toString(),
                   onDisconnect: () => Navigator.pop(ctx),
                 ),
               ),
