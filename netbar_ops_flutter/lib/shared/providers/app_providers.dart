@@ -1,9 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
+import '../../core/network/api_client.dart';
 import '../../core/network/task_ws_provider.dart';
+import '../../core/network/window_runtime.dart';
 import '../../core/storage/token_store.dart';
 import '../../features/auth/data/auth_api.dart';
 import '../../features/monitor/data/terminal_api.dart';
+import '../services/terminal_window_bridge.dart';
 
 // API 实例
 final authApiProvider = Provider((ref) => AuthApi());
@@ -71,11 +74,20 @@ class QRLoginSessionState {
 /// - 不再主动定时刷新（旧逻辑已移除）
 /// - 不再被动 401 续命（由 ApiClient 拦截器直接强制登出）
 /// - 过期即 401 → onUnauthorized → 跳登录页
+///
+/// Token watchdog：仅主窗口每 60s 调一次 `/passport/profile` 验证 token；
+/// 收到 401 → 关闭所有子窗口（含 WebRTC 远程）→ forceLogout → 路由跳扫码登录页。
 class AuthNotifier extends StateNotifier<AuthState> {
   final AuthApi _authApi;
+  Timer? _profileWatchdog;
+  bool _handlingInvalid = false;
 
   AuthNotifier(this._authApi)
-      : super(AuthState(isLoggedIn: TokenStore.isLoggedIn()));
+      : super(AuthState(isLoggedIn: TokenStore.isLoggedIn())) {
+    if (state.isLoggedIn && WindowRuntime.isMainWindow) {
+      _startWatchdog();
+    }
+  }
 
   /// 传统登录（后端不支持，会报错）
   Future<void> login(String username, String password) async {
@@ -85,6 +97,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     await TokenStore.setToken(response.token);
     await TokenStore.setUser(response.user.toJson());
     state = AuthState(isLoggedIn: true, user: response.user);
+    _startWatchdog();
   }
 
   /// 使用Token登录（扫码登录第二步）
@@ -94,10 +107,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
     final user = await _authApi.getCurrentUser();
     await TokenStore.setUser(user.toJson());
     state = AuthState(isLoggedIn: true, user: user);
+    _startWatchdog();
   }
 
   /// 登出
   Future<void> logout() async {
+    _stopWatchdog();
     // 先切换到未登录状态，确保立即触发路由重定向
     state = AuthState(isLoggedIn: false);
     // 异步通知后端登出（不阻塞 UI）
@@ -112,6 +127,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// 401/强制登出：只更新状态，触发路由跳转
   /// token 清理由调用方（ApiClient 拦截器）负责，此处不重复调用 clearAuth
   void forceLogout() {
+    _stopWatchdog();
     state = AuthState(isLoggedIn: false);
   }
 
@@ -124,6 +140,64 @@ class AuthNotifier extends StateNotifier<AuthState> {
     } catch (_) {
       forceLogout();
     }
+  }
+
+  /// 启动 token watchdog：仅主窗口启用，每 60s 验证一次
+  void _startWatchdog() {
+    if (!WindowRuntime.isMainWindow) return;
+    _profileWatchdog?.cancel();
+    _profileWatchdog = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _pollProfile(),
+    );
+  }
+
+  void _stopWatchdog() {
+    _profileWatchdog?.cancel();
+    _profileWatchdog = null;
+  }
+
+  /// 单次校验 token：调 /passport/profile
+  /// - 401 → 立即处理失效
+  /// - 其他错误（超时/5xx/断网）→ 忽略，等下一次
+  Future<void> _pollProfile() async {
+    if (!state.isLoggedIn || _handlingInvalid) return;
+    try {
+      final user = await _authApi.getCurrentUser();
+      // 顺带刷新用户信息，避免后端字段变更后客户端不同步
+      await TokenStore.setUser(user.toJson());
+      if (mounted) state = state.copyWith(user: user);
+    } on ApiError catch (e) {
+      if (e.code == 401) {
+        await _handleTokenInvalid();
+      }
+    } catch (_) {
+      // 网络异常忽略，下一轮再试
+    }
+  }
+
+  /// Token 失效处理：先关所有子窗口，再 forceLogout
+  Future<void> _handleTokenInvalid() async {
+    if (_handlingInvalid) return;
+    _handlingInvalid = true;
+    _stopWatchdog();
+    try {
+      // 先关子窗口，让 WebRTC 等资源在窗口 dispose 时正常释放
+      await TerminalWindowBridge.closeAllSubWindows();
+    } catch (_) {}
+    try {
+      await TokenStore.clearAuth();
+    } catch (_) {}
+    if (mounted) {
+      state = AuthState(isLoggedIn: false);
+    }
+    _handlingInvalid = false;
+  }
+
+  @override
+  void dispose() {
+    _stopWatchdog();
+    super.dispose();
   }
 }
 
