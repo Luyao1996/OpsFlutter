@@ -44,6 +44,7 @@ import 'widgets/console_manager_tab.dart';
 import 'widgets/hardware_info_tab.dart';
 import 'widgets/network_monitor_tab.dart';
 import 'widgets/log_manager_tab.dart';
+import '../../game_library/presentation/game_manage_view.dart';
 
 
 /// 终端详情 provider 的复合 key：(netbarId, terminalId)。
@@ -167,6 +168,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   final List<Map<String, dynamic>> _tabs = [
     {'icon': LucideIcons.gamepad2, 'label': '远程控制'},
+    {'icon': LucideIcons.hardDrive, 'label': '游戏管理'},
     {'icon': LucideIcons.fileText, 'label': '文件管理'},
     {'icon': LucideIcons.activity, 'label': '进程管理'},
     {'icon': LucideIcons.terminal, 'label': '终端命令'},
@@ -174,6 +176,10 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     {'icon': LucideIcons.network, 'label': '网络监控'},
     {'icon': LucideIcons.fileSpreadsheet, 'label': '操作日志'},
   ];
+
+  /// 游戏管理 Tab 是否处于"应用内全屏"展示
+  /// （仅影响布局：true 时隐藏 Header / 左侧栏 / TabBar，让内容铺满）
+  bool _gameManageFullscreen = false;
 
   @override
   void initState() {
@@ -403,7 +409,12 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           body: terminalAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, stack) => Center(child: Text('Error: $error')),
-        data: (terminal) => SafeArea(
+        data: (terminal) {
+          // 游戏管理 Tab 全屏：跳过 Header / 左侧栏 / TabBar，直接铺满
+          if (_selectedTab == '游戏管理' && _gameManageFullscreen) {
+            return SafeArea(bottom: false, child: _buildGameManageView());
+          }
+          return SafeArea(
           bottom: false,
           child: Column(
             children: [
@@ -466,7 +477,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
               ),
             ],
           ),
-        ),
+        );
+        },
         ),
       ),
       ],
@@ -1187,7 +1199,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   }
 
   void _selectTab(String label) {
-    setState(() => _selectedTab = label);
+    setState(() {
+      _selectedTab = label;
+      // 切离"游戏管理"时自动退出全屏，避免下次切回来仍然是全屏态
+      if (label != '游戏管理') _gameManageFullscreen = false;
+    });
 
     final netbarId = ref.read(currentNetbarProvider).id ?? 0;
     final uniqueKey = '${netbarId}_${widget.terminalId}';
@@ -1248,6 +1264,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
           ],
         ),
       );
+    } else if (_selectedTab == '游戏管理') {
+      return _buildGameManageView();
     } else if (_selectedTab == '文件管理') {
       return FileManagerTab(terminalId: terminal.id, seatId: terminal.seatId);
     } else if (_selectedTab == '进程管理') {
@@ -1266,6 +1284,24 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
 
   Widget _buildSectionTitle(String title) {
     return Text(title, style: TextStyle(fontSize: 13, color: Colors.grey.shade600));
+  }
+
+  /// 构建"游戏管理"Tab 内容
+  ///
+  /// 数据上下文取自 [currentNetbarProvider]，与终端绑定的网吧一致。
+  /// 全屏切换由本组件控制（[_gameManageFullscreen]），实际全屏布局在
+  /// build 顶层判定（隐藏 Header / 左侧栏 / TabBar）。
+  Widget _buildGameManageView() {
+    final netbar = ref.read(currentNetbarProvider);
+    final domain = netbar.subdomainFull ?? '';
+    return GameManageView(
+      merchantId: netbar.id ?? 0,
+      subdomainFull: domain,
+      netbarName: netbar.name ?? '',
+      isFullscreen: _gameManageFullscreen,
+      onToggleFullscreen: () =>
+          setState(() => _gameManageFullscreen = !_gameManageFullscreen),
+    );
   }
 
   @override
