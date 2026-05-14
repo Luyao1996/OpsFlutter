@@ -8,7 +8,6 @@ class TokenStore {
   static const String _savedUsersKey = 'ops_pro_saved_users';
   static const String _currentNetbarKey = 'current_netbar';
   static const String _autoConnectKey = 'auto_connect_last_netbar';
-  static const String _tokenExpireAtKey = 'token_expire_at';
 
   static SharedPreferences? _prefs;
   static Future<void> Function()? onBeforeClearAuth;
@@ -103,16 +102,6 @@ class TokenStore {
     return await _prefs?.setBool(_autoConnectKey, enabled) ?? false;
   }
 
-  /// 获取 Token 过期时间（毫秒时间戳）
-  static int? getTokenExpireAt() {
-    return _prefs?.getInt(_tokenExpireAtKey);
-  }
-
-  /// 保存 Token 过期时间（毫秒时间戳）
-  static Future<bool> setTokenExpireAt(int timestampMs) async {
-    return await _prefs?.setInt(_tokenExpireAtKey, timestampMs) ?? false;
-  }
-
   /// 清除所有认证数据
   static Future<void> clearAuth() async {
     try {
@@ -122,7 +111,8 @@ class TokenStore {
     await removeUser();
     await removeCurrentNetbar();
     await _prefs?.remove(_autoConnectKey);
-    await _prefs?.remove(_tokenExpireAtKey);
+    // 历史遗留：旧版本曾存过 token_expire_at，主动清掉避免残留
+    await _prefs?.remove('token_expire_at');
   }
 
   /// 是否已登录

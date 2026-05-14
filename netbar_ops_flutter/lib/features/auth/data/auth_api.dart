@@ -277,13 +277,6 @@ class AuthApi {
     return <String, dynamic>{};
   }
 
-  /// 刷新Token（ignoreUnauthorized 防止 401 死循环）
-  Future<TokenResponse> refreshToken() async {
-    final response = await _client.post('/passport/refresh',
-        options: Options(extra: {'ignoreUnauthorized': true}));
-    return TokenResponse.fromJson(response.data ?? {});
-  }
-
   /// 创建 QR 会话（适配后端接口）
   Future<QRLoginSession> createQRSession() async {
     // 后端通过 GET /passport/login/qr 返回二维码

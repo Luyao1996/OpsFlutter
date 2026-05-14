@@ -66,16 +66,16 @@ class QRLoginSessionState {
 }
 
 /// 认证状态管理
+///
+/// Token 生命周期完全由后端控制：
+/// - 不再主动定时刷新（旧逻辑已移除）
+/// - 不再被动 401 续命（由 ApiClient 拦截器直接强制登出）
+/// - 过期即 401 → onUnauthorized → 跳登录页
 class AuthNotifier extends StateNotifier<AuthState> {
   final AuthApi _authApi;
-  Timer? _refreshTimer;
 
-  AuthNotifier(this._authApi) : super(AuthState(isLoggedIn: TokenStore.isLoggedIn())) {
-    // 应用启动时，如果已登录则启动定时刷新
-    if (state.isLoggedIn) {
-      _scheduleTokenRefresh();
-    }
-  }
+  AuthNotifier(this._authApi)
+      : super(AuthState(isLoggedIn: TokenStore.isLoggedIn()));
 
   /// 传统登录（后端不支持，会报错）
   Future<void> login(String username, String password) async {
@@ -88,26 +88,16 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   /// 使用Token登录（扫码登录第二步）
-  Future<void> loginWithToken(String token, {int? expireIn, int? createIn}) async {
+  Future<void> loginWithToken(String token) async {
     await TokenStore.setToken(token);
-    // 计算并存储过期时间
-    if (expireIn != null && expireIn > 0) {
-      final baseMs = (createIn != null && createIn > 0)
-          ? createIn * 1000
-          : DateTime.now().millisecondsSinceEpoch;
-      await TokenStore.setTokenExpireAt(baseMs + expireIn * 1000);
-    }
     // 获取用户信息
     final user = await _authApi.getCurrentUser();
     await TokenStore.setUser(user.toJson());
     state = AuthState(isLoggedIn: true, user: user);
-    _scheduleTokenRefresh();
   }
 
   /// 登出
   Future<void> logout() async {
-    _refreshTimer?.cancel();
-    _refreshTimer = null;
     // 先切换到未登录状态，确保立即触发路由重定向
     state = AuthState(isLoggedIn: false);
     // 异步通知后端登出（不阻塞 UI）
@@ -122,8 +112,6 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// 401/强制登出：只更新状态，触发路由跳转
   /// token 清理由调用方（ApiClient 拦截器）负责，此处不重复调用 clearAuth
   void forceLogout() {
-    _refreshTimer?.cancel();
-    _refreshTimer = null;
     state = AuthState(isLoggedIn: false);
   }
 
@@ -136,58 +124,6 @@ class AuthNotifier extends StateNotifier<AuthState> {
     } catch (_) {
       forceLogout();
     }
-  }
-
-  /// 定时主动刷新 Token（在过期前 20% 时间点刷新）
-  void _scheduleTokenRefresh() {
-    _refreshTimer?.cancel();
-    _refreshTimer = null;
-
-    final expireAt = TokenStore.getTokenExpireAt();
-    if (expireAt == null) return;
-
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final remaining = expireAt - now;
-    if (remaining <= 0) {
-      // 已过期，立即尝试刷新
-      _doRefresh();
-      return;
-    }
-
-    // 在剩余寿命的 80% 时刷新（即过期前 20% 的时间点）
-    final refreshDelay = (remaining * 0.8).toInt();
-    _refreshTimer = Timer(Duration(milliseconds: refreshDelay), _doRefresh);
-  }
-
-  /// 执行 Token 刷新
-  Future<void> _doRefresh() async {
-    if (!state.isLoggedIn) return;
-    try {
-      final tokenResponse = await _authApi.refreshToken();
-      if (tokenResponse.isValid) {
-        await TokenStore.setToken(tokenResponse.accessToken);
-        if (tokenResponse.expireIn != null && tokenResponse.expireIn! > 0) {
-          final baseMs = (tokenResponse.createIn != null && tokenResponse.createIn! > 0)
-              ? tokenResponse.createIn! * 1000
-              : DateTime.now().millisecondsSinceEpoch;
-          await TokenStore.setTokenExpireAt(baseMs + tokenResponse.expireIn! * 1000);
-        }
-        // 刷新成功，重新调度下次刷新
-        _scheduleTokenRefresh();
-      } else {
-        // 刷新返回无效 token，不强制登出（等 401 拦截器处理）
-      }
-    } catch (_) {
-      // 刷新失败（网络错误等），30 秒后重试
-      _refreshTimer?.cancel();
-      _refreshTimer = Timer(const Duration(seconds: 30), _doRefresh);
-    }
-  }
-
-  @override
-  void dispose() {
-    _refreshTimer?.cancel();
-    super.dispose();
   }
 }
 

@@ -423,11 +423,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
           // 注意：不在此处 invalidate dashboard provider，
           // 由 MainLayout._initializeNetbarTabs 完成网吧上下文初始化后再刷新
           final authNotifier = ref.read(authNotifierProvider.notifier);
-          await authNotifier.loginWithToken(
-            tokenResponse.accessToken,
-            expireIn: tokenResponse.expireIn,
-            createIn: tokenResponse.createIn,
-          );
+          await authNotifier.loginWithToken(tokenResponse.accessToken);
 
           if (mounted) context.go('/dashboard');
         }
