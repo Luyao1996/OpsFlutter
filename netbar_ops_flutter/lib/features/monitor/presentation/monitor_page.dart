@@ -1090,6 +1090,15 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
       {required int? expectedNetbarId}) async {
     debugPrint(
         '[Router] _openRouterInBrowser entry: id=${router.id} name=${router.name} proxyUrl=${router.proxyUrl}');
+    // 禁用状态的路由器不应该被打开
+    if (!router.enabled) {
+      debugPrint('[Router] abort open: router disabled id=${router.id}');
+      if (mounted) {
+        showTopNotice(context, '该路由器已禁用，请先启用后再打开',
+            level: NoticeLevel.warning);
+      }
+      return;
+    }
     final token = TokenStore.getToken() ?? '';
     final netbar = ref.read(currentNetbarProvider);
     // 不变量：卡片渲染时绑定的 netbarId 必须与点击瞬间的当前 netbar 一致。

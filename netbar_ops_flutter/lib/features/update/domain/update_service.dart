@@ -12,6 +12,7 @@ import '../data/installer.dart';
 import '../data/installer_factory.dart';
 import '../data/update_api.dart';
 import '../data/update_downloader.dart';
+import '../providers.dart' show spKeyPinnedBuild;
 import 'models/release_info.dart';
 import 'models/version_manifest.dart';
 import 'update_check_result.dart';
@@ -153,6 +154,27 @@ class UpdateService {
     } catch (e, st) {
       _log('ERROR', 'check', 'unhandled error=$e stack=$st');
       return UpdateCheckResult.skipped();
+    }
+  }
+
+  /// 本机当前是否被"安装此版本"固定到 pinned_build。
+  /// 启动检查时调用：返回 true → 跳过自动弹窗；返回 false → 正常检查。
+  ///
+  /// 副作用：如果 SP 里有 pinned 但本地 build 已经不是它了（用户外部装了别的版本），
+  /// 会自动清掉 SP 中的 pinned，让自动检查恢复正常。
+  Future<bool> isPinnedToCurrentBuild() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final pinned = sp.getInt(spKeyPinnedBuild) ?? 0;
+      if (pinned <= 0) return false;
+      final local = await _localPackageInfo();
+      if (local.build == pinned) return true;
+      // 本地已变 → 清掉 pin
+      await sp.remove(spKeyPinnedBuild);
+      return false;
+    } catch (e) {
+      _log('WARN', 'isPinnedToCurrentBuild', 'error=$e');
+      return false;
     }
   }
 

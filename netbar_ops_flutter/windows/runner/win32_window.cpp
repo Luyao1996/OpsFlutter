@@ -135,10 +135,29 @@ bool Win32Window::Create(const std::wstring& title,
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale_factor = dpi / 96.0;
 
+  // Compute physical pixel size after DPI scaling.
+  int scaled_width = Scale(size.width, scale_factor);
+  int scaled_height = Scale(size.height, scale_factor);
+
+  // Clamp window size to 95% of the current monitor's work area.
+  // Without this, at >=150% DPI scaling the window can become larger than
+  // the screen, pushing the title bar off-screen and making the window
+  // un-draggable.
+  MONITORINFO mon_info_init = {};
+  mon_info_init.cbSize = sizeof(MONITORINFO);
+  if (GetMonitorInfo(monitor, &mon_info_init)) {
+    int max_w =
+        (mon_info_init.rcWork.right - mon_info_init.rcWork.left) * 95 / 100;
+    int max_h =
+        (mon_info_init.rcWork.bottom - mon_info_init.rcWork.top) * 95 / 100;
+    if (scaled_width > max_w) scaled_width = max_w;
+    if (scaled_height > max_h) scaled_height = max_h;
+  }
+
   HWND window = CreateWindow(
       window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
       Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
-      Scale(size.width, scale_factor), Scale(size.height, scale_factor),
+      scaled_width, scaled_height,
       nullptr, nullptr, GetModuleHandle(nullptr), this);
 
   if (!window) {

@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/update_downloader.dart';
 import '../domain/models/release_info.dart';
@@ -32,11 +33,18 @@ class UpdateProgressDialog extends ConsumerStatefulWidget {
   final String host;
   final bool isForced;
 
+  /// 安装完成后是否将本机"固定"到 [release.buildNumber]，固定后启动检查不再
+  /// 自动弹更新对话框（手动检查仍然可见）。
+  /// - 用户点"安装此版本"（历史卡片）安装某个旧版本时传 true
+  /// - 用户点"立即更新"/"试试预览版"装的是最新候选时传 false（同时会清除已有的 pin）
+  final bool pinAfterInstall;
+
   const UpdateProgressDialog({
     super.key,
     required this.release,
     required this.host,
     required this.isForced,
+    this.pinAfterInstall = false,
   });
 
   @override
@@ -117,6 +125,21 @@ class _UpdateProgressDialogState
     // 标记 install 已发起，让自动延迟段不再重复触发；用户手点不受此标记限制，
     // 这样系统安装页被取消后用户能重新点"立即安装"再装一次。
     _installTriggered = true;
+
+    // install 之前更新 pinned 标记。Windows 上 install 内部会 exit(0)，
+    // 之后没机会再写 SP，所以必须在调用 install 前完成。
+    try {
+      final sp = await SharedPreferences.getInstance();
+      if (widget.pinAfterInstall) {
+        await sp.setInt(spKeyPinnedBuild, widget.release.buildNumber);
+      } else {
+        // 装的是最新候选 → 清除已有的 pin，让自动检查恢复正常
+        await sp.remove(spKeyPinnedBuild);
+      }
+    } catch (_) {
+      // SP 操作失败不阻塞安装流程
+    }
+
     try {
       await ref.read(updateServiceProvider).install(file);
     } catch (e) {

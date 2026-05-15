@@ -7,6 +7,11 @@ final updateServiceProvider = Provider<UpdateService>((ref) {
   return UpdateService();
 });
 
+/// SharedPreferences key：用户主动通过"安装此版本"固定到的 buildNumber。
+/// 0 / 未设置表示未固定，启动时正常检查更新；
+/// 非 0 时启动检查会判断 local.build == 此值则跳过自动弹窗（手动检查不受影响）。
+const String spKeyPinnedBuild = 'update.pinned_build';
+
 /// 同步访问 SharedPreferences 的入口。`main()` 启动时必须先调用
 /// [ensureInitialized] 一次，之后 UI 同步线程才能用 [instance]。
 class SharedPreferencesHolder {

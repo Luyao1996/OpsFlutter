@@ -185,6 +185,13 @@ class _NetbarOpsAppState extends ConsumerState<NetbarOpsApp> {
           .log('INFO', 'update', 'startupCheck', '-', 'debug build, skip');
       return;
     }
+    // 用户主动通过"安装此版本"固定到了某个版本 → 启动不再自动弹更新对话框。
+    // 手动「检查更新」按钮仍可正常使用。
+    if (await ref.read(updateServiceProvider).isPinnedToCurrentBuild()) {
+      WebRtcCrashLogger.I.log(
+          'INFO', 'update', 'startupCheck', '-', 'pinned to current build, skip');
+      return;
+    }
     // 等一下让首屏稳定，避免和登录页/路由跳转抢焦点
     await Future<void>.delayed(const Duration(milliseconds: 800));
     if (!mounted) return;

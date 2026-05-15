@@ -64,10 +64,16 @@ class _ManualUpdateCheckDialogState
     }
   }
 
-  /// 启动下载。[release] 由调用方决定是正式版还是预览版。
+  /// 启动下载。[release] 由调用方决定是正式版/预览版/历史版本。
   /// [isForced] 是否强制更新（用户主动点的下载一般为 false，但若启动检查的 result 本身是强制
   /// 且用户走到这里下同一个 release，仍按 result.isForced 传入以保留行为）。
-  void _startDownload(ReleaseInfo release, {required bool isForced}) {
+  /// [pinAfterInstall] 装完后是否固定到该版本（启动不再自动弹更新）。
+  /// 历史版本传 true，最新候选传 false（同时清除已有的 pin）。
+  void _startDownload(
+    ReleaseInfo release, {
+    required bool isForced,
+    bool pinAfterInstall = false,
+  }) {
     final result = _result;
     if (result == null) return;
     final host = result.host;
@@ -84,8 +90,42 @@ class _ManualUpdateCheckDialogState
         release: release,
         host: host,
         isForced: isForced,
+        pinAfterInstall: pinAfterInstall,
       ),
     );
+  }
+
+  /// 历史版本"安装此版本"二次确认 → 确认后下载并固定到该版本。
+  Future<void> _confirmAndInstallSpecific(ReleaseInfo release) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.system_update_alt, color: Color(0xFF2563EB)),
+            SizedBox(width: 8),
+            Expanded(child: Text('安装此版本')),
+          ],
+        ),
+        content: Text(
+          '即将安装 v${release.version} (build ${release.buildNumber})。\n\n'
+          '安装后启动将不再自动提示更新（直到你手动检查并安装其他版本）。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('继续安装'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && mounted) {
+      _startDownload(release, isForced: false, pinAfterInstall: true);
+    }
   }
 
   /// 预览版二次确认 → 确认后下载。
@@ -473,6 +513,24 @@ class _ManualUpdateCheckDialogState
                 fontSize: 12,
                 color: Color(0xFF4B5563),
                 height: 1.5,
+              ),
+            ),
+          ],
+          if (!isCurrent) ...[
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => _confirmAndInstallSpecific(r),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  minimumSize: const Size(0, 32),
+                ),
+                icon: const Icon(Icons.system_update_alt, size: 14),
+                label: const Text('安装此版本',
+                    style: TextStyle(fontSize: 12)),
               ),
             ),
           ],
