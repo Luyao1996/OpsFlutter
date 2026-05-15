@@ -99,6 +99,8 @@ class _UpdateProgressDialogState
       // 这里的 widget 会随主进程一起销毁。Android 拉起安装页后用户可取消。
       await Future<void>.delayed(const Duration(milliseconds: 1500));
       if (!mounted) return;
+      // 这 1.5s 内用户可能已经手点了"立即安装"，避免重复触发
+      if (_installTriggered) return;
       _triggerInstall();
     } catch (e) {
       if (!mounted) return;
@@ -110,10 +112,11 @@ class _UpdateProgressDialogState
   }
 
   Future<void> _triggerInstall() async {
-    if (_installTriggered) return;
-    _installTriggered = true;
     final file = _readyFile;
     if (file == null) return;
+    // 标记 install 已发起，让自动延迟段不再重复触发；用户手点不受此标记限制，
+    // 这样系统安装页被取消后用户能重新点"立即安装"再装一次。
+    _installTriggered = true;
     try {
       await ref.read(updateServiceProvider).install(file);
     } catch (e) {
@@ -367,7 +370,7 @@ class _UpdateProgressDialogState
               label: const Text('打开所在文件夹'),
             ),
           FilledButton.icon(
-            onPressed: _installTriggered ? null : _triggerInstall,
+            onPressed: _triggerInstall,
             icon: const Icon(Icons.play_arrow, size: 18),
             label: const Text('立即安装'),
           ),
