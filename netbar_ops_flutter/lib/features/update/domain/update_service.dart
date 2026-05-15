@@ -165,11 +165,15 @@ class UpdateService {
     }
   }
 
-  /// 下载并安装。
-  Future<void> downloadAndInstall(
+  /// 仅下载并校验，返回下载完成的最终文件。不会触发安装。
+  ///
+  /// [onPhase] 让 UI 感知 preparing/downloading/verifying 阶段切换；
+  /// [onProgress] 用于下载阶段的字节级进度回调。
+  Future<File> downloadOnly(
     ReleaseInfo release,
     String host, {
     required DownloadProgress onProgress,
+    PhaseCallback? onPhase,
     CancelToken? cancelToken,
   }) async {
     final url = '$host${release.path}';
@@ -177,19 +181,41 @@ class UpdateService {
     final fileName = release.path.split('/').last;
     final savePath = '${saveDir.path}${Platform.pathSeparator}$fileName';
 
-    _log('INFO', 'downloadAndInstall',
+    _log('INFO', 'downloadOnly',
         'url=$url save=$savePath size=${release.size}');
 
-    final file = await _downloader.download(
+    return _downloader.download(
       url: url,
       savePath: savePath,
       expectedMd5: release.md5,
       expectedSize: release.size,
       onProgress: onProgress,
       cancelToken: cancelToken,
+      onPhase: onPhase,
     );
+  }
 
-    await _installer.install(file);
+  /// 触发安装。Windows 启动 setup.exe 后主程序会 exit(0)；
+  /// Android 拉起系统安装页。
+  Future<void> install(File file) => _installer.install(file);
+
+  /// 下载并安装。保留作为旧调用方的兼容入口。
+  /// 新代码建议用 [downloadOnly] + [install]，可在中间插入"显示路径"等 UI 交互。
+  Future<void> downloadAndInstall(
+    ReleaseInfo release,
+    String host, {
+    required DownloadProgress onProgress,
+    PhaseCallback? onPhase,
+    CancelToken? cancelToken,
+  }) async {
+    final file = await downloadOnly(
+      release,
+      host,
+      onProgress: onProgress,
+      onPhase: onPhase,
+      cancelToken: cancelToken,
+    );
+    await install(file);
   }
 
   // -------- helpers --------
