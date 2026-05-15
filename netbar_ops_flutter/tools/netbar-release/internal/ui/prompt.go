@@ -81,9 +81,10 @@ func AskConfirm(message string, defaultVal bool) (bool, error) {
 
 // AskMultiline changelog 多行输入。survey 的 Multiline 在 Windows 控制台有兼容问题，
 // 这里用更稳定的"按提示逐行读取，空行结束"方式。
+// 输入 "remake"（不区分大小写）会清空已输入的所有行并重新开始。
 func AskMultiline(message string) (string, error) {
 	fmt.Println(message)
-	fmt.Println("  （每行一条，输入空行结束）")
+	fmt.Println("  （每行一条，输入空行结束；输入 remake 清空重来）")
 	reader := bufio.NewReader(os.Stdin)
 	var lines []string
 	for {
@@ -95,6 +96,11 @@ func AskMultiline(message string) (string, error) {
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
 			break
+		}
+		if strings.EqualFold(strings.TrimSpace(line), "remake") {
+			lines = lines[:0]
+			fmt.Println("  ⟳ 已清空，请重新输入：")
+			continue
 		}
 		lines = append(lines, line)
 	}

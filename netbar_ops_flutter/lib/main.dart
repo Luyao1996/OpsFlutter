@@ -4,7 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart';
@@ -19,6 +19,7 @@ import 'core/network/window_runtime.dart';
 import 'core/theme/app_theme.dart';
 import 'app/router.dart';
 import 'features/monitor/presentation/terminal_detail_window_app.dart';
+import 'features/update/domain/update_check_result.dart';
 import 'features/update/presentation/update_dialog.dart';
 import 'features/update/providers.dart';
 import 'features/update/update_navigator_key.dart';
@@ -82,6 +83,9 @@ void main(List<String> args) async {
 
   // 初始化存储
   await TokenStore.init();
+
+  // 初始化 SharedPreferences holder（供 isPreviewProvider 等同步访问）
+  await SharedPreferencesHolder.ensureInitialized();
 
   // 设置 401 回调
   ApiClient.onUnauthorized = () {
@@ -174,11 +178,24 @@ class _NetbarOpsAppState extends ConsumerState<NetbarOpsApp> {
   Future<void> _checkUpdate() async {
     if (_updateChecked) return;
     _updateChecked = true;
+    // Debug 模式跳过启动自动检查：flutter run 时本地 build=1，会被服务端
+    // minSupportedBuild 误判为强制更新，干扰开发体验。手动「检查更新」按钮不受影响。
+    if (kDebugMode) {
+      WebRtcCrashLogger.I
+          .log('INFO', 'update', 'startupCheck', '-', 'debug build, skip');
+      return;
+    }
     // 等一下让首屏稳定，避免和登录页/路由跳转抢焦点
     await Future<void>.delayed(const Duration(milliseconds: 800));
     if (!mounted) return;
     try {
       final result = await ref.read(updateServiceProvider).check();
+      // 检查结果中携带 isCurrentPreview，更新到 provider 让 UI 同步显示 PREVIEW 标签
+      if (mounted &&
+          result.status != UpdateStatus.skipped &&
+          ref.read(isPreviewProvider) != result.isCurrentPreview) {
+        ref.read(isPreviewProvider.notifier).state = result.isCurrentPreview;
+      }
       if (!mounted || !result.hasUpdate) return;
       final ctx = updateNavigatorKey.currentContext;
       if (ctx == null) return;

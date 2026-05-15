@@ -3,10 +3,14 @@ import 'release_info.dart';
 class PlatformManifest {
   final int minSupportedBuild;
   final List<ReleaseInfo> releases; // 按 buildNumber 降序
+  // 当前预览版（最多一条）。release 命令默认写入这里，
+  // release-preview-promote 命令把它移入 releases。
+  final ReleaseInfo? preview;
 
   const PlatformManifest({
     required this.minSupportedBuild,
     required this.releases,
+    this.preview,
   });
 
   ReleaseInfo? get latest => releases.isEmpty ? null : releases.first;
@@ -23,9 +27,13 @@ class PlatformManifest {
         .toList();
     // 兜底再排一次（防止服务端没排好）
     list.sort((a, b) => b.buildNumber.compareTo(a.buildNumber));
+    final previewRaw = json['preview'];
     return PlatformManifest(
       minSupportedBuild: (json['minSupportedBuild'] as num?)?.toInt() ?? 1,
       releases: list,
+      preview: previewRaw is Map<String, dynamic>
+          ? ReleaseInfo.fromJson(previewRaw)
+          : null,
     );
   }
 }

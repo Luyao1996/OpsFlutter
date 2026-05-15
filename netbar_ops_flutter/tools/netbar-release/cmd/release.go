@@ -29,7 +29,9 @@ func releaseCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "release",
-		Short: "一键编译 + 打包 + 上传发布新版本",
+		Short: "一键编译 + 打包 + 上传发布新预览版",
+		Long: `发布新预览版（写入 version.json 的 preview 字段，不影响正式版用户）。
+预览版通过 release-preview-promote 命令提升为正式版。`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, store, err := loadStore()
 			if err != nil {
@@ -38,10 +40,10 @@ func releaseCmd() *cobra.Command {
 			sig := signature.New(cfg.Signature.BaseURL, cfg.Signature.Path)
 
 			fmt.Println("╔══════════════════════════════════╗")
-			fmt.Println("║  NetBar-Ops 一键发布              ║")
+			fmt.Println("║  NetBar-Ops 一键发布预览版        ║")
 			fmt.Println("╚══════════════════════════════════╝")
 
-			// 1. 拉 manifest 显示当前各平台最新版本
+			// 1. 拉 manifest 显示当前各平台最新版本（正式版 + 预览版）
 			fmt.Println()
 			fmt.Println("→ 拉取当前 version.json ...")
 			cur, err := store.Fetch()
@@ -51,10 +53,14 @@ func releaseCmd() *cobra.Command {
 			for _, p := range []string{"android", "windows"} {
 				pm := cur.Get(p)
 				if pm != nil && len(pm.Releases) > 0 {
-					fmt.Printf("   ✓ %-7s 最新: %s (build %d)\n",
+					fmt.Printf("   ✓ %-7s 正式版: %s (build %d)\n",
 						p, pm.Releases[0].Version, pm.Releases[0].BuildNumber)
 				} else {
-					fmt.Printf("   · %-7s 暂无发布\n", p)
+					fmt.Printf("   · %-7s 暂无正式版\n", p)
+				}
+				if pm != nil && pm.Preview != nil {
+					fmt.Printf("     %-7s 预览版: %s (build %d)  [本次发布将覆盖]\n",
+						"", pm.Preview.Version, pm.Preview.BuildNumber)
 				}
 			}
 
@@ -100,10 +106,17 @@ func releaseCmd() *cobra.Command {
 						return err
 					}
 				}
-				if pm := cur.Get(p); pm != nil && len(pm.Releases) > 0 {
-					if b <= pm.Releases[0].BuildNumber {
-						return fmt.Errorf("%s buildNumber %d 必须 > 当前最新 %d",
-							p, b, pm.Releases[0].BuildNumber)
+				if pm := cur.Get(p); pm != nil {
+					curMax := 0
+					if len(pm.Releases) > 0 && pm.Releases[0].BuildNumber > curMax {
+						curMax = pm.Releases[0].BuildNumber
+					}
+					if pm.Preview != nil && pm.Preview.BuildNumber > curMax {
+						curMax = pm.Preview.BuildNumber
+					}
+					if b <= curMax {
+						return fmt.Errorf("%s buildNumber %d 必须 > 当前最大 %d (含 preview)",
+							p, b, curMax)
 					}
 				}
 				switch p {
@@ -153,7 +166,7 @@ func releaseCmd() *cobra.Command {
 
 			// 6. 预览
 			fmt.Println()
-			fmt.Println("┌──────────── 预览 ────────────")
+			fmt.Println("┌──────── 预览版发布预览 [PREVIEW] ────────")
 			fmt.Printf("│ platform        : %s\n", platform)
 			fmt.Printf("│ version         : %s\n", version)
 			if contains(platforms, "android") {
@@ -170,8 +183,28 @@ func releaseCmd() *cobra.Command {
 			}
 			fmt.Println("└──────────────────────────────")
 
+			// 6.5 检测到 preview 已存在 → 覆盖确认（CI 场景 -y 跳过）
 			if !flagYes {
-				ok, _ := ui.AskConfirm("开始 编译 + 打包 + 上传?", false)
+				var existed []string
+				for _, p := range platforms {
+					if pm := cur.Get(p); pm != nil && pm.Preview != nil {
+						existed = append(existed, fmt.Sprintf("%s 当前 preview = %s (build %d)",
+							p, pm.Preview.Version, pm.Preview.BuildNumber))
+					}
+				}
+				if len(existed) > 0 {
+					fmt.Println()
+					fmt.Println("⚠ 检测到已存在预览版，本次发布将覆盖：")
+					for _, line := range existed {
+						fmt.Println("  -", line)
+					}
+					ok, _ := ui.AskConfirm("继续覆盖?", false)
+					if !ok {
+						fmt.Println("已取消")
+						return nil
+					}
+				}
+				ok, _ := ui.AskConfirm("开始 编译 + 打包 + 上传 预览版?", false)
 				if !ok {
 					fmt.Println("已取消")
 					return nil
@@ -187,7 +220,7 @@ func releaseCmd() *cobra.Command {
 			// 8. 输出公共下载地址
 			fmt.Println()
 			fmt.Println("══════════════════════════════════")
-			fmt.Println("✓ 发布完成")
+			fmt.Println("✓ 预览版发布完成")
 			for _, p := range platforms {
 				build := inputs.AndroidBuild
 				if p == "windows" {
@@ -197,6 +230,10 @@ func releaseCmd() *cobra.Command {
 				fmt.Printf("  %s: %s\n", p, store.PublicURL(ossKey))
 			}
 			fmt.Println("══════════════════════════════════")
+			fmt.Println()
+			fmt.Printf("ℹ 预览版 v%s 已发布成功\n", version)
+			fmt.Println("  使用以下命令将预览版升级为正式版：")
+			fmt.Println("      netbar-release release-preview-promote")
 			return nil
 		},
 	}
@@ -215,10 +252,17 @@ func releaseCmd() *cobra.Command {
 
 func calcNextBuild(m *manifest.Manifest, platform string) int {
 	pm := m.Get(platform)
-	if pm == nil || len(pm.Releases) == 0 {
+	if pm == nil {
 		return 1
 	}
-	return pm.Releases[0].BuildNumber + 1
+	curMax := 0
+	if len(pm.Releases) > 0 {
+		curMax = pm.Releases[0].BuildNumber
+	}
+	if pm.Preview != nil && pm.Preview.BuildNumber > curMax {
+		curMax = pm.Preview.BuildNumber
+	}
+	return curMax + 1
 }
 
 // calcNextVersion 计算推荐的下一个版本号：
@@ -228,12 +272,21 @@ func calcNextVersion(m *manifest.Manifest, platforms []string) string {
 	var latest string
 	for _, p := range platforms {
 		pm := m.Get(p)
-		if pm == nil || len(pm.Releases) == 0 {
+		if pm == nil {
 			continue
 		}
-		v := pm.Releases[0].Version
-		if latest == "" || compareVersion(v, latest) > 0 {
-			latest = v
+		// 候选包含 releases[0] 和 preview，取版本号较大者
+		var candidates []string
+		if len(pm.Releases) > 0 {
+			candidates = append(candidates, pm.Releases[0].Version)
+		}
+		if pm.Preview != nil {
+			candidates = append(candidates, pm.Preview.Version)
+		}
+		for _, v := range candidates {
+			if latest == "" || compareVersion(v, latest) > 0 {
+				latest = v
+			}
 		}
 	}
 	if latest == "" {

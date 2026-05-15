@@ -174,7 +174,9 @@ func (o *Orchestrator) uploadAndRecord(
 		Changelog:   in.Changelog,
 		UploadTime:  time.Now(),
 	}
-	if err := m.AddRelease(platform, release, o.cfg.MaxReleases); err != nil {
+	// release 命令默认发布预览版：覆盖式写入 Platform.Preview，不动 Releases。
+	// 由 release-preview-promote 命令负责把 preview 提升为正式版。
+	if err := m.SetPreview(platform, release); err != nil {
 		return err
 	}
 	if in.MinSupportedBuild > 0 {
@@ -182,6 +184,6 @@ func (o *Orchestrator) uploadAndRecord(
 			return err
 		}
 	}
-	fmt.Printf("   ✓ %s release 记录已更新\n", platform)
+	fmt.Printf("   ✓ %s preview 记录已更新\n", platform)
 	return nil
 }

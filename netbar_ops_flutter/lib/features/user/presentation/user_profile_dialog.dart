@@ -18,6 +18,8 @@ import '../../update/data/controller_downloader.dart';
 import '../../update/data/update_api.dart';
 import '../../update/presentation/download_card.dart';
 import '../../update/presentation/file_download_dialog.dart';
+import '../../update/presentation/manual_update_check_dialog.dart';
+import '../../update/providers.dart' as update_providers;
 
 class UserProfileDialog extends ConsumerStatefulWidget {
   const UserProfileDialog({super.key});
@@ -269,6 +271,7 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
               _buildViewCrashLogButton(),
               _buildExportCrashLogButton(),
               _buildCrashTestButton(),
+              _buildCheckUpdateButton(),
               _buildLogoutButton(),
             ],
           ),
@@ -367,6 +370,7 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
               _buildViewCrashLogButton(),
               _buildExportCrashLogButton(),
               _buildCrashTestButton(),
+              _buildCheckUpdateButton(),
               _buildLogoutButton(),
             ],
           ),
@@ -565,6 +569,57 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
                 color: Color(0xFFEA580C),
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCheckUpdateButton() {
+    final isPreview = ref.watch(update_providers.isPreviewProvider);
+    return InkWell(
+      onTap: () => showManualUpdateCheckDialog(context),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        width: double.infinity,
+        constraints: const BoxConstraints(minHeight: 48),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            const Icon(LucideIcons.refreshCw, size: 18, color: Color(0xFF2563EB)),
+            const SizedBox(width: 12),
+            const Text(
+              '检查更新',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF2563EB),
+              ),
+            ),
+            if (isPreview) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF97316).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(
+                    color: const Color(0xFFF97316).withValues(alpha: 0.6),
+                  ),
+                ),
+                child: const Text(
+                  'PREVIEW',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: Color(0xFFEA580C),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),

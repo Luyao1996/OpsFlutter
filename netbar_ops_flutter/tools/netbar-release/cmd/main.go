@@ -31,6 +31,7 @@ func main() {
 
 	rootCmd.AddCommand(
 		releaseCmd(),
+		promoteCmd(),
 		publishCmd(),
 		listCmd(),
 		rollbackCmd(),
@@ -265,11 +266,20 @@ func listCmd() *cobra.Command {
 			for _, plat := range []string{"android", "windows"} {
 				p := m.Get(plat)
 				fmt.Printf("\n=== %s ===\n", plat)
-				if p == nil || len(p.Releases) == 0 {
+				if p == nil || (len(p.Releases) == 0 && p.Preview == nil) {
 					fmt.Println("  (空)")
 					continue
 				}
 				fmt.Printf("  minSupportedBuild: %d\n", p.MinSupportedBuild)
+				if p.Preview != nil {
+					tag := " [PREVIEW]"
+					if p.Preview.ForceUpdate {
+						tag += " [强制]"
+					}
+					fmt.Printf("  + %s (build %d)%s  %s\n",
+						p.Preview.Version, p.Preview.BuildNumber, tag,
+						p.Preview.UploadTime.Format("2006-01-02 15:04:05"))
+				}
 				for _, r := range p.Releases {
 					tag := ""
 					if r.ForceUpdate {
