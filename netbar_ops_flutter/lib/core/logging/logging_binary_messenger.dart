@@ -24,6 +24,23 @@ class LoggingBinaryMessenger extends BinaryMessenger {
   static const MethodCodec _codec = StandardMethodCodec();
   static const StringCodec _stringCodec = StringCodec();
 
+  /// 已知高频噪音 method（统计 / 枚举类），不写日志，避免日志量在
+  /// 机械硬盘上压垮 UI 线程。注：具体方法名取决于所用 webrtc 插件版本，
+  /// 写漏只是少砍点量、不影响崩溃定位安全性，可按实际插件方法名增删。
+  static const Set<String> _noisyMethods = {
+    'getStats',
+    'getStatsForTrack',
+    'peerConnectionGetStats',
+    'getRtpSenders',
+    'getRtpReceivers',
+    'getTransceivers',
+    'mediaStreamTrackGetSettings',
+    'captureFrame',
+  };
+
+  /// 同 (channel|op|method) 组合最近一次记录时间戳(ms)，节流防错误/信令风暴。
+  final Map<String, int> _lastLogMs = {};
+
   bool _isWebRtcChannel(String channel) {
     final lc = channel.toLowerCase();
     return lc.contains('webrtc') || lc.contains('flutterwebrtc');
@@ -67,38 +84,78 @@ class LoggingBinaryMessenger extends BinaryMessenger {
     }
   }
 
+  /// 从 MethodCall 消息中尽力取出 method 名；非 MethodCall 返回 null。
+  String? _tryMethod(ByteData? message) {
+    if (message == null) return null;
+    try {
+      return _codec.decodeMethodCall(message).method;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 节流：同一 key 50ms 内最多放行一次，防错误 / 信令风暴打爆磁盘。
+  bool _allowLog(String key) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final last = _lastLogMs[key];
+    if (last != null && now - last < 50) return false;
+    if (_lastLogMs.length > 256) _lastLogMs.clear();
+    _lastLogMs[key] = now;
+    return true;
+  }
+
+  /// 是否应记录该消息：噪音 method 丢弃，其余经 50ms 节流。
+  bool _shouldLog(String channel, String op, ByteData? message) {
+    final method = _tryMethod(message);
+    if (method != null && _noisyMethods.contains(method)) return false;
+    return _allowLog('$channel|$op|${method ?? '-'}');
+  }
+
   @override
   Future<ByteData?>? send(String channel, ByteData? message) {
-    final shouldLog = _isWebRtcChannel(channel);
-    if (shouldLog) {
-      // 先同步写日志再转发，确保崩前一定落盘
-      WebRtcCrashLogger.I.log(
-        'INFO',
-        'mc',
-        'send',
-        '-',
-        'ch=$channel ${_describeMessage(channel, message)}',
-      );
+    final isRtc = _isWebRtcChannel(channel);
+    var logged = false;
+    if (isRtc && _shouldLog(channel, 'send', message)) {
+      logged = true;
+      // 异步投递：不在 send 同步路径里写盘，UI 线程立即放行消息。
+      scheduleMicrotask(() {
+        WebRtcCrashLogger.I.log(
+          'INFO',
+          'mc',
+          'send',
+          '-',
+          'ch=$channel ${_describeMessage(channel, message)}',
+        );
+      });
     }
     final future = _inner.send(channel, message);
-    if (!shouldLog || future == null) return future;
+    if (!isRtc || future == null) return future;
     return future.then((reply) {
-      WebRtcCrashLogger.I.log(
-        'INFO',
-        'mc',
-        'send_reply',
-        '-',
-        'ch=$channel ${_describeResult(reply)}',
-      );
+      // send_reply 仅在对应 send 被记录时才记，保持请求 / 响应成对，
+      // 噪音方法的 reply 同样被消除。
+      if (logged) {
+        scheduleMicrotask(() {
+          WebRtcCrashLogger.I.log(
+            'INFO',
+            'mc',
+            'send_reply',
+            '-',
+            'ch=$channel ${_describeResult(reply)}',
+          );
+        });
+      }
       return reply;
     }, onError: (Object e, StackTrace s) {
-      WebRtcCrashLogger.I.log(
-        'ERROR',
-        'mc',
-        'send_error',
-        '-',
-        'ch=$channel error=$e',
-      );
+      // 错误总是记录（ERROR 级别在 logger 内会立即 flush 落盘）。
+      scheduleMicrotask(() {
+        WebRtcCrashLogger.I.log(
+          'ERROR',
+          'mc',
+          'send_error',
+          '-',
+          'ch=$channel error=$e',
+        );
+      });
       throw e;
     });
   }
@@ -110,31 +167,42 @@ class LoggingBinaryMessenger extends BinaryMessenger {
       return;
     }
     _inner.setMessageHandler(channel, (ByteData? message) async {
-      WebRtcCrashLogger.I.log(
-        'INFO',
-        'mc',
-        'recv',
-        '-',
-        'ch=$channel ${_describeMessage(channel, message)}',
-      );
+      final logged = _shouldLog(channel, 'recv', message);
+      if (logged) {
+        scheduleMicrotask(() {
+          WebRtcCrashLogger.I.log(
+            'INFO',
+            'mc',
+            'recv',
+            '-',
+            'ch=$channel ${_describeMessage(channel, message)}',
+          );
+        });
+      }
       try {
         final reply = await handler(message);
-        WebRtcCrashLogger.I.log(
-          'INFO',
-          'mc',
-          'recv_reply',
-          '-',
-          'ch=$channel ${_describeResult(reply)}',
-        );
+        if (logged) {
+          scheduleMicrotask(() {
+            WebRtcCrashLogger.I.log(
+              'INFO',
+              'mc',
+              'recv_reply',
+              '-',
+              'ch=$channel ${_describeResult(reply)}',
+            );
+          });
+        }
         return reply;
       } catch (e, s) {
-        WebRtcCrashLogger.I.log(
-          'ERROR',
-          'mc',
-          'recv_error',
-          '-',
-          'ch=$channel error=$e stack=${s.toString().split('\n').take(8).join(' | ')}',
-        );
+        scheduleMicrotask(() {
+          WebRtcCrashLogger.I.log(
+            'ERROR',
+            'mc',
+            'recv_error',
+            '-',
+            'ch=$channel error=$e stack=${s.toString().split('\n').take(8).join(' | ')}',
+          );
+        });
         rethrow;
       }
     });

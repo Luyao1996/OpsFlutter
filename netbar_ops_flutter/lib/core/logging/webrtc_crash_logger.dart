@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -22,6 +23,13 @@ class WebRtcCrashLogger {
   String? _currentDayKey;
   String? _logDirPath;
   bool _inited = false;
+
+  /// 200ms 兜底刷盘定时器：高频 INFO 日志不再每行 fsync，
+  /// 由它周期性落盘，避免机械硬盘上阻塞 UI 线程。
+  Timer? _flushTimer;
+
+  /// 自上次 flush 后是否有未落盘的写入。
+  bool _pendingFlush = false;
 
   /// 单条字段最大字节数（SDP / candidate 太大时截断）。
   static const int _maxFieldBytes = 4096;
@@ -49,6 +57,12 @@ class WebRtcCrashLogger {
       _logDirPath = dir.path;
       _openForToday();
       _inited = true;
+      _flushTimer ??= Timer.periodic(
+        const Duration(milliseconds: 200),
+        (_) {
+          if (_pendingFlush) flush();
+        },
+      );
       log('INFO', 'boot', 'logger_init', '-',
           'WebRtcCrashLogger initialized dir=${dir.path} pid=$pid platform=${Platform.operatingSystem} osVer=${Platform.operatingSystemVersion}');
     } catch (e) {
@@ -83,10 +97,26 @@ class WebRtcCrashLogger {
       final ts = DateTime.now().toIso8601String();
       final line = '[$ts][$level][$module][$op][$ctxId] $msg\n';
       raf.writeStringSync(line);
-      raf.flushSync();
+      // 分级刷盘：ERROR/WARN 频率低，立即 fsync 保证崩溃可定位；
+      // 高频 INFO 仅标记，由 _flushTimer 每 200ms 兜底落盘，
+      // 避免每行 flushSync 在机械硬盘上阻塞 UI 线程。
+      if (level == 'ERROR' || level == 'WARN') {
+        raf.flushSync();
+        _pendingFlush = false;
+      } else {
+        _pendingFlush = true;
+      }
     } catch (_) {
       // 写日志失败时不要抛，避免影响业务
     }
+  }
+
+  /// 强制把缓冲区写入物理磁盘。崩溃处理器 / 进程退出前调用，确保不丢日志。
+  void flush() {
+    try {
+      _raf?.flushSync();
+      _pendingFlush = false;
+    } catch (_) {}
   }
 
   /// 对可能过大的字段做截断，保留头部 + 尾部提示长度。
@@ -109,6 +139,13 @@ class WebRtcCrashLogger {
   }
 
   void close() {
+    try {
+      _flushTimer?.cancel();
+      _flushTimer = null;
+    } catch (_) {}
+    try {
+      _raf?.flushSync();
+    } catch (_) {}
     try {
       _raf?.closeSync();
     } catch (_) {}

@@ -63,6 +63,7 @@ void main(List<String> args) async {
         '-',
         'exception=${details.exceptionAsString()} stack=${details.stack?.toString().split('\n').take(10).join(' | ') ?? 'no stack'}',
       );
+      WebRtcCrashLogger.I.flush();
       _writeCrashLog(
         details.exceptionAsString(),
         details.stack?.toString() ?? 'no stack',
@@ -77,6 +78,7 @@ void main(List<String> args) async {
         '-',
         'error=$error stack=${stack.toString().split('\n').take(10).join(' | ')}',
       );
+      WebRtcCrashLogger.I.flush();
       _writeCrashLog(error.toString(), stack.toString());
       return true;
     };
@@ -155,6 +157,7 @@ void main(List<String> args) async {
       '-',
       'error=$error stack=${stack.toString().split('\n').take(10).join(' | ')}',
     );
+    WebRtcCrashLogger.I.flush();
     _writeCrashLog(error.toString(), stack.toString());
   });
 }
