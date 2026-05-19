@@ -7,6 +7,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../core/theme/app_theme.dart';
 import '../utils/adaptive_show.dart';
 import '../../features/netbar/data/netbar_api.dart';
+import '../../features/netbar/data/netbar_list_provider.dart';
 import '../../features/netbar/data/netbar_pinyin_matcher.dart';
 import '../../features/netbar/presentation/netbar_selector_modal.dart';
 import '../../features/netbar/presentation/widgets/default_win_pwd_dialog.dart';

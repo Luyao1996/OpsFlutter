@@ -6,17 +6,11 @@ import '../../../../core/responsive/responsive.dart';
 import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/widgets/search_field.dart';
 import '../data/netbar_api.dart';
+import '../data/netbar_list_provider.dart';
 import '../data/netbar_pinyin_matcher.dart';
 import 'widgets/create_netbar_modal.dart';
 import 'widgets/netbar_list_view.dart';
 import 'widgets/netbar_grid_view.dart';
-
-final netbarListProvider = FutureProvider.autoDispose<List<Netbar>>((
-  ref,
-) async {
-  final api = NetbarApi();
-  return api.getList();
-});
 
 class NetbarListPage extends ConsumerStatefulWidget {
   const NetbarListPage({super.key});
@@ -128,9 +122,9 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
                   ],
                 ),
               ),
-              data: (netbars) {
+              data: (response) {
                 // Filter logic: 三级匹配 (name → pinyin_full → pinyin) + id/token/group 兜底
-                final filtered = netbars
+                final filtered = response.merchants
                     .where((n) => NetbarMatcher.match(n, _searchQuery))
                     .toList();
 
@@ -155,7 +149,7 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
     );
   }
 
-  Widget _buildHeaderTitle(AsyncValue<List<Netbar>> netbarsAsync) {
+  Widget _buildHeaderTitle(AsyncValue<NetbarListResponse> netbarsAsync) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -169,9 +163,12 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
         ),
         const SizedBox(height: 8),
         netbarsAsync.maybeWhen(
-          data: (netbars) {
-            final online = netbars.where((n) => n.status == 'online').length;
-            final offline = netbars.length - online;
+          data: (response) {
+            final summary = response.summary;
+            final online = summary?.onlineCount ??
+                response.merchants.where((n) => n.status == 'online').length;
+            final offline =
+                summary?.offlineCount ?? (response.merchants.length - online);
             return Wrap(
               spacing: 12,
               runSpacing: 8,

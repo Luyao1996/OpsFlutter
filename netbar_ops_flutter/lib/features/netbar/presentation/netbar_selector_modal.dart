@@ -7,15 +7,10 @@ import '../../../core/theme/app_theme.dart';
 import '../../../shared/utils/adaptive_show.dart';
 import '../../../shared/utils/top_notice.dart';
 import '../data/netbar_api.dart';
+import '../data/netbar_list_provider.dart';
 import '../data/netbar_pinyin_matcher.dart';
 import 'group_picker.dart';
 import 'edit_netbar_modal.dart';
-
-/// 网吧列表 Provider（返回完整响应，包含 merchants + groups）
-final netbarListProvider = FutureProvider.autoDispose<NetbarListResponse>((ref) async {
-  final api = NetbarApi();
-  return api.getListFull();
-});
 
 /// 网吧选择弹窗 - 对应 Vue 的 NetbarSelectorModal.vue
 class NetbarSelectorModal extends ConsumerStatefulWidget {
