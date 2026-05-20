@@ -171,6 +171,28 @@ class _TerminalCardState extends State<TerminalCard> {
             ),
           ),
         ),
+        // 左上角：主/副服务器类型角标（终端不显示）
+        if (t.isMainServer || t.isBackupServer)
+          Positioned(
+            top: 4,
+            left: 4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: (t.isMainServer ? AppColors.iosBlue : AppColors.orange)
+                    .withValues(alpha: 0.85),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                t.deviceTypeLabel,
+                style: const TextStyle(
+                  fontSize: 10,
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
         // 底部覆盖层: CPU/MEM/GPU 统计
         Positioned(
           left: 0,

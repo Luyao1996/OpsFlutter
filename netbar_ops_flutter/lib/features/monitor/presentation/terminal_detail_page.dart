@@ -31,6 +31,7 @@ import '../../desktop/data/desktop_api.dart';
 import '../../logs/data/operation_log_api.dart';
 import 'monitor_page.dart' show terminalsProvider;
 import '../../../../shared/providers/app_providers.dart';
+import '../../../../shared/providers/permission_provider.dart';
 import '../../../../shared/providers/terminal_dock_provider.dart';
 import '../../../../shared/services/terminal_window_bridge.dart';
 import '../../../../shared/services/window_control.dart';
@@ -1243,7 +1244,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
             _buildSectionTitle('电源管理'),
             const SizedBox(height: 12),
             _buildPowerGrid(terminal, isNarrow: isNarrow),
-            if (terminal.mode == 1) ...[
+            if (terminal.mode == 1 || terminal.mode == 2) ...[
               const SizedBox(height: 24),
               _buildSectionTitle('服务管理'),
               const SizedBox(height: 12),
@@ -1458,19 +1459,25 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   /// 4 个按钮：重启反代/协助/路由 + 断开远程服务。
   /// 与电源管理同款卡片样式；点击后弹简单确认对话框（"确认X吗？"）再发 WS。
   Widget _buildServiceGrid(Terminal terminal, {required bool isNarrow}) {
+    final perm = ref.watch(permissionProvider);
+    // 与顶部菜单/Tab 菜单一致：受 '服务端Windows密码' 细分权限控制 + 总部用户不显示。
+    // 业主分组(group_id=21)用户没有此权限，本项不渲染，避免绕过限制直接改服务器密码。
+    final canWinPwd = !perm.isHQUser && perm.hasDetailPermission('服务端Windows密码');
+
     final items = <_ServiceItem>[
       const _ServiceItem(label: '重启反代服务', name: '反代服务', type: 'frpc'),
       const _ServiceItem(label: '重启协助服务', name: '协助服务', type: 'client'),
       const _ServiceItem(label: '重启路由服务', name: '路由服务', type: 'router'),
       const _ServiceItem(label: '重启游戏库服务', name: '游戏库服务', type: 'gamelibray'),
       // 特殊 type 标记：路由到 _openWindowsPasswordDialog（HTTP set/reset/clear）
-      // 区块本身仅 mode==1 显示，所以此项天然只在服务端可见
-      const _ServiceItem(
-        label: 'Windows密码',
-        name: 'Windows密码',
-        type: '__windows_pwd__',
-        icon: LucideIcons.keyRound,
-      ),
+      // 区块本身仅 mode∈{1,2} 显示，叠加权限过滤后业主用户不可见
+      if (canWinPwd)
+        const _ServiceItem(
+          label: 'Windows密码',
+          name: 'Windows密码',
+          type: '__windows_pwd__',
+          icon: LucideIcons.keyRound,
+        ),
       // 复制 2FA：服务管理整体仅 mode==1 显示，与你需求一致。
       // 不弹 dialog，调 authApi.getTwoFactorCode 拿一次性 code → 写剪贴板 + toast
       const _ServiceItem(

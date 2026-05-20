@@ -508,7 +508,13 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     }
 
     // 分离关键设备和普通终端
-    final devices = terminals.where((t) => t.isKeyDevice).toList();
+    final keyDevices = terminals.where((t) => t.isKeyDevice).toList();
+    // 关键设备排序：主服务器 → 副服务器 → 其它关键设备，桶内保持原顺序
+    final devices = [
+      ...keyDevices.where((t) => t.isMainServer),
+      ...keyDevices.where((t) => t.isBackupServer),
+      ...keyDevices.where((t) => !t.isMainServer && !t.isBackupServer),
+    ];
     final clients = terminals.where((t) => !t.isKeyDevice).toList();
 
     // 过滤

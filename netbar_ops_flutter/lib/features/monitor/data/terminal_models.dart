@@ -118,15 +118,13 @@ class Terminal {
       status = json['status'] ?? 0;
     }
 
-    // 设备类型：中央 HTTP 严格按 mode 字段判定（0=client, 1=server）。
-    // 历史曾用 `mode == 1 || seatId == 'ServerChannel'` 兜底判 server，
-    // 现统一为 `mode == 1`，与详情页"服务管理"按钮判断对齐，避免 seatId
-    // 漂移导致 isKeyDevice / 业务分支误判。
-    // 旧 /seatlist 格式优先用 json['type']（已无活跃调用方，仅保留兼容）。
+    // 设备类型：中央 HTTP 按 mode 字段判定。
+    // mode: 0=终端(client) / 1=主服务器 / 2=副服务器 —— 1、2 均为服务器(关键设备)。
+    // 旧 /seatlist 格式无 mode，回退用 json['type']（已无活跃调用方，仅保留兼容）。
     final String type;
     if (isCentralFormat) {
       final mode = json['mode'];
-      type = (mode == 1) ? 'server' : 'client';
+      type = (mode == 1 || mode == 2) ? 'server' : 'client';
     } else {
       type = (json['type']?.toString().isNotEmpty == true)
           ? json['type'].toString()
@@ -205,8 +203,26 @@ class Terminal {
     }
   }
 
-  /// 是否为关键设备
-  bool get isKeyDevice => ['server', 'console', 'cashier'].contains(type);
+  /// 是否为关键设备（服务器）
+  /// 中央 HTTP：mode 0=终端 / 1=主服务器 / 2=副服务器，mode ∈ {1,2} 即关键设备。
+  /// 旧 /seatlist 格式无 mode（null），回退按 type 判定以保持兼容。
+  bool get isKeyDevice => mode != null
+      ? (mode == 1 || mode == 2)
+      : ['server', 'console', 'cashier'].contains(type);
+
+  /// 是否为主服务器
+  bool get isMainServer => mode == 1;
+
+  /// 是否为副服务器
+  bool get isBackupServer => mode == 2;
+
+  /// 设备类型显示名："主服务器" / "副服务器" / "终端"
+  String get deviceTypeLabel {
+    if (mode == 1) return '主服务器';
+    if (mode == 2) return '副服务器';
+    if (mode == 0) return '终端';
+    return ['server', 'console', 'cashier'].contains(type) ? '服务器' : '终端';
+  }
 
   /// 桌面预览/缩略图 URL（有真实截图则优先使用）
   String desktopPreviewUrl({int width = 400, int height = 225}) {
