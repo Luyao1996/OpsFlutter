@@ -190,7 +190,12 @@ class _NetbarOpsAppState extends ConsumerState<NetbarOpsApp> {
     }
     // 用户主动通过"安装此版本"固定到了某个版本 → 启动不再自动弹更新对话框。
     // 手动「检查更新」按钮仍可正常使用。
-    if (await ref.read(updateServiceProvider).isPinnedToCurrentBuild()) {
+    final pinned =
+        await ref.read(updateServiceProvider).isPinnedToCurrentBuild();
+    // 把真实锁定状态同步给 UI（isPinnedToCurrentBuild 内部会在本地 build 已变时
+    // 清掉 pin 并返回 false，这里据此纠正 provider 初始值）。
+    if (mounted) ref.read(isPinnedProvider.notifier).state = pinned;
+    if (pinned) {
       WebRtcCrashLogger.I.log(
           'INFO', 'update', 'startupCheck', '-', 'pinned to current build, skip');
       return;

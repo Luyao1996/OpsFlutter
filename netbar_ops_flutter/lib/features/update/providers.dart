@@ -45,3 +45,17 @@ final isPreviewProvider = StateProvider<bool>((ref) {
     return false;
   }
 });
+
+/// 本机当前是否被"安装此版本"固定到某个 build（启动不自动弹更新）。
+///
+/// - 初始值：SP 里 [spKeyPinnedBuild] > 0 即视为锁定（同步读，无网也能展示）。
+/// - 精确校正：`main()` 启动检查会用 [UpdateService.isPinnedToCurrentBuild]
+///   校验 local.build 是否仍等于 pinned，并把结果同步回此 provider，
+///   纠正"外部装了别的版本但 SP 残留 pin"的误判。
+final isPinnedProvider = StateProvider<bool>((ref) {
+  try {
+    return (SharedPreferencesHolder.instance.getInt(spKeyPinnedBuild) ?? 0) > 0;
+  } catch (_) {
+    return false;
+  }
+});

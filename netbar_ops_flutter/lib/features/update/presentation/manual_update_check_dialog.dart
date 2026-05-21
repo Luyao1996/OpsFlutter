@@ -166,6 +166,7 @@ class _ManualUpdateCheckDialogState
   @override
   Widget build(BuildContext context) {
     final isPreview = ref.watch(isPreviewProvider);
+    final isPinned = ref.watch(isPinnedProvider);
 
     return ResponsiveDialogScaffold(
       title: '检查更新',
@@ -183,7 +184,7 @@ class _ManualUpdateCheckDialogState
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildCurrentVersionRow(isPreview),
+          _buildCurrentVersionRow(isPreview, isPinned),
           const SizedBox(height: 16),
           const Divider(height: 1),
           const SizedBox(height: 16),
@@ -198,7 +199,7 @@ class _ManualUpdateCheckDialogState
     );
   }
 
-  Widget _buildCurrentVersionRow(bool isPreview) {
+  Widget _buildCurrentVersionRow(bool isPreview, bool isPinned) {
     final result = _result;
     final localVersion = result?.localVersion ?? '';
     final localBuild = result?.localBuildNumber ?? 0;
@@ -225,6 +226,25 @@ class _ManualUpdateCheckDialogState
               style: TextStyle(
                 fontSize: 11,
                 color: Colors.orange,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        if (isPinned)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: const Color(0xFF6B7280).withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color: const Color(0xFF6B7280).withValues(alpha: 0.6),
+              ),
+            ),
+            child: const Text(
+              '锁定',
+              style: TextStyle(
+                fontSize: 11,
+                color: Color(0xFF4B5563),
                 fontWeight: FontWeight.bold,
               ),
             ),
