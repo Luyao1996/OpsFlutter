@@ -496,8 +496,8 @@ packages:
     dependency: transitive
     description:
       path: "examples/FlutterUi/plugins/flutter_webrtc"
-      ref: f90d16c167b6ff5e9c6bf435824947dea1779e2f
-      resolved-ref: f90d16c167b6ff5e9c6bf435824947dea1779e2f
+      ref: "35282a857ede215461a4bbf20f84eff4250e9143"
+      resolved-ref: "35282a857ede215461a4bbf20f84eff4250e9143"
       url: "https://github.com/Luyao1996/WebRtcGo.git"
     source: git
     version: "1.3.1"
@@ -1487,7 +1487,7 @@ packages:
     description:
       path: "examples/FlutterUi"
       ref: "feature/optimization"
-      resolved-ref: f90d16c167b6ff5e9c6bf435824947dea1779e2f
+      resolved-ref: "35282a857ede215461a4bbf20f84eff4250e9143"
       url: "https://github.com/Luyao1996/WebRtcGo.git"
     source: git
     version: "1.0.0+1"

@@ -8,14 +8,18 @@ import 'package:flutter/widgets.dart';
 
 import 'webrtc_crash_logger.dart';
 
-/// 透明包装 Flutter 默认 BinaryMessenger，仅对 WebRTC 相关 channel 做同步日志记录。
+/// 透明包装 Flutter 默认 BinaryMessenger。
+///
+/// 当前观测两类 channel（其余完全透传）：
+/// 1. WebRTC 相关 channel（名字含 "webrtc" 或 "flutterwebrtc"）——崩溃 / 信令排查；
+/// 2. `flutter/textinput` 与 `flutter/textinputclient`——中文 IME 卡死定位用，
+///    只打 setClient/clearClient/show/hide/setEditableSizeAndTransform/
+///    performAction/requestExistingInputState 这几个关键方法，**不打**高频的
+///    setEditingState / updateEditingState，避免日志风暴。
 ///
 /// 记录时机：
 /// 1. Dart → native 发送请求前（同步写日志再转发）
 /// 2. native → Dart 回调到达时（setMessageHandler 收到消息时同步打日志）
-///
-/// 只对 channel 名中包含 "webrtc"（大小写不敏感）的消息做解码和打印，
-/// 其他 channel 完全透传，避免影响其余通道性能与行为。
 class LoggingBinaryMessenger extends BinaryMessenger {
   LoggingBinaryMessenger(this._inner);
 
@@ -38,13 +42,35 @@ class LoggingBinaryMessenger extends BinaryMessenger {
     'captureFrame',
   };
 
+  /// flutter/textinput 关键方法白名单——只这几个能反映 IME attach/detach 状态。
+  /// 排除 setEditingState/updateEditingState 等心跳类高频方法。
+  static const Set<String> _textInputKeyMethods = {
+    'TextInput.setClient',
+    'TextInput.clearClient',
+    'TextInput.show',
+    'TextInput.hide',
+    'TextInput.setEditableSizeAndTransform',
+    'TextInputClient.performAction',
+    'TextInputClient.requestExistingInputState',
+  };
+
   /// 同 (channel|op|method) 组合最近一次记录时间戳(ms)，节流防错误/信令风暴。
   final Map<String, int> _lastLogMs = {};
 
-  bool _isWebRtcChannel(String channel) {
+  _ObserveType _classifyChannel(String channel) {
     final lc = channel.toLowerCase();
-    return lc.contains('webrtc') || lc.contains('flutterwebrtc');
+    if (lc.contains('webrtc') || lc.contains('flutterwebrtc')) {
+      return _ObserveType.webrtc;
+    }
+    if (channel == 'flutter/textinput' ||
+        channel == 'flutter/textinputclient') {
+      return _ObserveType.textinput;
+    }
+    return _ObserveType.none;
   }
+
+  String _moduleFor(_ObserveType type) =>
+      type == _ObserveType.textinput ? 'textinput' : 'mc';
 
   /// 取 ByteData 的头 [headLen] 与尾 [tailLen] 字节做 hex dump，便于崩溃时回溯协议形态。
   /// 长度不足时降级：bytes.length <= headLen 全部头部输出且不带尾部；
@@ -104,24 +130,39 @@ class LoggingBinaryMessenger extends BinaryMessenger {
     return true;
   }
 
-  /// 是否应记录该消息：噪音 method 丢弃，其余经 50ms 节流。
-  bool _shouldLog(String channel, String op, ByteData? message) {
+  /// 是否应记录该消息：按 channel 类型走不同筛选规则，再经 50ms 节流。
+  bool _shouldLog(
+    _ObserveType type,
+    String channel,
+    String op,
+    ByteData? message,
+  ) {
+    if (type == _ObserveType.none) return false;
     final method = _tryMethod(message);
-    if (method != null && _noisyMethods.contains(method)) return false;
+    if (type == _ObserveType.webrtc) {
+      if (method != null && _noisyMethods.contains(method)) return false;
+    } else if (type == _ObserveType.textinput) {
+      // textinput 必须命中关键方法白名单才打，否则会被 setEditingState 心跳淹没
+      if (method == null || !_textInputKeyMethods.contains(method)) {
+        return false;
+      }
+    }
     return _allowLog('$channel|$op|${method ?? '-'}');
   }
 
   @override
   Future<ByteData?>? send(String channel, ByteData? message) {
-    final isRtc = _isWebRtcChannel(channel);
+    final type = _classifyChannel(channel);
     var logged = false;
-    if (isRtc && _shouldLog(channel, 'send', message)) {
+    if (type != _ObserveType.none &&
+        _shouldLog(type, channel, 'send', message)) {
       logged = true;
+      final mod = _moduleFor(type);
       // 异步投递：不在 send 同步路径里写盘，UI 线程立即放行消息。
       scheduleMicrotask(() {
         WebRtcCrashLogger.I.log(
           'INFO',
-          'mc',
+          mod,
           'send',
           '-',
           'ch=$channel ${_describeMessage(channel, message)}',
@@ -129,15 +170,16 @@ class LoggingBinaryMessenger extends BinaryMessenger {
       });
     }
     final future = _inner.send(channel, message);
-    if (!isRtc || future == null) return future;
+    if (type == _ObserveType.none || future == null) return future;
     return future.then((reply) {
       // send_reply 仅在对应 send 被记录时才记，保持请求 / 响应成对，
       // 噪音方法的 reply 同样被消除。
       if (logged) {
+        final mod = _moduleFor(type);
         scheduleMicrotask(() {
           WebRtcCrashLogger.I.log(
             'INFO',
-            'mc',
+            mod,
             'send_reply',
             '-',
             'ch=$channel ${_describeResult(reply)}',
@@ -147,10 +189,11 @@ class LoggingBinaryMessenger extends BinaryMessenger {
       return reply;
     }, onError: (Object e, StackTrace s) {
       // 错误总是记录（ERROR 级别在 logger 内会立即 flush 落盘）。
+      final mod = _moduleFor(type);
       scheduleMicrotask(() {
         WebRtcCrashLogger.I.log(
           'ERROR',
-          'mc',
+          mod,
           'send_error',
           '-',
           'ch=$channel error=$e',
@@ -162,17 +205,19 @@ class LoggingBinaryMessenger extends BinaryMessenger {
 
   @override
   void setMessageHandler(String channel, MessageHandler? handler) {
-    if (!_isWebRtcChannel(channel) || handler == null) {
+    final type = _classifyChannel(channel);
+    if (type == _ObserveType.none || handler == null) {
       _inner.setMessageHandler(channel, handler);
       return;
     }
+    final mod = _moduleFor(type);
     _inner.setMessageHandler(channel, (ByteData? message) async {
-      final logged = _shouldLog(channel, 'recv', message);
+      final logged = _shouldLog(type, channel, 'recv', message);
       if (logged) {
         scheduleMicrotask(() {
           WebRtcCrashLogger.I.log(
             'INFO',
-            'mc',
+            mod,
             'recv',
             '-',
             'ch=$channel ${_describeMessage(channel, message)}',
@@ -185,7 +230,7 @@ class LoggingBinaryMessenger extends BinaryMessenger {
           scheduleMicrotask(() {
             WebRtcCrashLogger.I.log(
               'INFO',
-              'mc',
+              mod,
               'recv_reply',
               '-',
               'ch=$channel ${_describeResult(reply)}',
@@ -197,7 +242,7 @@ class LoggingBinaryMessenger extends BinaryMessenger {
         scheduleMicrotask(() {
           WebRtcCrashLogger.I.log(
             'ERROR',
-            'mc',
+            mod,
             'recv_error',
             '-',
             'ch=$channel error=$e stack=${s.toString().split('\n').take(8).join(' | ')}',
@@ -218,6 +263,8 @@ class LoggingBinaryMessenger extends BinaryMessenger {
     return _inner.handlePlatformMessage(channel, data, callback);
   }
 }
+
+enum _ObserveType { none, webrtc, textinput }
 
 /// 自定义 WidgetsFlutterBinding 子类，override createBinaryMessenger
 /// 返回包装过的 messenger。main() 开始处调用

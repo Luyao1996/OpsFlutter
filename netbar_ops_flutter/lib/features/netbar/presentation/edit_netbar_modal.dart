@@ -35,6 +35,11 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
   late TextEditingController _nameController;
   late TextEditingController _terminalCountController;
 
+  // 显式 FocusNode：用于干预 IME 在嵌套 Modal 下 reattach 失败的偶发问题
+  final FocusNode _nameFocus = FocusNode(debugLabel: 'edit_netbar.name');
+  final FocusNode _terminalFocus =
+      FocusNode(debugLabel: 'edit_netbar.terminal');
+
   // 分组相关
   List<group_api.Group> _groupList = [];
   List<int> _selectedGroupIds = [];
@@ -76,6 +81,14 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
 
     HardwareKeyboard.instance.addHandler(_handleKey);
     _loadData();
+
+    // 修复：嵌套 Modal 下中文 IME 偶发卡死（英文可输入但候选窗不弹）。
+    // PostFrame unfocus 强制 clearClient，用户下一次点击 TextField 时框架会
+    // 发起干净的 setClient → IME 正确关联到新 client。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      FocusManager.instance.primaryFocus?.unfocus();
+    });
   }
 
   @override
@@ -83,6 +96,8 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
     HardwareKeyboard.instance.removeHandler(_handleKey);
     _nameController.dispose();
     _terminalCountController.dispose();
+    _nameFocus.dispose();
+    _terminalFocus.dispose();
     super.dispose();
   }
 
@@ -260,6 +275,7 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
             label: '网吧名称',
             child: TextField(
               controller: _nameController,
+              focusNode: _nameFocus,
               decoration: _inputDecoration('请输入网吧名称'),
             ),
           ),
@@ -270,7 +286,10 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
             label: '终端数',
             child: TextField(
               controller: _terminalCountController,
-              keyboardType: TextInputType.number,
+              focusNode: _terminalFocus,
+              // 故意不设 keyboardType: 避免与相邻名称框的 InputScope 切换
+              // 在 Flutter Windows engine 上偶发污染 IME 状态（候选窗不弹）。
+              // digitsOnly formatter 已保证只能输入数字。
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               decoration: _inputDecoration('请输入终端数'),
             ),
