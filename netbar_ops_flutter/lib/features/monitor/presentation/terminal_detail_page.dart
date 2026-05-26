@@ -13,6 +13,7 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:webrtc_remote/webrtc_remote.dart' as webrtc;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:dio/dio.dart' show CancelToken;
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:flutter_html/flutter_html.dart' as fhtml;
@@ -25,6 +26,8 @@ import '../../../../core/logging/webrtc_crash_logger.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/config/app_config.dart';
+import '../../../../core/network/task_ws_provider.dart';
+import '../../../../core/network/ws_binary.dart';
 import '../../../../core/storage/token_store.dart';
 import '../data/terminal_api.dart';
 import '../../desktop/data/desktop_api.dart';
@@ -154,7 +157,6 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   Timer? _heartbeatTimer;
 
   // 实时截图相关
-  final ScreenshotApi _screenshotApi = ScreenshotApi();
   Uint8List? _liveScreenshot;
   bool _screenshotLoading = false;
   bool _screenshotRunning = false; // 是否正在自动获取截图
@@ -329,22 +331,19 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     setState(() => _screenshotLoading = true);
 
     try {
-      final result = await _screenshotApi.requestScreenshot(
-        domain: domain,
+      // 改用 wsbin thumbnail（300px 缩略图）通道，替代原 HTTP ScreenshotApi
+      final ws = ref.read(taskWsProvider);
+      final merchantId = ref.read(currentNetbarProvider).id ?? 0;
+      final bytes = await requestThumbnail(
+        ws,
         seatId: terminal.seatId,
+        merchantId: merchantId,
       );
 
       // 检查是否已被取消
       if (!mounted || _screenshotCancelled) {
         if (mounted) setState(() => _screenshotLoading = false);
         return;
-      }
-
-      Uint8List? bytes;
-      if (result.type == ScreenshotResultType.bytes && result.bytes != null) {
-        bytes = result.bytes;
-      } else if (result.type == ScreenshotResultType.base64 && result.base64Data != null) {
-        bytes = base64Decode(result.base64Data!);
       }
 
       if (bytes != null) {
@@ -969,13 +968,18 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   }
 
   /// 全屏查看实时画面
+  ///
+  /// 先展示当前缩略图（[_liveScreenshot]），同时发 HTTP 请求拉全尺寸大图；
+  /// 用户关闭预览时取消未完成的 HTTP 请求（见 [_FullscreenPreviewDialog]）。
   void _showFullscreenPreview(Terminal terminal) {
+    final domain = ref.read(currentNetbarProvider).subdomainFull ?? '';
     showDialog(
       context: context,
       barrierColor: Colors.black87,
       builder: (context) => _FullscreenPreviewDialog(
-        screenshotBytes: _liveScreenshot,
-        fallbackUrl: terminal.desktopPreviewUrl(width: 1920, height: 1080),
+        thumbnailBytes: _liveScreenshot,
+        domain: domain,
+        seatId: terminal.seatId,
         terminalName: terminal.name,
       ),
     );
@@ -2516,16 +2520,111 @@ class _ConfirmActionDialogState extends State<_ConfirmActionDialog> {
 }
 
 /// 全屏预览对话框
-class _FullscreenPreviewDialog extends StatelessWidget {
-  final Uint8List? screenshotBytes;
-  final String fallbackUrl;
+///
+/// 先展示传入的缩略图 [thumbnailBytes]（即时、低清），同时通过 HTTP
+/// [ScreenshotApi.requestScreenshot] 拉取全尺寸大图；用户关闭对话框时，
+/// [dispose] 取消未完成的 HTTP 请求（[CancelToken]）。
+class _FullscreenPreviewDialog extends StatefulWidget {
+  final Uint8List? thumbnailBytes;
+  final String domain;
+  final String seatId;
   final String terminalName;
 
   const _FullscreenPreviewDialog({
-    required this.screenshotBytes,
-    required this.fallbackUrl,
+    required this.thumbnailBytes,
+    required this.domain,
+    required this.seatId,
     required this.terminalName,
   });
+
+  @override
+  State<_FullscreenPreviewDialog> createState() =>
+      _FullscreenPreviewDialogState();
+}
+
+class _FullscreenPreviewDialogState extends State<_FullscreenPreviewDialog> {
+  final ScreenshotApi _screenshotApi = ScreenshotApi();
+  CancelToken? _cancelToken;
+  Uint8List? _fullImage;
+  String? _fullImageUrl;
+  bool _loadingFull = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFullImage();
+  }
+
+  /// 拉取全尺寸大图（HTTP）。失败/取消时静默保留缩略图显示。
+  Future<void> _loadFullImage() async {
+    if (widget.domain.isEmpty || widget.seatId.isEmpty) return;
+    final token = CancelToken();
+    _cancelToken = token;
+    setState(() => _loadingFull = true);
+    try {
+      final result = await _screenshotApi.requestScreenshot(
+        domain: widget.domain,
+        seatId: widget.seatId,
+        cancelToken: token,
+      );
+      if (!mounted) return;
+      Uint8List? bytes;
+      if (result.type == ScreenshotResultType.bytes && result.bytes != null) {
+        bytes = result.bytes;
+      } else if (result.type == ScreenshotResultType.base64 &&
+          result.base64Data != null) {
+        bytes = base64Decode(
+            result.base64Data!.replaceAll(RegExp(r'^data:[^;]+;base64,'), ''));
+      }
+      setState(() {
+        _loadingFull = false;
+        if (bytes != null) {
+          _fullImage = bytes;
+        } else if (result.type == ScreenshotResultType.url &&
+            result.url != null) {
+          _fullImageUrl = result.url;
+        }
+      });
+    } catch (e) {
+      // 用户关闭对话框触发的取消属正常路径，不报错
+      if (CancelToken.isCancel(e)) return;
+      if (mounted) setState(() => _loadingFull = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    // 关闭预览时取消未完成的 HTTP 大图请求
+    _cancelToken?.cancel('fullscreen preview closed');
+    super.dispose();
+  }
+
+  /// 显示优先级：全尺寸大图(bytes) > 全尺寸大图(url) > 缩略图(放大) > 占位
+  Widget _buildImage() {
+    if (_fullImage != null) {
+      return Image.memory(_fullImage!,
+          fit: BoxFit.contain, gaplessPlayback: true);
+    }
+    if (_fullImageUrl != null) {
+      return Image.network(
+        _fullImageUrl!,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => _placeholder(),
+      );
+    }
+    if (widget.thumbnailBytes != null) {
+      return Image.memory(widget.thumbnailBytes!,
+          fit: BoxFit.contain, gaplessPlayback: true);
+    }
+    return _placeholder();
+  }
+
+  Widget _placeholder() => Container(
+        color: Colors.black54,
+        child: const Center(
+          child: Icon(LucideIcons.monitor, color: Colors.white24, size: 64),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -2539,21 +2638,7 @@ class _FullscreenPreviewDialog extends StatelessWidget {
             child: InteractiveViewer(
               minScale: 0.5,
               maxScale: 4.0,
-              child: screenshotBytes != null
-                  ? Image.memory(
-                      screenshotBytes!,
-                      fit: BoxFit.contain,
-                    )
-                  : Image.network(
-                      fallbackUrl,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => Container(
-                        color: Colors.black54,
-                        child: const Center(
-                          child: Icon(LucideIcons.monitor, color: Colors.white24, size: 64),
-                        ),
-                      ),
-                    ),
+              child: _buildImage(),
             ),
           ),
           // 顶部栏
@@ -2573,13 +2658,25 @@ class _FullscreenPreviewDialog extends StatelessWidget {
               child: Row(
                 children: [
                   Text(
-                    '实时画面 - $terminalName',
+                    '实时画面 - ${widget.terminalName}',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
+                  if (_loadingFull) ...[
+                    const SizedBox(width: 12),
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(Colors.white70),
+                      ),
+                    ),
+                  ],
                   const Spacer(),
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),

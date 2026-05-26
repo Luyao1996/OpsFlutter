@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
@@ -265,6 +266,10 @@ class TaskWsProxy implements TaskWs {
 /// **永远 false**，导致 hwinfo / fileList / processTree 等业务字段全部丢失。
 /// 在 IPC 边界做一次深度归一，所有消费方零侵入。
 dynamic _deepCastFromIpc(dynamic v) {
+  // 图片等二进制字节（wsbin thumbnail 经 IPC 回传）：Uint8List is List<int> 为 true，
+  // 必须在 List 分支之前原样放行，否则会被下方 v.map(...).toList() 降级成普通
+  // List<int>，导致 Image.memory 无法接收、图片字节被破坏。
+  if (v is Uint8List) return v;
   if (v is Map) {
     final result = <String, dynamic>{};
     v.forEach((k, val) => result[k.toString()] = _deepCastFromIpc(val));

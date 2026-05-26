@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -7,6 +8,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../config/app_config.dart';
 import '../storage/token_store.dart';
 import 'task_ws.dart';
+import 'ws_binary.dart';
 
 /// 主窗口持有的真实 Peer WebSocket 单例。
 ///
@@ -309,6 +311,11 @@ class TaskWsClient implements TaskWs {
 
   void _onMessage(dynamic raw) {
     if (raw is! String) {
+      // 二进制帧（wsbin）：thumbnail 等截图响应走此路径
+      if (raw is List<int>) {
+        _onBinaryFrame(raw is Uint8List ? raw : Uint8List.fromList(raw));
+        return;
+      }
       _log('WARN', 'recv-raw', '-',
           'non_string_msg type=${raw.runtimeType}');
       return;
@@ -407,6 +414,43 @@ class TaskWsClient implements TaskWs {
       });
       final c = entry.completer!;
       if (!c.isCompleted) c.complete(payload);
+      _pending.remove(id);
+    }
+  }
+
+  /// 处理 wsbin 二进制帧（thumbnail 等截图响应）。
+  ///
+  /// 按 [WsBinaryFrame.id] 关联 [_pending]，命中后以原始字节
+  /// 完成对应 Completer（流式则推到流上并结束）。
+  /// ⚠️ 日志只打 event/id/size，绝不把图片字节喂给 [_logFrame]（会序列化整张图刷屏）。
+  void _onBinaryFrame(Uint8List bytes) {
+    final frame = WsBinary.parse(bytes);
+    if (frame == null) {
+      _log('WARN', 'recv-bin', '-', 'parse_failed size=${bytes.length}');
+      return;
+    }
+    final id = frame.id;
+    final entry = _pending[id];
+    if (entry == null) {
+      _log('WARN', 'recv-bin-orphan', id,
+          'event=${frame.event} size=${frame.data.length}');
+      return;
+    }
+    final elapsed = DateTime.now().millisecondsSinceEpoch - entry.startMs;
+    _log('INFO', 'recv-bin', id,
+        'event=${frame.event} fun=${entry.fun} seat=${entry.seat} '
+        'merchant_id=${entry.merchantId} elapsed_ms=$elapsed '
+        'size=${frame.data.length}');
+    if (entry.isStream) {
+      final ctrl = entry.streamCtrl!;
+      if (!ctrl.isClosed) {
+        ctrl.add(frame.data);
+        ctrl.close();
+      }
+      _pending.remove(id);
+    } else {
+      final c = entry.completer!;
+      if (!c.isCompleted) c.complete(frame.data);
       _pending.remove(id);
     }
   }

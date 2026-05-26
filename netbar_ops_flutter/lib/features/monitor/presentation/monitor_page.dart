@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:typed_data';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +7,8 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../core/network/task_ws_provider.dart';
+import '../../../core/network/ws_binary.dart';
 import '../../../core/storage/token_store.dart';
 import '../../../core/responsive/responsive.dart';
 import '../../../core/theme/app_theme.dart';
@@ -20,7 +21,6 @@ import '../../../shared/utils/top_notice.dart';
 import '../../../shared/utils/open_in_new_tab.dart';
 import '../data/terminal_api.dart';
 import '../data/router_api.dart';
-import '../../desktop/data/desktop_api.dart';
 import '../../logs/data/operation_log_api.dart';
 import 'widgets/terminal_card.dart';
 import 'widgets/router_card.dart';
@@ -62,7 +62,6 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
 
   // 截图缓存：seatId -> 截图数据
   final Map<String, Uint8List> _screenshotCache = {};
-  final ScreenshotApi _screenshotApi = ScreenshotApi();
   bool _screenshotsLoading = false;
 
   // 截图重试相关
@@ -241,22 +240,19 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     if (_screenshotCache.containsKey(terminal.seatId)) return;
 
     try {
-      final result = await _screenshotApi.requestScreenshot(
-        domain: domain,
+      // 改用 wsbin thumbnail（300px 缩略图）通道，替代原 HTTP ScreenshotApi
+      final ws = ref.read(taskWsProvider);
+      final merchantId = ref.read(currentNetbarProvider).id ?? 0;
+      final bytes = await requestThumbnail(
+        ws,
         seatId: terminal.seatId,
+        merchantId: merchantId,
       );
       if (!mounted) return;
 
-      Uint8List? bytes;
-      if (result.type == ScreenshotResultType.bytes && result.bytes != null) {
-        bytes = result.bytes;
-      } else if (result.type == ScreenshotResultType.base64 && result.base64Data != null) {
-        bytes = base64Decode(result.base64Data!);
-      }
-
       if (bytes != null) {
         setState(() {
-          _screenshotCache[terminal.seatId] = bytes!;
+          _screenshotCache[terminal.seatId] = bytes;
           _screenshotRetryCount.remove(terminal.seatId); // 成功后清除重试计数
         });
       } else {

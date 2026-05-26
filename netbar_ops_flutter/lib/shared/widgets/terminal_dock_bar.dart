@@ -1,13 +1,13 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
+import '../../core/network/task_ws_provider.dart';
+import '../../core/network/ws_binary.dart';
 import '../../core/theme/app_theme.dart';
-import '../../features/desktop/data/desktop_api.dart';
 import '../../features/monitor/presentation/widgets/terminal_card.dart';
 import '../providers/app_providers.dart';
 import '../providers/terminal_dock_provider.dart';
@@ -219,16 +219,13 @@ class _TerminalDockIconState extends ConsumerState<TerminalDockIcon> {
     if (seatId.isEmpty) return;
 
     try {
-      final result = await ScreenshotApi().requestScreenshot(
-        domain: domain,
+      // 改用 wsbin thumbnail（300px 缩略图）通道，替代原 HTTP ScreenshotApi
+      final ws = ref.read(taskWsProvider);
+      final bytes = await requestThumbnail(
+        ws,
         seatId: seatId,
+        merchantId: netbar.id ?? 0,
       );
-      Uint8List? bytes;
-      if (result.type == ScreenshotResultType.bytes && result.bytes != null) {
-        bytes = result.bytes;
-      } else if (result.type == ScreenshotResultType.base64 && result.base64Data != null) {
-        bytes = Uint8List.fromList(base64Decode(result.base64Data!));
-      }
       if (bytes != null && mounted) {
         ref.read(terminalDockProvider.notifier).updateScreenshot(widget.item.uniqueKey, bytes);
       }

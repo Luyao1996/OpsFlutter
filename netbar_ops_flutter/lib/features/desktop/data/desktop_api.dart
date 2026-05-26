@@ -259,6 +259,7 @@ class ScreenshotApi {
   Future<ScreenshotResult> requestScreenshot({
     required String domain,
     required String seatId,
+    CancelToken? cancelToken,
   }) async {
     if (domain.isEmpty) {
       return ScreenshotResult.error('缺少网吧域名');
@@ -291,6 +292,7 @@ class ScreenshotApi {
       final response = await dio.post(
         url,
         data: {'fun': 'Screenshot', 'data': {}},
+        cancelToken: cancelToken,
         options: Options(
           headers: {
             'Content-Type': 'application/json',
