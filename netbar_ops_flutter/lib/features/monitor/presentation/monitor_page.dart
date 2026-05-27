@@ -213,12 +213,9 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     );
   }
 
-  /// 批量获取所有在线终端的截图
-  Future<void> _loadScreenshots(List<Terminal> terminals) async {
-    final netbar = ref.read(currentNetbarProvider);
-    // thumbnail 走 WS，不依赖网吧域名；domain 仅作占位透传给重试逻辑
-    final domain = netbar.subdomainFull ?? '';
-
+  /// 批量获取所有在线终端的截图。
+  /// [netbarId] 为发起时的网吧 ID，贯穿整条异步链做防串台校验。
+  Future<void> _loadScreenshots(List<Terminal> terminals, int? netbarId) async {
     // 只获取在线终端的截图
     final onlineTerminals = terminals.where((t) => t.status > 0).toList();
     if (onlineTerminals.isEmpty) return;
@@ -227,12 +224,13 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
 
     // 限流：滑动窗口并发池，同时在飞的截图请求最多 _maxScreenshotConcurrency 个，
     // 完成一个立即补下一个，避免一次性并发全部终端压垮服务端。
+    // 防串台：worker 循环绑定发起时的 netbarId，一旦切换网吧立即停止旧网吧的请求。
     var nextIndex = 0;
     Future<void> worker() async {
-      while (mounted) {
+      while (mounted && ref.read(currentNetbarIdProvider) == netbarId) {
         final i = nextIndex++;
         if (i >= onlineTerminals.length) return;
-        await _loadSingleScreenshot(onlineTerminals[i], domain);
+        await _loadSingleScreenshot(onlineTerminals[i], netbarId);
       }
     }
 
@@ -247,23 +245,25 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     }
   }
 
-  /// 获取单个终端的截图，失败时静默重试
-  Future<void> _loadSingleScreenshot(Terminal terminal, String domain) async {
+  /// 获取单个终端的截图，失败时静默重试。
+  /// [netbarId] 为发起时的网吧 ID：merchantId 直接用它（避免与 seatId 错配），
+  /// 且响应回来后校验仍是当前网吧，否则丢弃，防止切网吧后 A 的截图写进 B。
+  Future<void> _loadSingleScreenshot(Terminal terminal, int? netbarId) async {
     if (!mounted) return;
 
     // 如果已经有缓存，不再请求
     if (_screenshotCache.containsKey(terminal.seatId)) return;
 
     try {
-      // 改用 wsbin thumbnail（300px 缩略图）通道，替代原 HTTP ScreenshotApi
+      // 改用 wsbin thumbnail（300px 缩略图）通道，merchantId 用发起时的网吧 ID
       final ws = ref.read(taskWsProvider);
-      final merchantId = ref.read(currentNetbarProvider).id ?? 0;
       final bytes = await requestThumbnail(
         ws,
         seatId: terminal.seatId,
-        merchantId: merchantId,
+        merchantId: netbarId ?? 0,
       );
-      if (!mounted) return;
+      // 防串台：响应回来后若已切换网吧，丢弃（不写缓存、不重试）
+      if (!mounted || ref.read(currentNetbarIdProvider) != netbarId) return;
 
       if (bytes != null) {
         setState(() {
@@ -272,16 +272,18 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
         });
       } else {
         // 返回数据为空，也进行重试
-        _scheduleRetry(terminal, domain);
+        _scheduleRetry(terminal, netbarId);
       }
     } catch (_) {
+      // 防串台：异常后同样校验，已切网吧则不重试
+      if (!mounted || ref.read(currentNetbarIdProvider) != netbarId) return;
       // 请求失败，安排重试
-      _scheduleRetry(terminal, domain);
+      _scheduleRetry(terminal, netbarId);
     }
   }
 
   /// 安排截图重试
-  void _scheduleRetry(Terminal terminal, String domain) {
+  void _scheduleRetry(Terminal terminal, int? netbarId) {
     if (!mounted) return;
 
     final currentRetry = _screenshotRetryCount[terminal.seatId] ?? 0;
@@ -298,8 +300,11 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     final delay = _retryBaseDelay * (currentRetry + 1);
 
     Future.delayed(delay, () {
-      if (mounted && !_screenshotCache.containsKey(terminal.seatId)) {
-        _loadSingleScreenshot(terminal, domain);
+      // 防串台：延迟到期时若已切换网吧，放弃重试
+      if (mounted &&
+          ref.read(currentNetbarIdProvider) == netbarId &&
+          !_screenshotCache.containsKey(terminal.seatId)) {
+        _loadSingleScreenshot(terminal, netbarId);
       }
     });
   }
@@ -350,7 +355,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
             // 批量截图：改用 wsbin thumbnail（300px 缩略图）通道，首帧后批量拉取
             if (terminals.isNotEmpty && _screenshotCache.isEmpty && !_screenshotsLoading) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                _loadScreenshots(terminals);
+                _loadScreenshots(terminals, netbarId);
               });
             }
             // TODO: 批量实时硬件请求暂停，并发量过大影响服务端响应
@@ -669,7 +674,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
                                     gridDelegate:
                                         SliverGridDelegateWithFixedCrossAxisCount(
                                           crossAxisCount: columns,
-                                          childAspectRatio: 0.9,
+                                          childAspectRatio: 1.45, // 截图区接近 16:9 + 底部名称栏
                                           crossAxisSpacing: 12,
                                           mainAxisSpacing: 12,
                                         ),
@@ -739,7 +744,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
                     return SliverGrid(
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: columns,
-                        childAspectRatio: 0.9, // 接近 16:9 图片 + 底部名称栏
+                        childAspectRatio: 1.45, // 截图区接近 16:9 + 底部名称栏
                         crossAxisSpacing: 16,
                         mainAxisSpacing: 16,
                       ),
@@ -1247,7 +1252,8 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
 
               final gap = isPhone ? 12.0 : 16.0;
               final itemWidth = (width - (columns - 1) * gap) / columns;
-              final itemHeight = isPhone ? 160.0 : 200.0;
+              // 截图区接近 16:9 + 底部名称栏，与终端列表卡片比例(1.45)保持一致
+              final itemHeight = itemWidth / 1.45;
 
               // Router 三态：
               //   1) hasValue + 非空 → 渲染 RouterCard 列表，无占位
