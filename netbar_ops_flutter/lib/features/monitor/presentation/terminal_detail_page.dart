@@ -13,7 +13,7 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:webrtc_remote/webrtc_remote.dart' as webrtc;
 import 'package:url_launcher/url_launcher.dart';
-import 'package:dio/dio.dart' show CancelToken;
+import 'package:dio/dio.dart' show CancelToken, DioException;
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:flutter_html/flutter_html.dart' as fhtml;
@@ -2587,7 +2587,7 @@ class _FullscreenPreviewDialogState extends State<_FullscreenPreviewDialog> {
       });
     } catch (e) {
       // 用户关闭对话框触发的取消属正常路径，不报错
-      if (CancelToken.isCancel(e)) return;
+      if (e is DioException && CancelToken.isCancel(e)) return;
       if (mounted) setState(() => _loadingFull = false);
     }
   }

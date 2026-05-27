@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'dart:ui';
 
@@ -11,6 +12,7 @@ import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'core/logging/exit_reason_reporter.dart';
 import 'core/logging/logging_binary_messenger.dart';
 import 'core/logging/webrtc_crash_logger.dart';
 import 'core/storage/token_store.dart';
@@ -26,26 +28,48 @@ import 'features/update/update_navigator_key.dart';
 import 'shared/providers/app_providers.dart';
 import 'shared/services/window_control.dart';
 
-Future<void> _writeCrashLog(String error, String stack) async {
+/// 崩溃日志目录，启动时缓存。崩溃路径上不能 await（移动端 path_provider 是异步的），
+/// 所以提前缓存，崩溃时同步写盘。
+Directory? _crashLogDir;
+
+/// 启动早期调用：解析并缓存 crash_logs 目录，确保崩溃时可同步写盘。
+Future<void> _initCrashLogDir() async {
   try {
     if (kIsWeb) return;
-    Directory logDir;
+    Directory base;
     if (Platform.isAndroid || Platform.isIOS) {
-      final base = await getApplicationDocumentsDirectory();
-      logDir = Directory('${base.path}${Platform.pathSeparator}crash_logs');
+      base = await getApplicationDocumentsDirectory();
     } else {
+      base = File(Platform.resolvedExecutable).parent;
+    }
+    final dir = Directory('${base.path}${Platform.pathSeparator}crash_logs');
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    _crashLogDir = dir;
+  } catch (_) {}
+}
+
+/// 同步写崩溃日志。崩溃处理器中调用——必须同步落盘（flush:true），
+/// 否则进程退出时异步写入可能丢失。
+/// [prefix] 区分崩溃来源：dart_crash（主线程）/ isolate_crash（isolate）。
+void _writeCrashLog(String error, String stack, {String prefix = 'dart_crash'}) {
+  try {
+    if (kIsWeb) return;
+    Directory? logDir = _crashLogDir;
+    // 缓存未就绪（极早期崩溃）时，桌面端可同步推导兜底；移动端无法同步取目录则放弃文件。
+    if (logDir == null && !(Platform.isAndroid || Platform.isIOS)) {
       final exeDir = File(Platform.resolvedExecutable).parent;
       logDir = Directory('${exeDir.path}${Platform.pathSeparator}crash_logs');
+      if (!logDir.existsSync()) logDir.createSync(recursive: true);
     }
-    if (!logDir.existsSync()) logDir.createSync(recursive: true);
+    if (logDir == null) return;
     final now = DateTime.now();
     final ts =
         '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}'
         '_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
-    final file = File('${logDir.path}${Platform.pathSeparator}dart_crash_$ts.log');
+    final file = File('${logDir.path}${Platform.pathSeparator}${prefix}_$ts.log');
     final content =
         'Time: $now\nPlatform: ${Platform.operatingSystem} ${Platform.operatingSystemVersion}\nNumberOfProcessors: ${Platform.numberOfProcessors}\n\nError:\n$error\n\nStack Trace:\n$stack\n';
-    await file.writeAsString(content);
+    file.writeAsStringSync(content, flush: true);
   } catch (_) {}
 }
 
@@ -53,6 +77,25 @@ void main(List<String> args) async {
   runZonedGuarded(() async {
     LoggingWidgetsFlutterBinding.ensureInitialized();
     await WebRtcCrashLogger.I.init();
+    await _initCrashLogDir();
+
+    // L2: 当前 isolate 未捕获错误的全局兜底（zone 接不住的也能记录）。
+    Isolate.current.addErrorListener(RawReceivePort((dynamic pair) {
+      try {
+        final list = pair as List<dynamic>;
+        final error = list.isNotEmpty ? '${list[0]}' : 'unknown';
+        final stack = list.length > 1 ? '${list[1] ?? 'no stack'}' : 'no stack';
+        WebRtcCrashLogger.I.log(
+          'ERROR',
+          'isolate',
+          'unhandled',
+          '-',
+          'error=$error stack=${stack.split('\n').take(10).join(' | ')}',
+        );
+        WebRtcCrashLogger.I.flush();
+        _writeCrashLog(error, stack, prefix: 'isolate_crash');
+      } catch (_) {}
+    }).sendPort);
 
     FlutterError.onError = (details) {
       FlutterError.presentError(details);
@@ -88,6 +131,9 @@ void main(List<String> args) async {
 
   // 初始化 SharedPreferences holder（供 isPreviewProvider 等同步访问）
   await SharedPreferencesHolder.ensureInitialized();
+
+  // L4: 查询并记录上次 Android 进程异常退出原因（OOM/被杀/native 崩溃等）。
+  unawaited(recordExitReasons());
 
   // 设置 401 回调
   ApiClient.onUnauthorized = () {

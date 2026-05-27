@@ -64,6 +64,9 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
   final Map<String, Uint8List> _screenshotCache = {};
   bool _screenshotsLoading = false;
 
+  /// 批量截图并发上限（滑动窗口）：同时在飞的 thumbnail 请求最多 5 个
+  static const int _maxScreenshotConcurrency = 5;
+
   // 截图重试相关
   final Map<String, int> _screenshotRetryCount = {}; // seatId -> 重试次数
   static const int _maxRetryCount = 10; // 最大重试次数
@@ -213,8 +216,8 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
   /// 批量获取所有在线终端的截图
   Future<void> _loadScreenshots(List<Terminal> terminals) async {
     final netbar = ref.read(currentNetbarProvider);
-    final domain = netbar.subdomainFull;
-    if (domain == null || domain.isEmpty) return;
+    // thumbnail 走 WS，不依赖网吧域名；domain 仅作占位透传给重试逻辑
+    final domain = netbar.subdomainFull ?? '';
 
     // 只获取在线终端的截图
     final onlineTerminals = terminals.where((t) => t.status > 0).toList();
@@ -222,10 +225,22 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
 
     setState(() => _screenshotsLoading = true);
 
-    // 并行请求所有截图
-    await Future.wait(
-      onlineTerminals.map((t) => _loadSingleScreenshot(t, domain)),
-    );
+    // 限流：滑动窗口并发池，同时在飞的截图请求最多 _maxScreenshotConcurrency 个，
+    // 完成一个立即补下一个，避免一次性并发全部终端压垮服务端。
+    var nextIndex = 0;
+    Future<void> worker() async {
+      while (mounted) {
+        final i = nextIndex++;
+        if (i >= onlineTerminals.length) return;
+        await _loadSingleScreenshot(onlineTerminals[i], domain);
+      }
+    }
+
+    final workerCount =
+        onlineTerminals.length < _maxScreenshotConcurrency
+            ? onlineTerminals.length
+            : _maxScreenshotConcurrency;
+    await Future.wait(List.generate(workerCount, (_) => worker()));
 
     if (mounted) {
       setState(() => _screenshotsLoading = false);
@@ -332,12 +347,13 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (error, _) => _buildErrorView(error.toString()),
           data: (terminals) {
-            // TODO: 批量截图和批量实时硬件请求暂停，并发量过大影响服务端响应
-            // if (terminals.isNotEmpty && _screenshotCache.isEmpty && !_screenshotsLoading) {
-            //   WidgetsBinding.instance.addPostFrameCallback((_) {
-            //     _loadScreenshots(terminals);
-            //   });
-            // }
+            // 批量截图：改用 wsbin thumbnail（300px 缩略图）通道，首帧后批量拉取
+            if (terminals.isNotEmpty && _screenshotCache.isEmpty && !_screenshotsLoading) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _loadScreenshots(terminals);
+              });
+            }
+            // TODO: 批量实时硬件请求暂停，并发量过大影响服务端响应
             // if (terminals.isNotEmpty && _realtimeCache.isEmpty && !_realtimeLoading) {
             //   WidgetsBinding.instance.addPostFrameCallback((_) {
             //     _loadRealtimeStats(terminals);

@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../core/logging/exit_reason_reporter.dart';
 import 'crash_log_export_helper.dart';
 
 /// 查看崩溃日志页面
@@ -30,6 +31,7 @@ class _CrashLogViewerPageState extends State<CrashLogViewerPage> {
   String? _baseDirPath;
   bool _loading = true;
   String? _error;
+  String? _exitHint;
 
   @override
   void initState() {
@@ -66,9 +68,13 @@ class _CrashLogViewerPageState extends State<CrashLogViewerPage> {
       files.sort(
           (a, b) => b.statSync().modified.compareTo(a.statSync().modified));
 
+      final hint = await getLastAbnormalExitHint();
+
+      if (!mounted) return;
       setState(() {
         _files = files;
         _loading = false;
+        _exitHint = hint;
       });
 
       if (files.isNotEmpty) {
@@ -244,11 +250,66 @@ class _CrashLogViewerPageState extends State<CrashLogViewerPage> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(child: Text(_error!))
-              : _files.isEmpty
-                  ? _buildEmpty()
-                  : _buildBody(),
+          : Column(
+              children: [
+                _buildExitBanner(),
+                Expanded(
+                  child: _error != null
+                      ? Center(child: Text(_error!))
+                      : _files.isEmpty
+                          ? _buildEmpty()
+                          : _buildBody(),
+                ),
+              ],
+            ),
+    );
+  }
+
+  /// 置顶提示：上次异常退出原因 + 引导用户通过微信把日志分享给开发者。
+  Widget _buildExitBanner() {
+    final hasExit = _exitHint != null;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      color: hasExit ? const Color(0xFFFEF2F2) : const Color(0xFFEFF6FF),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (hasExit) ...[
+            Row(
+              children: [
+                const Icon(LucideIcons.alertTriangle,
+                    size: 16, color: Color(0xFFDC2626)),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    _exitHint!,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFFB91C1C),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+          ],
+          Row(
+            children: [
+              const Icon(LucideIcons.messageCircle,
+                  size: 16, color: Color(0xFF2563EB)),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  '请点右上角"打包"按钮导出日志，再通过微信分享给开发者，便于快速定位问题。',
+                  style: TextStyle(fontSize: 12, color: Color(0xFF1D4ED8)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
