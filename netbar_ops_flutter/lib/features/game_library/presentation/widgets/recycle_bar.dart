@@ -237,7 +237,7 @@ class _RecycleBarState extends ConsumerState<RecycleBar> {
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
                   onPressed: planSaving ? null : widget.onOpenSchedule,
-                  icon: const Icon(LucideIcons.calendarCog, size: 13),
+                  icon: const Icon(LucideIcons.calendarClock, size: 13),
                   label: const Text('执行时间',
                       style: TextStyle(fontSize: 12)),
                 ),
