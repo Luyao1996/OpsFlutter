@@ -353,6 +353,9 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
       if (prev?.id != next.id) {
         _realtimeLoading = false; // 切网吧：释放加载标志，允许新网吧立即启动 realtime
         _realtimeAttempted = false; // 切网吧：重置尝试标志，新网吧首帧重新触发 realtime 拉取
+        // 切网吧清掉手机端的 "已 push 防重入" set——即使旧网吧某个 terminal.id 因
+        // 崩溃/异常 push 残留在 set 中，切回该网吧时也能重新打开详情页。
+        _mobileOpenTerminals.clear();
         setState(() {
           _searchQuery = '';
           _filterStatus = 'all';
@@ -969,7 +972,12 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
       _mobileOpenTerminals.remove(terminal.id);
       return;
     }
-    context.push(location, extra: _screenshotCache[terminal.seatId]).then((_) {
+    // 用 whenComplete 而非 then：Future 异常完成（如 push 链路崩溃、Navigator
+    // 取消）时 then 不会触发，会让 _mobileOpenTerminals 残留 terminal.id，导致
+    // 用户后续点击同一个终端永远静默 return("偶发点击无反应" bug 的根因)。
+    context
+        .push(location, extra: _screenshotCache[terminal.seatId])
+        .whenComplete(() {
       _mobileOpenTerminals.remove(terminal.id);
     });
   }
