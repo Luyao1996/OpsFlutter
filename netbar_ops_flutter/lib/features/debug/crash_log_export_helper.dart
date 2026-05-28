@@ -4,6 +4,7 @@
 import 'dart:io';
 
 import 'package:archive/archive_io.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -52,19 +53,20 @@ Future<void> shareLogsAsZip({
     final zipPath =
         '${tempDir.path}${Platform.pathSeparator}crash_logs_$ts.zip';
 
-    final encoder = ZipFileEncoder();
-    encoder.create(zipPath);
-    for (final f in files) {
-      final parts = f.path.split(Platform.pathSeparator);
-      final relPath = parts.length >= 2
-          ? '${parts[parts.length - 2]}/${parts[parts.length - 1]}'
-          : parts.last;
-      encoder.addFile(f, relPath);
-    }
-    await encoder.close();
+    // 在后台 isolate 中执行 ZipFileEncoder 同步压缩，避免在 UI 线程 deflate
+    // 数 MB 文本触发 Android ANR（reason=6 / "user request after error"）。
+    // compute 只能传可序列化数据，所以传 path 列表而非 File 对象。
+    await compute(
+      _zipFilesInIsolate,
+      _ZipTask(
+        filePaths: files.map((f) => f.path).toList(growable: false),
+        zipPath: zipPath,
+        separator: Platform.pathSeparator,
+      ),
+    );
 
     final zipFile = File(zipPath);
-    final sizeKb = (zipFile.lengthSync() / 1024).toStringAsFixed(1);
+    final sizeKb = ((await zipFile.length()) / 1024).toStringAsFixed(1);
     if (!context.mounted) return;
 
     // ===== 桌面端：直接保存到 Downloads + 打开文件夹 =====
@@ -144,4 +146,38 @@ Future<List<File>> collectCrashLogFiles() async {
     files.sort((a, b) => b.statSync().modified.compareTo(a.statSync().modified));
   } catch (_) {}
   return files;
+}
+
+/// `compute` 任务参数：只携带可序列化的字段，便于通过 isolate 边界传递。
+class _ZipTask {
+  final List<String> filePaths;
+  final String zipPath;
+  final String separator;
+  const _ZipTask({
+    required this.filePaths,
+    required this.zipPath,
+    required this.separator,
+  });
+}
+
+/// 后台 isolate 中执行的 zip 打包：ZipFileEncoder.addFile 是同步 I/O+deflate，
+/// 数 MB 文本可阻塞主线程 5+ 秒触发 ANR，必须放后台。
+/// 必须是 top-level 函数，且只接受/返回可序列化数据。
+String _zipFilesInIsolate(_ZipTask t) {
+  final encoder = ZipFileEncoder();
+  encoder.create(t.zipPath);
+  try {
+    for (final p in t.filePaths) {
+      final f = File(p);
+      if (!f.existsSync()) continue;
+      final parts = p.split(t.separator);
+      final relPath = parts.length >= 2
+          ? '${parts[parts.length - 2]}/${parts[parts.length - 1]}'
+          : parts.last;
+      encoder.addFile(f, relPath);
+    }
+  } finally {
+    encoder.close();
+  }
+  return t.zipPath;
 }

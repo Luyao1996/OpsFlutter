@@ -468,18 +468,35 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
       return;
     }
     if (!mounted) return;
-    await crash_export.shareLogsAsZip(
+
+    // zip 打包虽已放后台 isolate，但 isolate 启动 + 系统分享面板冷启
+    // 仍可能 1~3 秒，弹一个不可关闭的 loading 防止用户误判为卡死，
+    // 进而触发 ANR 弹窗。
+    var loadingShown = true;
+    showDialog<void>(
       context: context,
-      files: files,
-      onMessage: (msg, {bool isError = false}) {
-        if (!mounted) return;
-        showTopNotice(
-          context,
-          msg,
-          level: isError ? NoticeLevel.error : NoticeLevel.success,
-        );
-      },
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
     );
+    try {
+      await crash_export.shareLogsAsZip(
+        context: context,
+        files: files,
+        onMessage: (msg, {bool isError = false}) {
+          if (!mounted) return;
+          showTopNotice(
+            context,
+            msg,
+            level: isError ? NoticeLevel.error : NoticeLevel.success,
+          );
+        },
+      );
+    } finally {
+      if (loadingShown && mounted) {
+        loadingShown = false;
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+    }
   }
 
   // TODO: 验证完崩溃日志机制后整体删除（与 lib/features/debug/ 同步删除）
