@@ -111,7 +111,10 @@ class _SeatPickerDialogState extends ConsumerState<SeatPickerDialog> {
         ? _manualController.text.trim()
         : (_selectedSeatId ?? '');
     if (id.isEmpty) return;
-    _saveLastSeat(id);
+    // 只把"真实机号"持久化到 lastSeat；工具箱身份不入持久化（避免被当机号显示）
+    if (id != kToolboxSeat) {
+      _saveLastSeat(id);
+    }
     Navigator.of(context).pop(id);
   }
 
@@ -213,9 +216,38 @@ class _SeatPickerDialogState extends ConsumerState<SeatPickerDialog> {
                   if (_lastSeatHint != null && _lastSeatHint!.isNotEmpty && !_useManual)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        '上次使用：$_lastSeatHint',
-                        style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF)),
+                      child: InkWell(
+                        onTap: () {
+                          setState(() {
+                            _selectedSeatId = _lastSeatHint;
+                          });
+                        },
+                        borderRadius: BorderRadius.circular(4),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEFF6FF),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                LucideIcons.history,
+                                size: 13,
+                                color: AppColors.iosBlue,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '上次使用：$_lastSeatHint',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: AppColors.iosBlue,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                 ],
@@ -253,73 +285,141 @@ class _SeatPickerDialogState extends ConsumerState<SeatPickerDialog> {
 
   bool _canConfirm() {
     if (_useManual) return _manualController.text.trim().isNotEmpty;
+    // 真实机号选中或选了"工具箱身份"均视为可确认
     return _selectedSeatId != null && _selectedSeatId!.isNotEmpty;
   }
 
+  /// 「工具箱身份（不选机号）」独立项
+  /// 不受 _seats 拉取失败/为空影响；选中后 _selectedSeatId = kToolboxSeat
+  Widget _buildToolboxOption() {
+    final selected = _selectedSeatId == kToolboxSeat;
+    return InkWell(
+      onTap: () => setState(() => _selectedSeatId = kToolboxSeat),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFEFF6FF) : Colors.transparent,
+          border: Border(
+            bottom: BorderSide(color: Colors.grey.shade100),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              selected ? LucideIcons.checkCircle2 : LucideIcons.circle,
+              size: 14,
+              color: selected ? AppColors.iosBlue : Colors.grey.shade400,
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              LucideIcons.package,
+              size: 13,
+              color: selected ? AppColors.iosBlue : const Color(0xFF6B7280),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '工具箱身份（不选机号，可并发下载）',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: selected ? AppColors.iosBlue : Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  const Text(
+                    '不占用任何客户端机号；多任务同时下载不冲突',
+                    style: TextStyle(fontSize: 11, color: Color(0xFF9CA3AF)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildSeatList() {
+    // 工具箱身份独立项：不受 _loading / _seats 为空影响，始终渲染在最顶部
+    final toolboxTile = _buildToolboxOption();
+
+    Widget body;
     if (_loading) {
-      return const SizedBox(
+      body = const SizedBox(
         height: 60,
         child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
       );
-    }
-    if (_seats.isEmpty) {
-      return Container(
+    } else if (_seats.isEmpty) {
+      body = Container(
         padding: const EdgeInsets.symmetric(vertical: 16),
         alignment: Alignment.center,
         child: const Text(
-          '暂无客户端机号，请手动输入',
+          '暂无客户端机号，可使用工具箱身份或手动输入',
           style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
         ),
       );
-    }
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxHeight: 260),
-      child: SingleChildScrollView(
-        child: Column(
-          children: [
-            for (final s in _seats)
-              InkWell(
-                onTap: () => setState(() => _selectedSeatId = s.seatId),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: _selectedSeatId == s.seatId
-                        ? const Color(0xFFEFF6FF)
-                        : Colors.transparent,
-                    border: Border(
-                      bottom: BorderSide(color: Colors.grey.shade100),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _selectedSeatId == s.seatId
-                            ? LucideIcons.checkCircle2
-                            : LucideIcons.circle,
-                        size: 14,
-                        color: _selectedSeatId == s.seatId
-                            ? AppColors.iosBlue
-                            : Colors.grey.shade400,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          s.seatId,
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ),
-                      Text(
-                        s.status > 0 ? '● 在线' : '○ 离线',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: s.status > 0 ? const Color(0xFF10B981) : const Color(0xFF9CA3AF),
-                        ),
-                      ),
-                    ],
+    } else {
+      body = Column(
+        children: [
+          for (final s in _seats)
+            InkWell(
+              onTap: () => setState(() => _selectedSeatId = s.seatId),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _selectedSeatId == s.seatId
+                      ? const Color(0xFFEFF6FF)
+                      : Colors.transparent,
+                  border: Border(
+                    bottom: BorderSide(color: Colors.grey.shade100),
                   ),
                 ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _selectedSeatId == s.seatId
+                          ? LucideIcons.checkCircle2
+                          : LucideIcons.circle,
+                      size: 14,
+                      color: _selectedSeatId == s.seatId
+                          ? AppColors.iosBlue
+                          : Colors.grey.shade400,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        s.seatId,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ),
+                    Text(
+                      s.status > 0 ? '● 在线' : '○ 离线',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: s.status > 0 ? const Color(0xFF10B981) : const Color(0xFF9CA3AF),
+                      ),
+                    ),
+                  ],
+                ),
               ),
+            ),
+        ],
+      );
+    }
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 300),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            toolboxTile,
+            body,
           ],
         ),
       ),

@@ -259,12 +259,19 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
       _actionLoading['$platform:$gid:$action'] == true;
 
   Future<void> _onDownload(GameItem row) async {
-    final seat = await SeatPickerDialog.show(
+    final picked = await SeatPickerDialog.show(
       context,
       merchantId: widget.merchantId,
       row: row,
     );
-    if (seat == null || seat.isEmpty || !mounted) return;
+    if (picked == null || picked.isEmpty || !mounted) return;
+
+    // Web 端规则：用户在 picker 里选了真实机号 → seat 单任务约束抢占旧任务；
+    // picker 选了"工具箱身份"或手敲了 WW_TOOLBOX → seat=WW_TOOLBOX + from=wwls 旁路 seat 单任务约束
+    final isToolbox = picked == kToolboxSeat;
+    final seat = isToolbox ? kToolboxSeat : picked;
+    final fromParam = isToolbox ? 'wwls' : null;
+
     _setActionLoading(row, 'download', true);
     try {
       final api = ref.read(gameLibraryApiProvider(widget.subdomainFull));
@@ -272,6 +279,7 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
         seat: seat,
         platform: row.platform,
         gid: row.gid,
+        from: fromParam,
       );
       if (!mounted) return;
       if (!res.ok) {
@@ -280,7 +288,8 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
       }
       final result = res.results[row.gid];
       if (result == 'ok') {
-        _toast('已加入下载队列：${row.name ?? row.gid}（机号 $seat）');
+        final who = isToolbox ? '工具箱' : '机号 $seat';
+        _toast('已加入下载队列：${row.name ?? row.gid}（$who）');
         if (res.cancelled != null) {
           final c = res.cancelled!;
           _toast(
@@ -302,8 +311,39 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
   }
 
   Future<void> _onUninstall(GameItem row) async {
-    // 后端 delete_game 仅本机回环可调，直接提示
-    _toastWarn('删除仅允许在网吧本机操作；如需卸载请在网吧本地管理界面进行');
+    final ok = await _confirmDanger(
+      title: '危险操作',
+      message: '确认永久删除「${row.name ?? row.gid}」及其本地文件？该操作不可恢复。',
+      confirmLabel: '确认删除',
+    );
+    if (!ok || !mounted) return;
+
+    _setActionLoading(row, 'delete', true);
+    try {
+      final r = await _notifier.deleteSingle(row);
+      if (!mounted) return;
+      if (r.ok) {
+        _toast('已删除：${row.name ?? row.gid}（后端清盘可能持续数秒）');
+        // 1.5s 后 refresh，让后端清盘完成（与 Web 端 setTimeout 1500 对齐）
+        Future.delayed(const Duration(milliseconds: 1500), () {
+          if (!mounted) return;
+          _notifier.refresh(platform: _filterPlatform.isEmpty ? null : _filterPlatform);
+        });
+        return;
+      }
+      // 失败分支
+      if (r.status == 403) {
+        _toastError('删除被拒绝：game_library 仅允许本机调用 delete_game，请通过网吧本地管理界面操作');
+      } else if (r.resultCode != null) {
+        _toastWarn('删除失败：${formatOpResultMessage(r.resultCode)}');
+      } else {
+        _toastError('删除失败：${httpErrorMessage(r.status, r.error)}');
+      }
+    } catch (e) {
+      if (mounted) _toastError('删除请求异常：$e');
+    } finally {
+      if (mounted) _setActionLoading(row, 'delete', false);
+    }
   }
 
   // ===== PR-3：闲置 Tab 批量删除 / 执行时间弹窗 =====
