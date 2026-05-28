@@ -10,7 +10,7 @@ class Terminal {
   final String mac;
   final String os;
   final String type; // server, client, console, cashier
-  final int status; // 0: 离线, 1: 在线, 2: 使用中
+  final int status; // 0: 离线, 1: 在线
   final double cpuUsage;
   final double ramUsage;
   final double gpuUsage;

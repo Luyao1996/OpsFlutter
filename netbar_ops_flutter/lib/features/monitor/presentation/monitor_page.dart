@@ -55,7 +55,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
   bool _isListView = false;
-  String _filterStatus = 'all'; // all, busy, offline
+  String _filterStatus = 'all'; // all, online, offline
   int _sortColumnIndex = 0;
   bool _sortAscending = true;
   // 右键菜单状态
@@ -580,7 +580,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
         return false;
       }
       // 状态过滤
-      if (_filterStatus == 'busy' && t.status != 2) return false; // 使用中
+      if (_filterStatus == 'online' && t.status != 1) return false; // 在线
       if (_filterStatus == 'offline' && t.status != 0) return false; // 离线
 
       return true;
@@ -899,11 +899,8 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
     } else if (status == 1) {
       color = Colors.green;
       text = '在线';
-    } else if (status == 2) {
-      color = Colors.orange;
-      text = '使用中';
     } else {
-      color = Colors.grey; // Default for unknown status
+      color = Colors.grey; // status==2 是伪代码不会出现；其它未知值统一显示「未知」
       text = '未知';
     }
 
@@ -1484,7 +1481,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                 onSelected: (val) => setState(() => _filterStatus = val),
                 itemBuilder: (context) => [
                   const PopupMenuItem(value: 'all', child: Text('全部')),
-                  const PopupMenuItem(value: 'busy', child: Text('使用中')),
+                  const PopupMenuItem(value: 'online', child: Text('在线')),
                   const PopupMenuItem(value: 'offline', child: Text('离线')),
                 ],
               ),
