@@ -26,6 +26,7 @@ import '../../../../core/logging/webrtc_crash_logger.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/config/app_config.dart';
+import '../../../../core/network/api_client.dart' show ApiError;
 import '../../../../core/network/task_ws_provider.dart';
 import '../../../../core/network/ws_binary.dart';
 import '../../../../core/storage/token_store.dart';
@@ -1366,6 +1367,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
   }
 
   Future<void> _refreshHeartbeat(int terminalId, {bool silent = false}) async {
+    // 防御性：State 已 dispose 时 ref 不可用（remote 流程结束后注册的 Timer 可能
+    // 在 dispose 之后还触发一次），先短路再访问任何 ref/setState。
+    if (!mounted) return;
     if (_refreshing) return;
     if (!_ensureSameNetbar('refreshHeartbeat')) return;
     final ownerNetbarId = _ownerNetbarId;
@@ -2143,6 +2147,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
             'resultJson=${WebRtcCrashLogger.I.jsonOrString(result)}',
       );
       if (mark != null && mark.toString().isNotEmpty) {
+        if (!mounted) return;
         // 上报操作日志（fire-and-forget）
         ref.read(operationLogApiProvider).add(
               event: 'remote.connect',
@@ -2185,9 +2190,13 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
         await Navigator.push(
           context,
           MaterialPageRoute(
+            // builder 内必须使用形参 ctx，不能闭包捕获外层 State.context。
+            // 详情页关闭后 State 已 dispose，MaterialPageRoute 仍可能 rebuild，
+            // 此时访问 State.context (framework.dart `_element!`) 会触发
+            // "Null check operator used on a null value" 崩溃。
             builder: (ctx) => Theme(
-              data: Theme.of(context).copyWith(
-                textTheme: Theme.of(context).textTheme.apply(fontFamily: 'Segoe UI'),
+              data: Theme.of(ctx).copyWith(
+                textTheme: Theme.of(ctx).textTheme.apply(fontFamily: 'Segoe UI'),
               ),
               child: _WebRTCWindowWrapper(
                 title: '$_netbarName - $_groupName - ${terminal.name}',
@@ -2220,6 +2229,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
             ),
           ),
         );
+        // 远控屏关闭后 State 可能已 dispose（独立子窗被关、详情页被 pop）。
+        // 必须先短路再访问任何 ref/setState/Timer 注册，否则后面 Timer.periodic
+        // 会变成"dispose 后注册、永不取消"的泄漏定时器，每 15s 抛
+        // `Bad state: Cannot use "ref" after the widget was disposed`。
+        if (!mounted) return;
         _isWebRTCActive = false;
         WebRtcCrashLogger.I.log(
           'INFO',
@@ -2228,8 +2242,13 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
           ctxId,
           'exited_screen resume_heartbeat',
         );
-        // 退出 WebRTC，恢复心跳定时器
+        // 退出 WebRTC，恢复心跳定时器；回调里再加一层 mounted 兜底自取消。
         _heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+          if (!mounted) {
+            _heartbeatTimer?.cancel();
+            _heartbeatTimer = null;
+            return;
+          }
           _refreshHeartbeat(widget.terminalId, silent: true);
         });
       } else {
@@ -2245,8 +2264,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
         }
       }
     } catch (e, s) {
+      // 区分"业务可预期失败"（机器未开机、域名无效等 ApiError）和"真正异常"，
+      // 前者降级为 WARN，避免污染 ERROR 频道并误导日志排查。
+      final isExpected = e is ApiError;
       WebRtcCrashLogger.I.log(
-        'ERROR',
+        isExpected ? 'WARN' : 'ERROR',
         'webrtc',
         'open_remote',
         ctxId,
@@ -2255,7 +2277,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
       // 关闭 loading
       if (mounted) Navigator.pop(context);
       if (mounted) {
-        showTopNotice(context, '远程连接失败: $e', level: NoticeLevel.error);
+        showTopNotice(
+          context,
+          isExpected ? e.toString() : '远程连接失败: $e',
+          level: NoticeLevel.error,
+        );
       }
     }
   }

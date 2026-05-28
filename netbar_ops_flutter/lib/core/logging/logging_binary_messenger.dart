@@ -28,18 +28,27 @@ class LoggingBinaryMessenger extends BinaryMessenger {
   static const MethodCodec _codec = StandardMethodCodec();
   static const StringCodec _stringCodec = StringCodec();
 
-  /// 已知高频噪音 method（统计 / 枚举类），不写日志，避免日志量在
-  /// 机械硬盘上压垮 UI 线程。注：具体方法名取决于所用 webrtc 插件版本，
-  /// 写漏只是少砍点量、不影响崩溃定位安全性，可按实际插件方法名增删。
+  /// 已知高频噪音 method（统计 / 枚举 / 数据通道发送类），不写日志，
+  /// 避免日志量在机械硬盘上压垮 UI 线程，也避免淹没真正的信令时序。
+  /// 注：具体方法名取决于所用 webrtc 插件版本，写漏只是少砍点量、
+  /// 不影响崩溃定位安全性，可按实际插件方法名增删。
+  /// （addCandidate / getLocalDescription / dataChannelSend 在 28 日日志中
+  ///  分别出现 52 / 86 / 1767 次，是绝大部分噪音的来源。）
   static const Set<String> _noisyMethods = {
     'getStats',
     'getStatsForTrack',
     'peerConnectionGetStats',
     'getRtpSenders',
     'getRtpReceivers',
+    'getReceivers',
     'getTransceivers',
+    'getLocalDescription',
+    'getRemoteDescription',
     'mediaStreamTrackGetSettings',
+    'mediaStreamTrackSetEnable',
     'captureFrame',
+    'addCandidate',
+    'dataChannelSend',
   };
 
   /// flutter/textinput 关键方法白名单——只这几个能反映 IME attach/detach 状态。
@@ -86,6 +95,21 @@ class LoggingBinaryMessenger extends BinaryMessenger {
     return '$head ... $tail';
   }
 
+  /// 判断字符串是否"可打印"：含 NUL/控制字符（除 \t\r\n）即视为二进制 envelope
+  /// 被错当字符串解出来了（典型情形：EventChannel 的 StandardMethodCodec 包，
+  /// 头部 `0x07 0x05 ...`），此时应走 hex 分支。
+  bool _looksLikePrintable(String? s) {
+    if (s == null || s.isEmpty) return false;
+    var bad = 0;
+    var total = 0;
+    for (final r in s.runes) {
+      total++;
+      if (r == 0 || (r < 0x20 && r != 0x09 && r != 0x0A && r != 0x0D)) bad++;
+      if (total >= 64 && bad > 0) return false; // 含任何 NUL/控制字符即否
+    }
+    return bad == 0;
+  }
+
   String _describeMessage(String channel, ByteData? message) {
     if (message == null) return 'null_message';
     try {
@@ -95,7 +119,9 @@ class LoggingBinaryMessenger extends BinaryMessenger {
     } catch (_) {}
     try {
       final s = _stringCodec.decodeMessage(message);
-      return 'strMsg=${WebRtcCrashLogger.I.truncate(s)}';
+      if (_looksLikePrintable(s)) {
+        return 'strMsg=${WebRtcCrashLogger.I.truncate(s)}';
+      }
     } catch (_) {}
     return 'rawBytesLen=${message.lengthInBytes} hex=${_hexDump(message)}';
   }
@@ -120,11 +146,13 @@ class LoggingBinaryMessenger extends BinaryMessenger {
     }
   }
 
-  /// 节流：同一 key 50ms 内最多放行一次，防错误 / 信令风暴打爆磁盘。
+  /// 节流：同一 (channel|op|method) 1 秒内最多放行一次，防信令风暴打爆磁盘
+  /// 且让日志在普通编辑器里可读。错误路径（send_error/recv_error）不经过本方法，
+  /// 故不会被节流掉。
   bool _allowLog(String key) {
     final now = DateTime.now().millisecondsSinceEpoch;
     final last = _lastLogMs[key];
-    if (last != null && now - last < 50) return false;
+    if (last != null && now - last < 1000) return false;
     if (_lastLogMs.length > 256) _lastLogMs.clear();
     _lastLogMs[key] = now;
     return true;
