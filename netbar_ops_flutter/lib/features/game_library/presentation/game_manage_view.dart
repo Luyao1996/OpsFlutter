@@ -10,10 +10,13 @@ import '../data/game_models.dart';
 import '../providers/game_library_providers.dart';
 import '../utils/formatter.dart';
 import '../utils/pinyin_match.dart';
+import 'widgets/batch_result_dialog.dart';
 import 'widgets/health_banner.dart';
+import 'widgets/recycle_bar.dart';
+import 'widgets/recycle_schedule_dialog.dart';
 import 'widgets/seat_picker_dialog.dart';
 
-enum _Tab { local, all, downloads }
+enum _Tab { local, all, downloads, idle }
 
 /// 游戏管理内容视图（嵌入式 Widget，不带 Dialog 外壳）。
 ///
@@ -53,8 +56,6 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
   String _filterStatus = ''; // installed / not_installed / upgradable
   String _search = '';
   String _searchDebounced = '';
-  bool _hideDeprecated = true;
-  bool _hideSystem = false;
 
   int _renderedCount = kRenderBatch;
   bool _loadingMore = false;
@@ -74,7 +75,11 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
     super.initState();
     _scrollCtrl.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(gameLibraryNotifierProvider(widget.subdomainFull).notifier).refresh();
+      final n =
+          ref.read(gameLibraryNotifierProvider(widget.subdomainFull).notifier);
+      n.refresh();
+      // 与 Web 端 watch(modelValue→fetchRecyclePlan) 对齐：进入视图就拉一次持久化的回收策略
+      n.fetchRecyclePlan();
     });
   }
 
@@ -131,12 +136,15 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
     if (v.isEmpty) {
       setState(() => _searchDebounced = '');
       _resetPaging();
+      // 搜索条件变化 → 清空多选（避免不可见的选中残留）
+      _notifier.clearSelection();
       return;
     }
     _searchDebounceTimer = Timer(kSearchDebounce, () {
       if (!mounted) return;
       setState(() => _searchDebounced = v.trim().toLowerCase());
       _resetPaging();
+      _notifier.clearSelection();
     });
   }
 
@@ -147,22 +155,44 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
       _activeTab = t;
       _resetPaging();
     });
+    // 切 tab 一律清掉多选（避免 idle 切走后 selected 残留）
+    _notifier.clearSelection();
     if (t == _Tab.downloads) {
       _notifier.startDownloadPolling();
     } else {
       _notifier.stopDownloadPolling();
     }
+    // 切到 idle 且 plan 仍为 null 时兜底拉一次（视图首次 fetchRecyclePlan 可能失败/无数据）
+    if (t == _Tab.idle) {
+      final s = ref.read(gameLibraryNotifierProvider(widget.subdomainFull));
+      if (s.recyclePlan == null) _notifier.fetchRecyclePlan();
+    }
   }
 
   // ----------- 过滤 -----------
   List<GameItem> _filteredGames(GameLibraryState state) {
-    final source = _activeTab == _Tab.local ? state.localGames : state.games;
+    final List<GameItem> source;
+    switch (_activeTab) {
+      case _Tab.local:
+        source = state.localGames;
+        break;
+      case _Tab.idle:
+        // idleGames 已在 Provider 侧硬过滤 isDeprecated / isProtectedCategory
+        source = state.idleGames;
+        break;
+      case _Tab.all:
+        source = state.games;
+        break;
+      case _Tab.downloads:
+        source = const [];
+        break;
+    }
     final kw = _searchDebounced;
     return source.where((g) {
+      // idle 不再额外硬过滤 isDeprecated（Provider 已做）；其它 Tab 仍硬过滤 isDeprecated
+      if (_activeTab != _Tab.idle && g.isDeprecated) return false;
       if (_filterPlatform.isNotEmpty && g.platform != _filterPlatform) return false;
       if (_filterCategory.isNotEmpty && g.category != _filterCategory) return false;
-      if (_hideDeprecated && g.isDeprecated) return false;
-      if (_hideSystem && g.isSystemCategory) return false;
       if (_activeTab == _Tab.all && _filterStatus.isNotEmpty) {
         if (_filterStatus == 'installed' && !g.isInstalledIncludingStory) return false;
         if (_filterStatus == 'not_installed' && g.isInstalledIncludingStory) return false;
@@ -196,6 +226,7 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
       _filterPlatform = v ?? '';
       _resetPaging();
     });
+    _notifier.clearSelection();
     _notifier.refresh(platform: _filterPlatform.isEmpty ? null : _filterPlatform);
   }
 
@@ -273,6 +304,111 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
   Future<void> _onUninstall(GameItem row) async {
     // 后端 delete_game 仅本机回环可调，直接提示
     _toastWarn('删除仅允许在网吧本机操作；如需卸载请在网吧本地管理界面进行');
+  }
+
+  // ===== PR-3：闲置 Tab 批量删除 / 执行时间弹窗 =====
+
+  /// 红色危险二次确认 AlertDialog
+  Future<bool> _confirmDanger({
+    required String title,
+    required String message,
+    required String confirmLabel,
+  }) async {
+    final r = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message, style: const TextStyle(fontSize: 13)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    );
+    return r == true;
+  }
+
+  /// 闲置 Tab：底部「批量删除」入口
+  /// 与 Web 端 onBulkDelete 1:1 对齐：二次确认 → 串行删除（已下沉到 Provider.deleteBulk）→ 成败分流提示 → 1.5s 后 refresh
+  Future<void> _onBulkDelete() async {
+    final state = ref.read(gameLibraryNotifierProvider(widget.subdomainFull));
+    final selectable = _filteredGames(state);
+    final targets = selectable
+        .where((g) => state.selectedRowKeys.contains(g.rowKey))
+        .toList(growable: false);
+    if (targets.isEmpty) return;
+
+    final ok = await _confirmDanger(
+      title: '批量删除',
+      message: '确认永久删除选中的 ${targets.length} 个游戏及其本地文件？该操作不可恢复。',
+      confirmLabel: '确认删除',
+    );
+    if (!ok || !mounted) return;
+
+    final notifier =
+        ref.read(gameLibraryNotifierProvider(widget.subdomainFull).notifier);
+    final result = await notifier.deleteBulk(targets);
+    if (!mounted) return;
+    notifier.clearSelection();
+
+    if (result.failures.isEmpty) {
+      _toast('已删除 ${result.success} 个游戏（后端清盘可能持续数秒）');
+    } else if (result.success == 0) {
+      final preview =
+          result.failures.take(3).map((f) => f.name).join('、');
+      _toastError(
+          '全部失败 ${result.failures.length} 个：$preview${result.failures.length > 3 ? "…" : ""}');
+    } else {
+      await BatchResultDialog.show(
+        context,
+        success: result.success,
+        failures: result.failures,
+      );
+    }
+
+    // 仅在有成功删除时才延迟 1.5s 刷新（与单删一致，避免无效 IO）
+    if (result.success > 0) {
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (mounted) {
+          notifier.refresh(
+              platform: _filterPlatform.isEmpty ? null : _filterPlatform);
+        }
+      });
+    }
+  }
+
+  /// 闲置 Tab：打开「执行时间」弹窗
+  Future<void> _openSchedule() async {
+    final state = ref.read(gameLibraryNotifierProvider(widget.subdomainFull));
+    final cur = state.recyclePlan;
+    final res = await RecycleScheduleDialog.show(
+      context,
+      weekdays: List<int>.from(cur?.weekdays ?? const <int>[]),
+      time: cur?.time ?? RecycleDefaults.time,
+    );
+    if (res == null || !mounted) return;
+    final notifier =
+        ref.read(gameLibraryNotifierProvider(widget.subdomainFull).notifier);
+    final r = await notifier.confirmSchedule(
+      weekdays: res.weekdays,
+      time: res.time,
+    );
+    if (!mounted) return;
+    if (!r.ok) {
+      _toastError('保存失败：${r.error ?? "未知错误"}');
+    } else {
+      _toast('已保存自动清理策略');
+    }
   }
 
   Future<void> _onCancel(DownloadTask row) async {
@@ -380,6 +516,12 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
           if (!isNarrow) const Divider(height: 1, color: Color(0xFFE5E7EB)),
           _buildTabs(state, isNarrow: isNarrow),
           const Divider(height: 1, color: Color(0xFFE5E7EB)),
+          // 闲置 Tab 顶部回收策略工具条（顶到 list 上方、Tabs 下方，全宽贴边）
+          if (_activeTab == _Tab.idle)
+            RecycleBar(
+              subdomain: widget.subdomainFull,
+              onOpenSchedule: _openSchedule,
+            ),
           Expanded(
             child: Container(
               padding: EdgeInsets.fromLTRB(isNarrow ? 10 : 16, 10, isNarrow ? 10 : 16, 0),
@@ -392,6 +534,7 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
                   _buildToolbar(state, isNarrow: isNarrow),
                   const SizedBox(height: 10),
                   Expanded(child: _buildList(state)),
+                  if (_activeTab == _Tab.idle) _buildBulkBar(state),
                 ],
               ),
             ),
@@ -498,10 +641,12 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
     final localCount = state.localGames.length;
     final allCount = state.games.length;
     final dlCount = state.downloads.length;
+    final idleCount = state.idleGames.length;
     final items = [
       (_Tab.local, LucideIcons.hardDrive, '本地游戏', localCount),
       (_Tab.all, LucideIcons.listChecks, '全部游戏', allCount),
       (_Tab.downloads, LucideIcons.downloadCloud, '下载任务', dlCount),
+      (_Tab.idle, LucideIcons.recycle, '闲置游戏', idleCount),
     ];
     return Container(
       color: Colors.white,
@@ -635,6 +780,7 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
               _filterCategory = v ?? '';
               _resetPaging();
             });
+            _notifier.clearSelection();
           },
         ),
       if (_activeTab == _Tab.all)
@@ -652,22 +798,9 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
               _filterStatus = v ?? '';
               _resetPaging();
             });
+            _notifier.clearSelection();
           },
         ),
-      if (_activeTab != _Tab.downloads) ...[
-        _checkbox('隐藏废弃', _hideDeprecated, (v) {
-          setState(() {
-            _hideDeprecated = v;
-            _resetPaging();
-          });
-        }),
-        _checkbox('隐藏系统类', _hideSystem, (v) {
-          setState(() {
-            _hideSystem = v;
-            _resetPaging();
-          });
-        }),
-      ],
     ];
 
     // 桌面端：搜索 + 筛选项一行 Wrap 平铺
@@ -724,8 +857,6 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
     if (_filterPlatform.isNotEmpty) n++;
     if (_activeTab != _Tab.downloads && _filterCategory.isNotEmpty) n++;
     if (_activeTab == _Tab.all && _filterStatus.isNotEmpty) n++;
-    if (_activeTab != _Tab.downloads && !_hideDeprecated) n++; // 默认 true
-    if (_activeTab != _Tab.downloads && _hideSystem) n++; // 默认 false
     return n;
   }
 
@@ -817,42 +948,6 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
     );
   }
 
-  Widget _checkbox(String label, bool value, ValueChanged<bool> onChanged) {
-    return InkWell(
-      onTap: () => onChanged(!value),
-      borderRadius: BorderRadius.circular(6),
-      child: Container(
-        height: 34,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        decoration: BoxDecoration(
-          color: value ? const Color(0xFFEFF6FF) : Colors.white,
-          border: Border.all(
-            color: value ? AppColors.iosBlue : const Color(0xFFD1D5DB),
-          ),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              value ? LucideIcons.checkSquare : LucideIcons.square,
-              size: 13,
-              color: value ? AppColors.iosBlue : Colors.black54,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                color: value ? AppColors.iosBlue : Colors.black87,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   // ============== 列表 ==============
   Widget _buildList(GameLibraryState state) {
     final isDownloads = _activeTab == _Tab.downloads;
@@ -912,25 +1007,40 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
 
   Widget _buildEmpty() {
     final isDownloads = _activeTab == _Tab.downloads;
+    final isIdle = _activeTab == _Tab.idle;
+    final IconData icon;
+    final String title;
+    final String tip;
+    if (isDownloads) {
+      icon = LucideIcons.download;
+      title = '当前没有下载任务';
+      tip = '在"本地"或"全部"列表点"下载"开始';
+    } else if (isIdle) {
+      final plan = ref
+          .read(gameLibraryNotifierProvider(widget.subdomainFull))
+          .recyclePlan;
+      final days = plan?.retainDays ?? RecycleDefaults.retainDays;
+      icon = LucideIcons.recycle;
+      title = '当前没有闲置游戏';
+      tip = '所有已安装游戏都在 $days 天内被打开过';
+    } else {
+      icon = LucideIcons.inbox;
+      title = '没有符合条件的游戏';
+      tip = '尝试清除筛选或修改搜索关键词';
+    }
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            isDownloads ? LucideIcons.download : LucideIcons.inbox,
-            size: 28,
-            color: const Color(0xFF9CA3AF),
-          ),
+          Icon(icon, size: 28, color: const Color(0xFF9CA3AF)),
           const SizedBox(height: 8),
-          Text(
-            isDownloads ? '当前没有下载任务' : '没有符合条件的游戏',
-            style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
-          ),
+          Text(title,
+              style:
+                  const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
           const SizedBox(height: 4),
-          Text(
-            isDownloads ? '在"本地"或"全部"列表点"下载"开始' : '尝试清除筛选或修改搜索关键词',
-            style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF)),
-          ),
+          Text(tip,
+              style:
+                  const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF))),
         ],
       ),
     );
@@ -940,82 +1050,132 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
   Widget _buildGameRow(GameItem row) {
     final accent = platformAccent(row.platform);
     final accentSoft = platformAccentSoft(row.platform);
-    final state = row.rowState;
-    final downloading = ref
-        .read(gameLibraryNotifierProvider(widget.subdomainFull))
-        .downloads
+    final stateEnum = row.rowState;
+    final liveState = ref.watch(gameLibraryNotifierProvider(widget.subdomainFull));
+    final downloading = liveState.downloads
         .any((t) => t.platform == row.platform && t.gid == row.gid);
 
-    return Container(
+    final selectable = _activeTab == _Tab.idle;
+    final selected = selectable && liveState.selectedRowKeys.contains(row.rowKey);
+
+    // 选中态强化左边框为 iosBlue，其它平台 accent；未选中沿用 platform accent
+    final borderColor = selected ? AppColors.iosBlue : accent;
+
+    final card = Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(left: BorderSide(color: accent, width: 3)),
+        // 选中态用极淡蓝色背景；未选中保持白底
+        color: selected ? const Color(0xFFEFF6FF) : Colors.white,
+        border: Border(left: BorderSide(color: borderColor, width: 3)),
         borderRadius: BorderRadius.circular(8),
         boxShadow: AppShadows.sm,
       ),
-      child: Column(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  row.name ?? row.friendlyName ?? '未命名',
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              _stateChip(state, accent, accentSoft),
-              const SizedBox(width: 6),
-              _gameActionButton(row, downloading),
-            ],
-          ),
-          if (row.friendlyName != null &&
-              row.friendlyName!.isNotEmpty &&
-              row.friendlyName != row.name)
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text(
-                row.friendlyName!,
-                style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF)),
-                overflow: TextOverflow.ellipsis,
+          // 闲置 Tab：左侧 Checkbox
+          if (selectable) ...[
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: Checkbox(
+                value: selected,
+                onChanged: (_) => _notifier.toggleSelect(row.rowKey),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+                activeColor: AppColors.iosBlue,
               ),
             ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 10,
-            runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              _platformTag(row.platform, accent, accentSoft),
-              _metaCell(LucideIcons.hardDrive, formatBytes(row.sizeBytes), bold: true),
-              _metaCell(LucideIcons.hash, row.gid.toString()),
-              if (row.isUpgradable)
-                _metaCell(
-                  LucideIcons.sparkles,
-                  'v${row.localVersion} → v${row.cloudVersion}',
-                  color: const Color(0xFFB45309),
-                )
-              else if (row.localVersion > 0)
-                _metaCell(LucideIcons.gitCommit, 'v${row.localVersion}',
-                    color: const Color(0xFF9CA3AF)),
-              if (row.category != null && row.category!.isNotEmpty)
-                _metaCell(LucideIcons.folderOpen, row.category!,
-                    color: row.isSystemCategory
-                        ? const Color(0xFFB45309)
-                        : const Color(0xFF9CA3AF)),
-              if (row.popularity != null && row.popularity! > 0)
-                _metaCell(LucideIcons.flame, row.popularity.toString(),
-                    color: const Color(0xFF9CA3AF)),
-              if (row.idcUpdateTs != null && row.idcUpdateTs! > 0)
-                _metaCell(LucideIcons.clock, formatUnix(row.idcUpdateTs),
-                    color: const Color(0xFF9CA3AF)),
-            ],
+            const SizedBox(width: 8),
+          ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        row.name ?? row.friendlyName ?? '未命名',
+                        style: const TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    _stateChip(stateEnum, accent, accentSoft),
+                    // 闲置 Tab：隐藏下载/卸载按钮（避免与底部批删路径并存）
+                    if (!selectable) ...[
+                      const SizedBox(width: 6),
+                      _gameActionButton(row, downloading),
+                    ],
+                  ],
+                ),
+                if (row.friendlyName != null &&
+                    row.friendlyName!.isNotEmpty &&
+                    row.friendlyName != row.name)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      row.friendlyName!,
+                      style: const TextStyle(
+                          fontSize: 11, color: Color(0xFF9CA3AF)),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    _platformTag(row.platform, accent, accentSoft),
+                    _metaCell(LucideIcons.hardDrive, formatBytes(row.sizeBytes),
+                        bold: true),
+                    _metaCell(LucideIcons.hash, row.gid.toString()),
+                    if (row.isUpgradable)
+                      _metaCell(
+                        LucideIcons.sparkles,
+                        'v${row.localVersion} → v${row.cloudVersion}',
+                        color: const Color(0xFFB45309),
+                      )
+                    else if (row.localVersion > 0)
+                      _metaCell(LucideIcons.gitCommit, 'v${row.localVersion}',
+                          color: const Color(0xFF9CA3AF)),
+                    if (row.category != null && row.category!.isNotEmpty)
+                      _metaCell(LucideIcons.folderOpen, row.category!,
+                          color: row.isSystemCategory
+                              ? const Color(0xFFB45309)
+                              : const Color(0xFF9CA3AF)),
+                    if (row.popularity != null && row.popularity! > 0)
+                      _metaCell(LucideIcons.flame, row.popularity.toString(),
+                          color: const Color(0xFF9CA3AF)),
+                    if (row.idcUpdateTs != null && row.idcUpdateTs! > 0)
+                      _metaCell(LucideIcons.clock, formatUnix(row.idcUpdateTs),
+                          color: const Color(0xFF9CA3AF)),
+                    // 闲置 Tab：最近打开时间 / 从未启动
+                    if (selectable)
+                      (row.lastLaunchTs != null && row.lastLaunchTs! > 0)
+                          ? _metaCell(LucideIcons.calendarClock,
+                              '最近打开 ${formatUnix(row.lastLaunchTs)}',
+                              color: const Color(0xFF10B981))
+                          : _metaCell(LucideIcons.calendarClock, '从未启动',
+                              color: const Color(0xFF9CA3AF)),
+                  ],
+                ),
+              ],
+            ),
           ),
         ],
       ),
+    );
+
+    // 闲置 Tab：整卡片点击 = 切换选择
+    if (!selectable) return card;
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => _notifier.toggleSelect(row.rowKey),
+      child: card,
     );
   }
 
@@ -1289,6 +1449,115 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
           ),
         ),
       ],
+    );
+  }
+
+  // ============== 闲置 Tab：底部批量操作栏 ==============
+  Widget _buildBulkBar(GameLibraryState state) {
+    // 选择范围 = 当前筛选/搜索后的可见闲置集合（与 Web selectableGames=filteredGames 对齐）
+    final selectable = _filteredGames(state);
+    if (selectable.isEmpty) return const SizedBox.shrink();
+
+    final selectedRowKeys = state.selectedRowKeys;
+    final selectedCount =
+        selectable.where((g) => selectedRowKeys.contains(g.rowKey)).length;
+    final isAll = selectable.isNotEmpty &&
+        selectable.every((g) => selectedRowKeys.contains(g.rowKey));
+    final isIndet = selectedCount > 0 && !isAll;
+
+    final bulkProgress = state.bulkProgress;
+    final bulkDeleting = bulkProgress != null;
+
+    final btnLabel = bulkDeleting
+        ? '批量删除中 ${bulkProgress.done}/${bulkProgress.total}…'
+        : (selectedCount > 0 ? '批量删除 ($selectedCount)' : '批量删除');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      margin: const EdgeInsets.only(top: 8, bottom: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: AppShadows.sm,
+      ),
+      child: Row(
+        children: [
+          // 全选 / 取消全选（含 indeterminate）
+          InkWell(
+            onTap: bulkDeleting
+                ? null
+                : () {
+                    if (isAll) {
+                      _notifier.clearSelection();
+                    } else {
+                      _notifier.selectAll(selectable.map((g) => g.rowKey));
+                    }
+                  },
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: Checkbox(
+                      value: isAll ? true : (isIndet ? null : false),
+                      tristate: true,
+                      onChanged: bulkDeleting
+                          ? null
+                          : (_) {
+                              if (isAll) {
+                                _notifier.clearSelection();
+                              } else {
+                                _notifier
+                                    .selectAll(selectable.map((g) => g.rowKey));
+                              }
+                            },
+                      activeColor: AppColors.iosBlue,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    isAll ? '取消全选' : '全选',
+                    style: const TextStyle(fontSize: 12, color: Colors.black87),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            '已选 $selectedCount / ${selectable.length}',
+            style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+          ),
+          const Spacer(),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.red,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(0, 34),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
+            onPressed: (selectedCount == 0 || bulkDeleting) ? null : _onBulkDelete,
+            icon: bulkDeleting
+                ? const SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : const Icon(LucideIcons.trash2, size: 13),
+            label: Text(btnLabel, style: const TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
     );
   }
 }
