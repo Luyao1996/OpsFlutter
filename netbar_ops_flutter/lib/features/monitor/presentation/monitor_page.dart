@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:window_manager/window_manager.dart';
 import '../../../core/network/task_ws_provider.dart';
 import '../../../core/network/ws_binary.dart';
 import '../../../core/storage/token_store.dart';
@@ -49,7 +50,8 @@ class MonitorPage extends ConsumerStatefulWidget {
   ConsumerState<MonitorPage> createState() => _MonitorPageState();
 }
 
-class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingObserver {
+class _MonitorPageState extends ConsumerState<MonitorPage>
+    with WidgetsBindingObserver, WindowListener {
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
   bool _isListView = false;
@@ -89,6 +91,11 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (isDesktopPlatform) {
+      // 桌面主窗口最小化/恢复事件：lifecycle paused 在桌面 Flutter 上不一定触发，
+      // 加 WindowListener 兜底，确保最小化时停止 router 流量轮询等
+      windowManager.addListener(this);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       try {
         _routeListenable = GoRouter.of(context).routeInformationProvider;
@@ -113,9 +120,27 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
   void dispose() {
     _searchController.dispose();
     WidgetsBinding.instance.removeObserver(this);
+    if (isDesktopPlatform) {
+      windowManager.removeListener(this);
+    }
     _routeListenable?.removeListener(_onRouteChanged);
     _hideContextMenu();
     super.dispose();
+  }
+
+  // WindowListener: 桌面主窗口最小化/恢复
+  // (与 didChangeAppLifecycleState 互补——部分 Flutter Desktop 版本最小化
+  // 不会触发 paused/inactive，仅依赖 lifecycle 不够稳)
+  @override
+  void onWindowMinimize() {
+    if (!mounted) return;
+    if (_appActive) setState(() => _appActive = false);
+  }
+
+  @override
+  void onWindowRestore() {
+    if (!mounted) return;
+    if (!_appActive) setState(() => _appActive = true);
   }
 
   // WidgetsBindingObserver: app lifecycle

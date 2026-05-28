@@ -82,7 +82,7 @@ class _RouterCardState extends State<RouterCard> {
       // silently ignore traffic errors
     }
     if (!mounted || !_polling) return;
-    _pollTimer = Timer(const Duration(seconds: 1), _pollOnce);
+    _pollTimer = Timer(const Duration(seconds: 15), _pollOnce);
   }
 
   @override
