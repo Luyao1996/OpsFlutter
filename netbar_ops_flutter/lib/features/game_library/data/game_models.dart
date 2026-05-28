@@ -13,6 +13,8 @@ class GameItem {
   final int? idcUpdateTs;
   final String? localPath;
   final String platform;
+  /// 上一次启动时间（秒级 unix 时间戳），用于「闲置游戏」筛选；无则为 null
+  final int? lastLaunchTs;
 
   GameItem({
     required this.gid,
@@ -26,6 +28,7 @@ class GameItem {
     this.popularity,
     this.idcUpdateTs,
     this.localPath,
+    this.lastLaunchTs,
   });
 
   String get rowKey => '$platform:$gid';
@@ -66,6 +69,15 @@ class GameItem {
     return GameRowState.pending;
   }
 
+  /// 是否受保护分类 = 网吧本地应用 || 平台对应的系统/PNP 分类
+  bool get isProtectedCategory {
+    final c = category;
+    if (c == null || c.isEmpty) return false;
+    if (c == kProtectedCatLocalApp) return true;
+    final list = kProtectedCatsByPlatform[platform];
+    return list != null && list.contains(c);
+  }
+
   factory GameItem.fromJson(Map<String, dynamic> json, String platform) {
     return GameItem(
       gid: _toInt(json['gid']),
@@ -83,6 +95,9 @@ class GameItem {
           ? (json['idc_update_ts'] as num).toInt()
           : null,
       localPath: json['local_path']?.toString(),
+      lastLaunchTs: json['last_launch_ts'] is num
+          ? (json['last_launch_ts'] as num).toInt()
+          : null,
     );
   }
 }
@@ -215,6 +230,119 @@ class CancelledTask {
         gid: _toInt(json['gid']),
         result: json['result']?.toString(),
       );
+}
+
+/// 回收策略（与后端 cfg.Recycle 对齐）
+/// 注意：freeThresholdUi 是 UI 语义"占用%"；API 字段 free_threshold 是"剩余%"；
+/// 100-X 反转规则只在 GameLibraryApi.saveRecyclePlan / 从 /config 拉取时统一做。
+class RecyclePlan {
+  final bool enabled;
+  /// UI 视角"占用%" (0..100)；null 表示未填写
+  final int? freeThresholdUi;
+  /// ≥0；null 表示未填写
+  final int? retainDays;
+  /// Go time.Weekday: Sun=0..Sat=6
+  final List<int> weekdays;
+  /// "HH:MM"
+  final String time;
+  /// bitmask: 1=删从未启动 / 2=删云端下架；默认 3
+  final int delFlags;
+  /// 后端 platforms map：icafe8/cloud 可开；goodgame/story 服务端强制 false
+  final Map<String, bool> platforms;
+
+  const RecyclePlan({
+    required this.enabled,
+    this.freeThresholdUi,
+    this.retainDays,
+    this.weekdays = const [],
+    this.time = RecycleDefaults.time,
+    this.delFlags = RecycleDefaults.delFlags,
+    this.platforms = const {},
+  });
+
+  static const RecyclePlan empty = RecyclePlan(enabled: false);
+
+  RecyclePlan copyWith({
+    bool? enabled,
+    int? freeThresholdUi,
+    Object? retainDays = _sentinel,
+    List<int>? weekdays,
+    String? time,
+    int? delFlags,
+    Map<String, bool>? platforms,
+  }) {
+    return RecyclePlan(
+      enabled: enabled ?? this.enabled,
+      freeThresholdUi: freeThresholdUi ?? this.freeThresholdUi,
+      retainDays: identical(retainDays, _sentinel)
+          ? this.retainDays
+          : retainDays as int?,
+      weekdays: weekdays ?? this.weekdays,
+      time: time ?? this.time,
+      delFlags: delFlags ?? this.delFlags,
+      platforms: platforms ?? this.platforms,
+    );
+  }
+
+  /// 从 GET /game_library/config 返回体的 .recycle 节点解析；同时把 free_threshold 由 API 剩余% 反转为 UI 占用%
+  /// 同时返回 timer_active（如有），用于 enabled 兜底
+  static RecyclePlan fromConfigJson(Map<String, dynamic> root) {
+    final r = root['recycle'];
+    final timerActive = root['timer_active'];
+    if (r is! Map) {
+      return RecyclePlan(enabled: timerActive == true);
+    }
+    final m = r.cast<String, dynamic>();
+    final platformsRaw = m['platforms'];
+    final platforms = <String, bool>{};
+    if (platformsRaw is Map) {
+      platformsRaw.forEach((k, v) {
+        platforms[k.toString()] = v == true;
+      });
+    }
+    final anyOn = platforms.values.any((v) => v);
+    int? freeThrUi;
+    final ftRaw = m['free_threshold'];
+    if (ftRaw is num) freeThrUi = 100 - ftRaw.toInt();
+    int? rd;
+    final rdRaw = m['retain_days'];
+    if (rdRaw is num) rd = rdRaw.toInt();
+    final weekdaysRaw = m['weekdays'];
+    final weekdays = <int>[];
+    if (weekdaysRaw is List) {
+      for (final w in weekdaysRaw) {
+        if (w is num) weekdays.add(w.toInt());
+      }
+    }
+    final timeRaw = m['time']?.toString();
+    final delFlagsRaw = m['del_flags'];
+    return RecyclePlan(
+      enabled: timerActive is bool ? timerActive : anyOn,
+      freeThresholdUi: freeThrUi,
+      retainDays: rd,
+      weekdays: weekdays,
+      time: (timeRaw != null && timeRaw.isNotEmpty)
+          ? timeRaw
+          : RecycleDefaults.time,
+      delFlags: delFlagsRaw is num ? delFlagsRaw.toInt() : RecycleDefaults.delFlags,
+      platforms: platforms,
+    );
+  }
+}
+
+const _sentinel = Object();
+
+/// 批量删除结果（成功数 + 失败明细）
+class BatchDeleteResult {
+  final int success;
+  final List<BatchDeleteFailure> failures;
+  const BatchDeleteResult({required this.success, required this.failures});
+}
+
+class BatchDeleteFailure {
+  final String name;
+  final String reason;
+  const BatchDeleteFailure({required this.name, required this.reason});
 }
 
 int _toInt(dynamic v) {

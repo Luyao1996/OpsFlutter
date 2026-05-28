@@ -112,6 +112,100 @@ class GameLibraryApi {
         'gid': gid,
       });
 
+  /// POST /game_library/delete_game?platform=&gid=
+  /// ⚠️ 仅本机回环允许（127.x/::1/localhost），跨机一律 403
+  /// 调用方需处理 403 的专属文案
+  Future<GameOpResult> deleteGame({
+    required String platform,
+    required int gid,
+  }) =>
+      _opWrite('/game_library/delete_game', {
+        'platform': platform,
+        'gid': gid,
+      });
+
+  /// GET /game_library/config
+  /// 返回 raw map；调用方通过 RecyclePlan.fromConfigJson 提取 .recycle
+  Future<Map<String, dynamic>?> getGameConfig() async {
+    final url = _buildUrl('/game_library/config');
+    try {
+      final resp = await _dio.get<dynamic>(url);
+      final data = resp.data;
+      if (data is Map) return data.cast<String, dynamic>();
+      return null;
+    } on DioException {
+      return null; // 失败时静默返回 null，调用方按未配置处理
+    }
+  }
+
+  /// POST /game_library/delete_plan
+  /// 整体替换式：每次都要传完整对象（非 merge patch）
+  /// 入参用 UI 视角的 plan；内部做 100-X 反转 + 强制 platforms 规则
+  /// 返回 { ok, status, plan?, timerActive?, error? }：plan 是后端回填后的真实值（含 forced-false）
+  Future<RecyclePlanSaveResult> saveRecyclePlan({
+    required RecyclePlan plan,
+    required bool enabled,
+  }) async {
+    final url = _buildUrl('/game_library/delete_plan');
+    final ftUi = plan.freeThresholdUi;
+    final apiFt = ftUi != null ? (100 - ftUi) : 0;
+    // platforms：enabled 时强制 icafe8/cloud=true、goodgame/story=false（后端也会强制）
+    // disabled 时传空对象，等价"关闭"
+    final platforms = enabled
+        ? const {
+            kPlatformIcafe8: true,
+            kPlatformCloud: true,
+            kPlatformGoodgame: false,
+            kPlatformStory: false,
+          }
+        : const <String, bool>{};
+    final body = <String, dynamic>{
+      'free_threshold': apiFt,
+      'retain_days': plan.retainDays,
+      'weekdays': plan.weekdays,
+      'time': plan.time,
+      'del_flags': plan.delFlags,
+      'platforms': platforms,
+    };
+    try {
+      final resp = await _dio.post<dynamic>(
+        url,
+        data: body,
+        options: Options(
+          contentType: 'application/json',
+          responseType: ResponseType.json,
+        ),
+      );
+      final status = resp.statusCode ?? 0;
+      final data = resp.data;
+      if (data is Map) {
+        final root = data.cast<String, dynamic>();
+        return RecyclePlanSaveResult(
+          ok: status >= 200 && status < 300,
+          status: status,
+          plan: RecyclePlan.fromConfigJson(root),
+          timerActive:
+              root['timer_active'] is bool ? root['timer_active'] as bool : null,
+        );
+      }
+      return RecyclePlanSaveResult(
+        ok: status >= 200 && status < 300,
+        status: status,
+      );
+    } on DioException catch (e) {
+      final status = e.response?.statusCode ?? 0;
+      final body = e.response?.data;
+      String? error;
+      if (body is Map) {
+        error = (body['message'] ?? body['error'])?.toString();
+      } else if (body is String) {
+        error = body;
+      }
+      error ??= e.message;
+      return RecyclePlanSaveResult(ok: false, status: status, error: error);
+    }
+  }
+
   Future<GameOpResult> _opWrite(String path, Map<String, dynamic> query) async {
     final url = _buildUrl(path, query);
     try {
@@ -223,4 +317,19 @@ GameOpResult _parseOpResult(int status, Map<String, dynamic> body) {
     results: resultsMap,
     cancelled: cancelled,
   );
+}
+
+class RecyclePlanSaveResult {
+  final bool ok;
+  final int status;
+  final RecyclePlan? plan;
+  final bool? timerActive;
+  final String? error;
+  RecyclePlanSaveResult({
+    required this.ok,
+    required this.status,
+    this.plan,
+    this.timerActive,
+    this.error,
+  });
 }

@@ -91,3 +91,46 @@ const Duration kDownloadPollInterval = Duration(seconds: 2);
 
 /// 搜索防抖
 const Duration kSearchDebounce = Duration(milliseconds: 150);
+
+/// 工具箱身份：seat picker 未选机号时使用。配合 from='wwls' 旁路 seat 单任务约束。
+/// 与真实机号不冲突（真实机号普遍 'A001'/'B-12' 短串）。
+const String kToolboxSeat = 'WW_TOOLBOX';
+
+/// 受保护分类：命中则跳过自动回收 / 闲置列表（与 Web 端 isProtectedCategory 对齐）
+const Map<String, List<String>> kProtectedCatsByPlatform = {
+  kPlatformIcafe8: ['系统更新', '客户机系统补丁'],
+  kPlatformGoodgame: ['系统更新', '客户机系统补丁'],
+  kPlatformCloud: ['显卡PNP', '系统资源'],
+  kPlatformStory: ['显卡PNP'],
+};
+
+/// 全平台一刀切的受保护分类
+const String kProtectedCatLocalApp = '网吧本地应用';
+
+/// 回收策略默认值（与 Web 端 RECYCLE_DEFAULTS 对齐）
+/// freeThreshold = 90 是「占用%」UI 语义；API 存的是「剩余%」（100-X 反转在 api 层做）
+/// delFlags=3 = bit1|bit2，同时回收"从未启动 + 云端下架"，与 retain_days 配合还会回收 expired
+class RecycleDefaults {
+  static const int freeThresholdUi = 90; // 占用%
+  static const int retainDays = 30;
+  static const String time = '06:00';
+  static const int delFlags = 3;
+  static const List<int> weekdays = []; // 空数组 → 未配置
+}
+
+/// 周天选项（周一在前更符合中文习惯）。value 仍按 Go time.Weekday: Sun=0..Sat=6
+class WeekdayOption {
+  final int value;
+  final String label;
+  const WeekdayOption(this.value, this.label);
+}
+
+const List<WeekdayOption> kWeekdayOptions = [
+  WeekdayOption(1, '周一'),
+  WeekdayOption(2, '周二'),
+  WeekdayOption(3, '周三'),
+  WeekdayOption(4, '周四'),
+  WeekdayOption(5, '周五'),
+  WeekdayOption(6, '周六'),
+  WeekdayOption(0, '周日'),
+];
