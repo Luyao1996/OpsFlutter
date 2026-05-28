@@ -62,6 +62,10 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
   OverlayEntry? _menuOverlay;
   Terminal? _selectedTerminal;
 
+  // 关键设备区路由器流量手动刷新计数器：每次点击"刷新"按钮 +1，
+  // RouterCard 通过 didUpdateWidget 检测变化后立即重拉一次流量并重置 15s 计时。
+  int _routerRefreshTick = 0;
+
   // 截图缓存：seatId -> 截图数据
   final Map<String, Uint8List> _screenshotCache = {};
   bool _screenshotsLoading = false;
@@ -77,6 +81,11 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
   // Realtime hwinfo cache: seatId -> {cpu, gpu, ram, disk}
   final Map<String, Map<String, double>> _realtimeCache = {};
   bool _realtimeLoading = false;
+
+  /// realtime 是否已经"尝试加载过"一次（不论成功失败）。
+  /// 用于阻断"全部失败 → cache 仍空 → build 又触发 → 又全失败"的死循环；
+  /// 只有切网吧 / 点刷新按钮才会重置为 false，再次允许首帧自动拉取。
+  bool _realtimeAttempted = false;
 
   // Router traffic polling visibility control
   bool _appActive = true;       // app in foreground
@@ -211,6 +220,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
     if (!mounted || ref.read(currentNetbarIdProvider) != netbarId) return;
 
     _realtimeLoading = false;
+    _realtimeAttempted = true; // 已尝试过一次（成功或全失败），阻断 build 自动重触发的死循环
     setState(() {}); // trigger rebuild with updated cache
   }
 
@@ -342,6 +352,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
     ref.listen<CurrentNetbar>(currentNetbarProvider, (prev, next) {
       if (prev?.id != next.id) {
         _realtimeLoading = false; // 切网吧：释放加载标志，允许新网吧立即启动 realtime
+        _realtimeAttempted = false; // 切网吧：重置尝试标志，新网吧首帧重新触发 realtime 拉取
         setState(() {
           _searchQuery = '';
           _filterStatus = 'all';
@@ -380,8 +391,10 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                 _loadScreenshots(terminals, netbarId);
               });
             }
-            // 批量实时硬件(CPU/内存/GPU)：首帧后批量拉取，分批限流(≤5)，绑定 netbarId 防串台
-            if (terminals.isNotEmpty && _realtimeCache.isEmpty && !_realtimeLoading) {
+            // 批量实时硬件(CPU/内存/GPU)：首帧后批量拉取，分批限流(≤5)，绑定 netbarId 防串台。
+            // 触发条件用 _realtimeAttempted 而非 _realtimeCache.isEmpty——
+            // 后者在所有请求都失败时永远 true，会让 build 不断自动重触发形成死循环。
+            if (terminals.isNotEmpty && !_realtimeAttempted && !_realtimeLoading) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 _loadRealtimeStats(terminals, netbarId);
               });
@@ -1326,6 +1339,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                         key: ValueKey('router-$netbarId-${r.id}'),
                         router: r,
                         api: routerApi,
+                        refreshTick: _routerRefreshTick,
                         active: _devicesVisible,
                         onTap: () => _openRouterInBrowser(r, expectedNetbarId: netbarId),
                         onEdit: () => _showRouterEditModal(router: r, netbarId: netbarId),
@@ -1374,10 +1388,16 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
       height: 32,
       child: IconButton(
         onPressed: () {
-          // 重新拉取：列表数据 + 路由 + 实时硬件占用(CPU/内存)；不触碰截图缓存。
-          // 清 _realtimeCache 让 build 的 data 分支因 isEmpty 重新触发 _loadRealtimeStats。
-          setState(() => _realtimeCache.clear());
+          // 重新拉取：列表数据 + 路由 + 实时硬件占用(CPU/内存) + 路由器流量；
+          // 不触碰截图缓存。
+          // - 清 _realtimeCache 让 build 的 data 分支因 isEmpty 重新触发 _loadRealtimeStats
+          // - _routerRefreshTick++ 让 RouterCard didUpdateWidget 立即重拉流量并重置 15s 计时
+          setState(() {
+            _realtimeCache.clear();
+            _routerRefreshTick++;
+          });
           _realtimeLoading = false;
+          _realtimeAttempted = false; // 刷新：允许 build 重新触发一次 realtime 拉取
           ref.invalidate(terminalsProvider(netbarId));
           if (netbarId != null) ref.invalidate(routersProvider(netbarId));
         },
@@ -1498,6 +1518,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                 onPressed: () {
                   setState(() => _realtimeCache.clear());
                   _realtimeLoading = false;
+                  _realtimeAttempted = false; // 刷新：允许 build 重新触发一次 realtime 拉取
                   ref.invalidate(terminalsProvider(ref.read(currentNetbarIdProvider)));
                 },
                 size: isNarrow ? 40 : 44,

@@ -14,6 +14,10 @@ class RouterCard extends StatefulWidget {
   /// When false, traffic polling is paused (e.g. page not visible).
   final bool active;
 
+  /// 外部手动触发流量重拉的脉冲计数器：每次 +1 → didUpdateWidget 检测到变化后
+  /// 立即停掉当前 timer、拉一次新流量、重新起 15s 计时。
+  final int refreshTick;
+
   const RouterCard({
     super.key,
     required this.router,
@@ -21,6 +25,7 @@ class RouterCard extends StatefulWidget {
     this.onTap,
     this.onEdit,
     this.active = true,
+    this.refreshTick = 0,
   });
 
   @override
@@ -50,6 +55,11 @@ class _RouterCardState extends State<RouterCard> {
     } else if (!wasPolling && _shouldPoll) {
       _startPolling();
     } else if (_shouldPoll && oldWidget.router.id != widget.router.id) {
+      _stopPolling();
+      _startPolling();
+    } else if (_shouldPoll &&
+        oldWidget.refreshTick != widget.refreshTick) {
+      // 外部刷新按钮触发：立即重拉一次并重置 15s 计时
       _stopPolling();
       _startPolling();
     }
