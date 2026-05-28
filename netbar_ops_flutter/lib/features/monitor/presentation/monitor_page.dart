@@ -75,7 +75,6 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
   // Realtime hwinfo cache: seatId -> {cpu, gpu, ram, disk}
   final Map<String, Map<String, double>> _realtimeCache = {};
   bool _realtimeLoading = false;
-  Timer? _realtimeTimer;
 
   // Router traffic polling visibility control
   bool _appActive = true;       // app in foreground
@@ -113,7 +112,6 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
   @override
   void dispose() {
     _searchController.dispose();
-    _realtimeTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _routeListenable?.removeListener(_onRouteChanged);
     _hideContextMenu();
@@ -129,22 +127,25 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     }
   }
 
-  /// 批量获取在线终端的 hwinfo realtime（CPU/GPU/RAM）—— 走 WebSocket
-  Future<void> _loadRealtimeStats(List<Terminal> terminals) async {
+  /// 批量获取在线终端的 hwinfo realtime（CPU/GPU/RAM）—— 走 WebSocket。
+  /// [netbarId] 为发起时的网吧 ID，贯穿整条异步链做防串台校验：
+  /// merchantId 直接用它（避免与 seatId 错配），切网吧后停止旧网吧的批次、丢弃迟到响应。
+  Future<void> _loadRealtimeStats(List<Terminal> terminals, int? netbarId) async {
     if (_realtimeLoading) return;
+    if (netbarId == null) return;
     _realtimeLoading = true;
     final api = ref.read(terminalApiProvider);
-    final merchantId = ref.read(currentNetbarProvider).id;
-    if (merchantId == null) { _realtimeLoading = false; return; }
 
     final online = terminals.where((t) => t.status > 0 && t.seatId.isNotEmpty).toList();
 
-    // Fetch in parallel, max 5 concurrent
+    // 分批限流：每批最多 5 个并发；每批之间校验仍是发起时的网吧，切网吧即停（防串台）
     final futures = <Future>[];
     for (final t in online) {
+      if (!mounted || ref.read(currentNetbarIdProvider) != netbarId) break;
       futures.add(
-        api.getHardwareRealtime(t.seatId, merchantId: merchantId).then((rt) {
-          if (!mounted) return;
+        api.getHardwareRealtime(t.seatId, merchantId: netbarId).then((rt) {
+          // 防串台：响应回来后若已切换网吧，丢弃（不写缓存）
+          if (!mounted || ref.read(currentNetbarIdProvider) != netbarId) return;
           final stats = <String, double>{};
           // CPU
           final cpuList = rt['cpu'] as List?;
@@ -180,16 +181,12 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     }
     if (futures.isNotEmpty) await Future.wait(futures);
 
-    _realtimeLoading = false;
-    if (mounted) setState(() {}); // trigger rebuild with updated cache
+    // 防串台：已切网吧则干净退出——加载标志在切换时已重置，这里不再触碰
+    // （避免误清新网吧的标志）、不 setState、不排下一轮。
+    if (!mounted || ref.read(currentNetbarIdProvider) != netbarId) return;
 
-    // Schedule next refresh after 15 seconds
-    _realtimeTimer?.cancel();
-    _realtimeTimer = Timer(const Duration(seconds: 15), () {
-      final currentId = ref.read(currentNetbarIdProvider);
-      final ts = ref.read(terminalsProvider(currentId)).valueOrNull ?? [];
-      _loadRealtimeStats(ts);
-    });
+    _realtimeLoading = false;
+    setState(() {}); // trigger rebuild with updated cache
   }
 
   /// Apply cached realtime stats to a terminal
@@ -319,7 +316,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
     // 切换网吧时重置搜索和筛选状态
     ref.listen<CurrentNetbar>(currentNetbarProvider, (prev, next) {
       if (prev?.id != next.id) {
-        _realtimeTimer?.cancel();
+        _realtimeLoading = false; // 切网吧：释放加载标志，允许新网吧立即启动 realtime
         setState(() {
           _searchQuery = '';
           _filterStatus = 'all';
@@ -358,12 +355,12 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
                 _loadScreenshots(terminals, netbarId);
               });
             }
-            // TODO: 批量实时硬件请求暂停，并发量过大影响服务端响应
-            // if (terminals.isNotEmpty && _realtimeCache.isEmpty && !_realtimeLoading) {
-            //   WidgetsBinding.instance.addPostFrameCallback((_) {
-            //     _loadRealtimeStats(terminals);
-            //   });
-            // }
+            // 批量实时硬件(CPU/内存/GPU)：首帧后批量拉取，分批限流(≤5)，绑定 netbarId 防串台
+            if (terminals.isNotEmpty && _realtimeCache.isEmpty && !_realtimeLoading) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _loadRealtimeStats(terminals, netbarId);
+              });
+            }
             return _buildContent(terminals);
           },
         ),
@@ -1352,8 +1349,12 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
       height: 32,
       child: IconButton(
         onPressed: () {
-          ref.refresh(terminalsProvider(netbarId));
-          if (netbarId != null) ref.refresh(routersProvider(netbarId));
+          // 重新拉取：列表数据 + 路由 + 实时硬件占用(CPU/内存)；不触碰截图缓存。
+          // 清 _realtimeCache 让 build 的 data 分支因 isEmpty 重新触发 _loadRealtimeStats。
+          setState(() => _realtimeCache.clear());
+          _realtimeLoading = false;
+          ref.invalidate(terminalsProvider(netbarId));
+          if (netbarId != null) ref.invalidate(routersProvider(netbarId));
         },
         icon: const Icon(LucideIcons.refreshCw, size: 14),
         style: IconButton.styleFrom(
@@ -1467,7 +1468,13 @@ class _MonitorPageState extends ConsumerState<MonitorPage> with WidgetsBindingOb
               _buildToolbarButton(
                 icon: LucideIcons.refreshCw,
                 tooltip: '刷新',
-                onPressed: () => ref.invalidate(terminalsProvider(ref.read(currentNetbarIdProvider))),
+                // 重新拉取：终端列表数据 + 实时硬件占用(CPU/内存)；不触碰截图缓存。
+                // 清 _realtimeCache 让 build 的 data 分支因 isEmpty 重新触发 _loadRealtimeStats。
+                onPressed: () {
+                  setState(() => _realtimeCache.clear());
+                  _realtimeLoading = false;
+                  ref.invalidate(terminalsProvider(ref.read(currentNetbarIdProvider)));
+                },
                 size: isNarrow ? 40 : 44,
               ),
             ],

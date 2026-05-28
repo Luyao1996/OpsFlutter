@@ -122,7 +122,8 @@ class TerminalDetailPage extends ConsumerStatefulWidget {
   ConsumerState<TerminalDetailPage> createState() => _TerminalDetailPageState();
 }
 
-class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
+class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
+    with WidgetsBindingObserver {
   static const _focusChannel = MethodChannel('com.netbar/window_focus');
   // 当前选中的功能 Tab
   String _selectedTab = '远程控制';
@@ -187,6 +188,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   @override
   void initState() {
     super.initState();
+    // 监听 app 生命周期：切后台暂停后台 timer，切前台恢复
+    WidgetsBinding.instance.addObserver(this);
     // 锁定"打开时所属网吧"，后续所有远程操作都以此为不变量基准
     _ownerNetbarId = ref.read(currentNetbarProvider).id;
     if (widget.initialScreenshot != null) {
@@ -747,7 +750,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
   }
 
   void _onWindowBlur() {
-    // 不再自动最小化，允许多窗口并存
+    // 窗口失焦/最小化/隐藏到 dock：暂停后台 timer，避免在用户不可见时
+    // 仍每 5s 拉截图 / 每 15s 拉心跳，浪费请求与服务端压力。
+    _pauseBackgroundTimers();
   }
 
   void _onWindowFocus() {
@@ -758,6 +763,45 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
         win32.InvalidateRect(hwnd, ffi.nullptr, 1);
         WidgetsBinding.instance.scheduleFrame();
       }
+    }
+    // 恢复后台 timer（WebRTC 活跃时 resume 内部会跳过，不与 WebRTC 路径冲突）
+    _resumeBackgroundTimers();
+  }
+
+  /// App 生命周期变化（手机端切前后台 / 桌面端 app 隐藏）。
+  /// paused/inactive/hidden/detached → 暂停后台 timer；resumed → 恢复。
+  /// 与桌面端 [_onWindowBlur]/[_onWindowFocus] 互不冲突（暂停操作可叠加）。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _resumeBackgroundTimers();
+    } else {
+      _pauseBackgroundTimers();
+    }
+  }
+
+  /// 暂停后台 timer（截图倒计时 + 心跳）。多次调用安全；WebRTC 已自行管理 timer。
+  void _pauseBackgroundTimers() {
+    _countdownTimer?.cancel();
+    _countdownTimer = null;
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+  }
+
+  /// 恢复后台 timer：
+  /// - WebRTC 活跃时跳过（由 WebRTC 路径自行 stop/restore，避免重复创建）。
+  /// - 心跳：立即拉一次 + 重新起 15s 周期。
+  /// - 截图：仅在用户开启了自动模式（[_screenshotRunning]）时恢复倒计时。
+  void _resumeBackgroundTimers() {
+    if (!mounted) return;
+    if (_isWebRTCActive) return;
+    _heartbeatTimer?.cancel();
+    _refreshHeartbeat(widget.terminalId, silent: true);
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      _refreshHeartbeat(widget.terminalId, silent: true);
+    });
+    if (_screenshotRunning) {
+      _startCountdown();
     }
   }
 
@@ -1317,6 +1361,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage> {
     _screenshotCancelled = true; // 标记取消
     _countdownTimer?.cancel(); // 停止倒计时
     _heartbeatTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 

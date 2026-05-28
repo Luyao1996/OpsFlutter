@@ -182,7 +182,20 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/terminal/:id',
         pageBuilder: (context, state) {
           final id = int.parse(state.pathParameters['id'] ?? '0');
-          final screenshot = state.extra as Uint8List?;
+          // extra 安全解析：go_router 在路由栈重建/恢复时会经 RouteInformation
+          // 序列化，Uint8List 会被降级成 List<int>，直接 as Uint8List? 会抛
+          // type cast 异常导致崩溃。这里兼容两种形态，其它类型安全置 null。
+          final rawExtra = state.extra;
+          Uint8List? screenshot;
+          if (rawExtra is Uint8List) {
+            screenshot = rawExtra;
+          } else if (rawExtra is List) {
+            try {
+              screenshot = Uint8List.fromList(rawExtra.cast<int>());
+            } catch (_) {
+              screenshot = null;
+            }
+          }
           return CustomTransitionPage(
             key: state.pageKey,
             child: TerminalDetailPage(terminalId: id, initialScreenshot: screenshot),
