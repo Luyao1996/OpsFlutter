@@ -69,6 +69,9 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
   // 截图缓存：seatId -> 截图数据
   final Map<String, Uint8List> _screenshotCache = {};
   bool _screenshotsLoading = false;
+  // 刷新：强制重拉截图标志。为 true 时 build 的 data 分支会用最新列表强制重拉一次截图
+  // （绕过缓存短路、不清空旧缓存），新图到达后 setState 覆盖，实现"保留旧图直到新图到达"无闪烁刷新。
+  bool _screenshotForceRefresh = false;
 
   /// 批量截图并发上限（滑动窗口）：同时在飞的 thumbnail 请求最多 5 个
   static const int _maxScreenshotConcurrency = 5;
@@ -247,7 +250,8 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
 
   /// 批量获取所有在线终端的截图。
   /// [netbarId] 为发起时的网吧 ID，贯穿整条异步链做防串台校验。
-  Future<void> _loadScreenshots(List<Terminal> terminals, int? netbarId) async {
+  Future<void> _loadScreenshots(List<Terminal> terminals, int? netbarId,
+      {bool force = false}) async {
     // 只获取在线终端的截图
     final onlineTerminals = terminals.where((t) => t.status > 0).toList();
     if (onlineTerminals.isEmpty) return;
@@ -262,7 +266,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
       while (mounted && ref.read(currentNetbarIdProvider) == netbarId) {
         final i = nextIndex++;
         if (i >= onlineTerminals.length) return;
-        await _loadSingleScreenshot(onlineTerminals[i], netbarId);
+        await _loadSingleScreenshot(onlineTerminals[i], netbarId, force: force);
       }
     }
 
@@ -280,11 +284,12 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
   /// 获取单个终端的截图，失败时静默重试。
   /// [netbarId] 为发起时的网吧 ID：merchantId 直接用它（避免与 seatId 错配），
   /// 且响应回来后校验仍是当前网吧，否则丢弃，防止切网吧后 A 的截图写进 B。
-  Future<void> _loadSingleScreenshot(Terminal terminal, int? netbarId) async {
+  Future<void> _loadSingleScreenshot(Terminal terminal, int? netbarId,
+      {bool force = false}) async {
     if (!mounted) return;
 
-    // 如果已经有缓存，不再请求
-    if (_screenshotCache.containsKey(terminal.seatId)) return;
+    // 如果已经有缓存，不再请求；force(刷新)时绕过缓存短路，强制重拉以覆盖旧图。
+    if (!force && _screenshotCache.containsKey(terminal.seatId)) return;
 
     try {
       // 改用 wsbin thumbnail（300px 缩略图）通道，merchantId 用发起时的网吧 ID
@@ -388,10 +393,17 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (error, _) => _buildErrorView(error.toString()),
           data: (terminals) {
-            // 批量截图：改用 wsbin thumbnail（300px 缩略图）通道，首帧后批量拉取
-            if (terminals.isNotEmpty && _screenshotCache.isEmpty && !_screenshotsLoading) {
+            // 批量截图：改用 wsbin thumbnail（300px 缩略图）通道，首帧后批量拉取。
+            // 触发条件：首次(_screenshotCache 为空) 或 刷新(_screenshotForceRefresh)。
+            // force 模式绕过单图缓存短路、不清旧缓存，新图回来再覆盖，实现无闪烁刷新。
+            if (terminals.isNotEmpty &&
+                (_screenshotForceRefresh || _screenshotCache.isEmpty) &&
+                !_screenshotsLoading) {
+              final force = _screenshotForceRefresh;
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                _loadScreenshots(terminals, netbarId);
+                if (!mounted) return;
+                _screenshotForceRefresh = false;
+                _loadScreenshots(terminals, netbarId, force: force);
               });
             }
             // 批量实时硬件(CPU/内存/GPU)：首帧后批量拉取，分批限流(≤5)，绑定 netbarId 防串台。
@@ -1279,18 +1291,24 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
             builder: (context, constraints) {
               final width = constraints.maxWidth;
               final isPhone = context.isPhone;
+              final gap = isPhone ? 12.0 : 16.0;
+              // 列数断点与终端列表 1:1 对齐，避免关键设备卡片被撑得比终端卡大几倍
               int columns;
               if (isPhone) {
-                columns = width >= 320 ? 2 : 1;
+                columns = width >= 640 ? 3 : 2;
+              } else if (width >= 1536) {
+                columns = 8;
+              } else if (width >= 1280) {
+                columns = 6;
               } else if (width >= 1024) {
+                columns = 5;
+              } else if (width >= 768) {
                 columns = 4;
               } else if (width >= 640) {
-                columns = 2;
+                columns = 3;
               } else {
-                columns = 1;
+                columns = 2;
               }
-
-              final gap = isPhone ? 12.0 : 16.0;
               final itemWidth = (width - (columns - 1) * gap) / columns;
               // 截图区接近 16:9 + 底部名称栏，与终端列表卡片比例(1.45)保持一致
               final itemHeight = itemWidth / 1.45;
@@ -1393,13 +1411,14 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
       height: 32,
       child: IconButton(
         onPressed: () {
-          // 重新拉取：列表数据 + 路由 + 实时硬件占用(CPU/内存) + 路由器流量；
-          // 不触碰截图缓存。
+          // 重新拉取：列表数据 + 路由 + 实时硬件占用(CPU/内存) + 路由器流量 + 截图缩略图。
           // - 清 _realtimeCache 让 build 的 data 分支因 isEmpty 重新触发 _loadRealtimeStats
           // - _routerRefreshTick++ 让 RouterCard didUpdateWidget 立即重拉流量并重置 15s 计时
+          // - _screenshotForceRefresh 让 build 用最新列表强制重拉截图(保留旧图直到新图到达)
           setState(() {
             _realtimeCache.clear();
             _routerRefreshTick++;
+            _screenshotForceRefresh = true;
           });
           _realtimeLoading = false;
           _realtimeAttempted = false; // 刷新：允许 build 重新触发一次 realtime 拉取
@@ -1518,10 +1537,14 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
               _buildToolbarButton(
                 icon: LucideIcons.refreshCw,
                 tooltip: '刷新',
-                // 重新拉取：终端列表数据 + 实时硬件占用(CPU/内存)；不触碰截图缓存。
-                // 清 _realtimeCache 让 build 的 data 分支因 isEmpty 重新触发 _loadRealtimeStats。
+                // 重新拉取：终端列表数据 + 实时硬件占用(CPU/内存) + 截图缩略图。
+                // 清 _realtimeCache 让 build 的 data 分支因 isEmpty 重新触发 _loadRealtimeStats；
+                // 置 _screenshotForceRefresh 让 build 用最新列表强制重拉截图(保留旧图直到新图到达)。
                 onPressed: () {
-                  setState(() => _realtimeCache.clear());
+                  setState(() {
+                    _realtimeCache.clear();
+                    _screenshotForceRefresh = true;
+                  });
                   _realtimeLoading = false;
                   _realtimeAttempted = false; // 刷新：允许 build 重新触发一次 realtime 拉取
                   ref.invalidate(terminalsProvider(ref.read(currentNetbarIdProvider)));
