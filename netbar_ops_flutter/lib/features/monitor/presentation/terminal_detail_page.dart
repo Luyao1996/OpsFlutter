@@ -39,6 +39,7 @@ import '../../../../shared/providers/permission_provider.dart';
 import '../../../../shared/providers/terminal_dock_provider.dart';
 import '../../../../shared/services/terminal_window_bridge.dart';
 import '../../../../shared/services/window_control.dart';
+import '../../../../shared/services/window_state_controller.dart';
 import '../../../../shared/utils/platform_utils.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../netbar/data/netbar_api.dart' as netbar_api;
@@ -154,7 +155,10 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     return false;
   }
   bool _refreshing = false;
-  bool _isMaximized = false;
+  /// 子窗最大化状态的唯一来源（仅桌面独立窗非 null）。
+  /// 读取统一走下面的 [_isMaximized] getter，写入只经 native 推送 / controller。
+  WindowStateController? _windowState;
+  bool get _isMaximized => _windowState?.isMaximized ?? false;
   bool _isWebRTCActive = false;
   Timer? _heartbeatTimer;
 
@@ -206,18 +210,18 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     });
 
     if (isDesktopPlatform && widget.isStandaloneWindow) {
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (mounted) {
-          final wid = widget.windowId ?? 0;
-          final maximized = await WindowControl.isMaximized(wid);
-          if (mounted) setState(() => _isMaximized = maximized);
-        }
-      });
+      // 子窗最大化状态唯一来源：启动查询一次 + native WM_SIZE 推送实时驱动。
+      _windowState = WindowStateController(widget.windowId ?? 0)
+        ..addListener(_onWindowStateChanged);
+      _windowState!.init();
       _focusChannel.setMethodCallHandler((call) async {
         if (call.method == 'onBlur') {
           _onWindowBlur();
         } else if (call.method == 'onFocus') {
           _onWindowFocus();
+        } else if (call.method == 'onWindowMaximize') {
+          // native 推送的最大化/还原事件 → 更新唯一状态来源（无轮询）
+          _windowState?.onNativeMaximizeChanged(call.arguments == true);
         } else if (call.method == '_prepareForClose') {
           // Pop WebRTC route so RemoteScreen.dispose() runs while the engine is
           // still alive. This prevents a deadlock during window close:
@@ -825,11 +829,14 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     if (mounted) context.pop();
   }
 
+  /// 唯一状态来源变化（native 推送 / toggle）→ 重建按钮图标、窗口边框。
+  void _onWindowStateChanged() {
+    if (mounted) setState(() {});
+  }
+
   Future<void> _handleToggleMaximize() async {
     if (!isDesktopPlatform || !widget.isStandaloneWindow) return;
-    final wid = widget.windowId ?? 0;
-    final maximized = await WindowControl.toggleMaximize(wid);
-    if (mounted) setState(() => _isMaximized = maximized);
+    await _windowState?.toggleMaximize();
   }
 
   // --- Left Column Widgets ---
@@ -1365,6 +1372,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     if (isDesktopPlatform && widget.isStandaloneWindow) {
       _focusChannel.setMethodCallHandler(null);
     }
+    _windowState?.removeListener(_onWindowStateChanged);
+    _windowState?.dispose();
     _screenshotCancelled = true; // 标记取消
     _countdownTimer?.cancel(); // 停止倒计时
     _heartbeatTimer?.cancel();
@@ -2209,6 +2218,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
                 title: '$_netbarName - $_groupName - ${terminal.name}',
                 windowId: widget.windowId ?? 0,
                 isStandaloneWindow: widget.isStandaloneWindow,
+                windowState: _windowState,
                 onMinimize: widget.isStandaloneWindow
                     ? () => _handleMinimize(terminal)
                     : null,
@@ -2247,12 +2257,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
         // `Bad state: Cannot use "ref" after the widget was disposed`。
         if (!mounted) return;
         _isWebRTCActive = false;
-        // 笨鸟远程内通过 win32 直接改过窗口最大化状态（绕过 WindowControl），
-        // 退出后重新同步右上角按钮图标，避免显示与真实窗口状态不一致、需多点一次纠正。
-        if (isDesktopPlatform && widget.isStandaloneWindow) {
-          final maximized = await WindowControl.isMaximized(widget.windowId ?? 0);
-          if (mounted) setState(() => _isMaximized = maximized);
-        }
+        // 最大化状态由 native WM_SIZE 推送实时同步到 _windowState，
+        // 退出远程无需再手动查询纠正。
         WebRtcCrashLogger.I.log(
           'INFO',
           'webrtc',
@@ -2808,6 +2814,10 @@ class _WebRTCWindowWrapper extends StatefulWidget {
   final bool isStandaloneWindow;
   final VoidCallback? onMinimize;
 
+  /// 子窗最大化状态唯一来源（与详情页共享同一实例）。
+  /// 全屏切换、标题栏显隐、注入给子组件的 isFullscreen 全部读它。
+  final WindowStateController? windowState;
+
   /// Builder 模式：向子 widget 注入全屏切换回调和全屏状态
   final Widget Function(VoidCallback toggleFullscreen, bool isFullscreen) childBuilder;
 
@@ -2816,6 +2826,7 @@ class _WebRTCWindowWrapper extends StatefulWidget {
     required this.windowId,
     required this.isStandaloneWindow,
     required this.childBuilder,
+    this.windowState,
     this.onMinimize,
   });
 
@@ -2824,10 +2835,12 @@ class _WebRTCWindowWrapper extends StatefulWidget {
 }
 
 class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
-  bool _isMaximized = false;
-  bool _isFullscreen = false;
-  Timer? _fullscreenPollTimer;
+  // 最大化(=沉浸全屏)状态不再本地缓存：唯一来源是 widget.windowState。
+  // 下面这个 timer 仅用于「最小化恢复后强制重绘」防黑屏，与最大化状态无关。
+  Timer? _minimizedRepaintTimer;
 
+  /// 当前是否最大化（即沉浸全屏）：唯一来源是 windowState，由 native 推送驱动。
+  bool get _isFullscreen => widget.windowState?.isMaximized ?? false;
 
   int _hwnd = 0;
 
@@ -2841,16 +2854,21 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
   @override
   void initState() {
     super.initState();
+    // 最大化状态变化（native 推送 / toggle）→ 重建标题栏显隐与子组件全屏态。
+    widget.windowState?.addListener(_onWindowStateChanged);
     if (isDesktopPlatform) {
       _hwnd = win32.GetForegroundWindow();
       _hideNativeChrome();
       _initWindowManager();
-      if (widget.isStandaloneWindow) _checkMaximized();
-      _fullscreenPollTimer = Timer.periodic(
+      _minimizedRepaintTimer = Timer.periodic(
         const Duration(seconds: 1),
-        (_) => _pollFullscreenState(),
+        (_) => _pollMinimizedRepaint(),
       );
     }
+  }
+
+  void _onWindowStateChanged() {
+    if (mounted) setState(() {});
   }
 
   /// 隐藏 Windows 原生标题栏（进入远程桌面时）
@@ -2900,31 +2918,21 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
 
   @override
   void dispose() {
-    _fullscreenPollTimer?.cancel();
+    widget.windowState?.removeListener(_onWindowStateChanged);
+    _minimizedRepaintTimer?.cancel();
     if (isDesktopPlatform) _restoreNativeChrome();
     super.dispose();
   }
 
-  void _pollFullscreenState() {
+  /// 仅检测「最小化 → 恢复」并强制重绘，解决 ANGLE swap chain 恢复后黑屏。
+  /// 最大化/全屏状态已由 native WM_SIZE 推送驱动 windowState，这里不再轮询。
+  void _pollMinimizedRepaint() {
     if (_hwnd == 0 || !mounted) return;
-
-    // 检测最小化恢复 → 强制重绘
     final isMinimized = win32.IsIconic(_hwnd) != 0;
     if (_wasMinimized && !isMinimized) {
       _forceRepaint();
     }
     _wasMinimized = isMinimized;
-
-    // 同步全屏状态：同时支持 IsZoomed（SW_MAXIMIZE）和 style 检测（windowManager.setFullScreen）
-    final isZoomed = win32.IsZoomed(_hwnd) != 0;
-    final style = win32.GetWindowLongPtr(
-        _hwnd, win32.WINDOW_LONG_PTR_INDEX.GWL_STYLE);
-    final isStyleFullscreen =
-        (style & win32.WINDOW_STYLE.WS_OVERLAPPEDWINDOW) == 0;
-    final isNowFullscreen = isZoomed || isStyleFullscreen;
-    if (isNowFullscreen != _isFullscreen) {
-      setState(() => _isFullscreen = isNowFullscreen);
-    }
   }
 
   /// 强制窗口重绘 —— 解决全屏/最小化恢复后黑屏问题
@@ -2942,43 +2950,19 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
     }
   }
 
-  Future<void> _checkMaximized() async {
-    final maximized = await WindowControl.isMaximized(widget.windowId);
-    if (mounted) setState(() => _isMaximized = maximized);
-  }
-
-  Future<void> _handleToggleMaximize() async {
-    if (!isDesktopPlatform || !widget.isStandaloneWindow) return;
-    final maximized = await WindowControl.toggleMaximize(widget.windowId);
-    if (mounted) setState(() => _isMaximized = maximized);
-  }
-
-  void _handleFullscreen() {
-    if (!isDesktopPlatform || _hwnd == 0) return;
-    // 用 IsZoomed 判断当前实际窗口状态，不依赖 _isFullscreen
-    final isZoomed = win32.IsZoomed(_hwnd) != 0;
-    if (isZoomed) {
-      _exitFullscreen();
-    } else {
-      _enterFullscreen();
-    }
-  }
-
-  void _enterFullscreen() {
-    // 只做 Win32 原生最大化，不设 _isFullscreen，不调 setState
-    // 标题栏显隐由 _pollFullscreenState 延迟驱动（此时 ANGLE 已稳定）
-    win32.ShowWindow(_hwnd, win32.SHOW_WINDOW_CMD.SW_MAXIMIZE);
-    _forceRepaint();
-  }
-
-  void _exitFullscreen() {
-    win32.ShowWindow(_hwnd, win32.SHOW_WINDOW_CMD.SW_RESTORE);
+  /// 全屏切换 = 最大化切换，统一走 windowState（native ToggleMaximize）。
+  /// 注入给 webrtc_remote 包状态栏全屏按钮 / F11。切换后 native WM_SIZE 回推，
+  /// windowState 更新 → 重建标题栏与子组件 isFullscreen；再补一次重绘防黑屏。
+  Future<void> _handleFullscreen() async {
+    if (!isDesktopPlatform || widget.windowState == null) return;
+    await widget.windowState!.toggleMaximize();
     _forceRepaint();
   }
 
   void _handleClose() {
-    if (_hwnd != 0 && win32.IsZoomed(_hwnd) != 0) {
-      win32.ShowWindow(_hwnd, win32.SHOW_WINDOW_CMD.SW_RESTORE);
+    // 关闭远程返回详情页前，若处于全屏(最大化)则还原，统一走 windowState。
+    if (widget.windowState?.isMaximized ?? false) {
+      widget.windowState?.toggleMaximize();
     }
     Navigator.pop(context);
   }

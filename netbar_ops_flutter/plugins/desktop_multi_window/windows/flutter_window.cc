@@ -379,6 +379,13 @@ LRESULT FlutterWindow::MessageHandler(HWND hwnd, UINT message, WPARAM wparam, LP
         MoveWindow(child_content_, rect.left, rect.top, rect.right - rect.left,
                    rect.bottom - rect.top, TRUE);
       }
+      // Notify Dart of maximize/restore so the UI can sync without polling.
+      // Single source of truth: Dart never caches/flips this state itself.
+      if (focus_channel_ && (wparam == SIZE_MAXIMIZED || wparam == SIZE_RESTORED)) {
+        focus_channel_->InvokeMethod(
+            "onWindowMaximize",
+            std::make_unique<flutter::EncodableValue>(wparam == SIZE_MAXIMIZED));
+      }
       return 0;
     }
 
