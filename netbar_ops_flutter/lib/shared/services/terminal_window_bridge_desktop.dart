@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/services.dart';
+import 'package:window_manager/window_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -290,10 +292,19 @@ class TerminalWindowBridge {
     });
 
     final controller = await DesktopMultiWindow.createWindow(payload);
+    // 终端详情窗口 = 主窗口的 80%，并居中于主窗口。
+    // 注意单位差异：window_manager.getBounds() 返回逻辑像素，而
+    // desktop_multi_window 的 setFrame 经 MoveWindow 直接当物理像素使用（无 Scale），
+    // 故 left/top/width/height 需 × devicePixelRatio 把逻辑像素换算为物理像素。
+    final dpr = PlatformDispatcher.instance.views.first.devicePixelRatio;
+    final mb = await windowManager.getBounds();
+    final w = mb.width * 0.8, h = mb.height * 0.8;
+    final left = mb.left + (mb.width - w) / 2;
+    final top = mb.top + (mb.height - h) / 2;
     controller
       ..setTitle(
           _buildWindowTitle(terminalSnapshot, netbarName, groupName))
-      ..center()
+      ..setFrame(Rect.fromLTWH(left * dpr, top * dpr, w * dpr, h * dpr))
       ..show();
 
     _openWindows[uniqueKey] = controller.windowId;

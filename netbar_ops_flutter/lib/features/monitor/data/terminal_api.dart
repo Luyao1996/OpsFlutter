@@ -671,7 +671,7 @@ class TerminalApi {
   /// 重启远端服务（反代/协助/路由）—— 走 WebSocket **裸 event 帧**（非 peer 包装）。
   /// [type] = 'frpc'（反代）/ 'client'（协助）/ 'router'（路由）
   /// 协议：`{event:'sys.restart', id:<auto>, merchant_id, data:{type}}`
-  /// 仅 mode==1 的 server 终端展示该入口；后端按 merchant_id 路由。
+  /// mode∈{1,2} 的主/副服务器终端展示该入口；后端按 merchant_id 路由。
   Future<void> restartService(String type, {required int merchantId}) async {
     final res = await _ws.requestRawEvent(
       event: 'sys.restart',

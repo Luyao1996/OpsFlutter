@@ -76,6 +76,9 @@ dependencies:
   archive: ^3.6.1
   # 多窗口（桌面端独立终端详情）
   desktop_multi_window: ^0.2.0
+  # 窗口尺寸控制（主窗口=屏幕80%，终端详情子窗口=主窗口80%）
+  window_manager: ^0.4.3
+  screen_retriever: ^0.2.0
   # super_editor: ^0.3.0-dev.43  # 已移除（无活跃使用，且与 flutter_quill 11.x 冲突 dart_quill_delta 版本）
   code_text_field: ^1.1.0
   re_editor: ^0.8.0
@@ -134,6 +137,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/images/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

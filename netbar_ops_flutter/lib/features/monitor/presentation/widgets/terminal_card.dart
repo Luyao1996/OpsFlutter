@@ -114,15 +114,18 @@ class _TerminalCardState extends State<TerminalCard> {
                   fit: BoxFit.cover,
                   errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
                 )
-              : Image.network(
-                  t.desktopPreviewUrl(width: 400, height: 225),
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
-                  loadingBuilder: (context, child, loadingProgress) {
-                    if (loadingProgress == null) return child;
-                    return _buildPlaceholder();
-                  },
-                ),
+              : (t.hasScreenshot
+                  ? Image.network(
+                      t.screenshotUrl!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return _buildPlaceholder();
+                      },
+                    )
+                  // 无截图/离线：本地占位图（不再请求外部随机图）
+                  : Image.asset(kScreenshotPlaceholderAsset, fit: BoxFit.cover)),
         ),
         // 右上角: 状态 & 运行时间
         Positioned(

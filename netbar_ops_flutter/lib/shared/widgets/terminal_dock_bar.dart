@@ -8,6 +8,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../core/network/task_ws_provider.dart';
 import '../../core/network/ws_binary.dart';
 import '../../core/theme/app_theme.dart';
+import '../../features/monitor/data/terminal_models.dart';
 import '../../features/monitor/presentation/widgets/terminal_card.dart';
 import '../providers/app_providers.dart';
 import '../providers/terminal_dock_provider.dart';
@@ -409,21 +410,24 @@ class _TerminalDockIconState extends ConsumerState<TerminalDockIcon> {
                               child: _buildFallbackContent(),
                             ),
                           )
-                        : Image.network(
-                            t.desktopThumbnailUrl,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Container(
-                              color: Colors.grey.shade50,
-                              child: _buildFallbackContent(),
-                            ),
-                            loadingBuilder: (context, child, progress) {
-                              if (progress == null) return child;
-                              return Container(
-                                color: Colors.grey.shade50,
-                                child: _buildFallbackContent(),
-                              );
-                            },
-                          ),
+                        : (t.hasScreenshot
+                            ? Image.network(
+                                t.screenshotUrl!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => Container(
+                                  color: Colors.grey.shade50,
+                                  child: _buildFallbackContent(),
+                                ),
+                                loadingBuilder: (context, child, progress) {
+                                  if (progress == null) return child;
+                                  return Container(
+                                    color: Colors.grey.shade50,
+                                    child: _buildFallbackContent(),
+                                  );
+                                },
+                              )
+                            // 无截图/离线：本地占位图（不再请求外部随机图）
+                            : Image.asset(kScreenshotPlaceholderAsset, fit: BoxFit.cover)),
                   ),
                 ),
                 if (isMin)

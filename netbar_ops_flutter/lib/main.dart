@@ -11,6 +11,8 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:screen_retriever/screen_retriever.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'core/logging/exit_reason_reporter.dart';
 import 'core/logging/logging_binary_messenger.dart';
@@ -27,6 +29,7 @@ import 'features/update/providers.dart';
 import 'features/update/update_navigator_key.dart';
 import 'shared/providers/app_providers.dart';
 import 'shared/services/window_control.dart';
+import 'shared/utils/platform_utils.dart';
 
 /// 崩溃日志目录，启动时缓存。崩溃路径上不能 await（移动端 path_provider 是异步的），
 /// 所以提前缓存，崩溃时同步写盘。
@@ -192,6 +195,20 @@ void main(List<String> args) async {
       ),
     );
     return;
+  }
+
+  // 桌面端：主窗口占主显示器可用区域的 80%（逻辑像素，已排除任务栏）。
+  // native 窗口创建即隐藏，仅 Flutter 首帧回调才 Show，故在 runApp 前设好
+  // 尺寸即可，Show 时尺寸已正确，无需改 native，亦无闪烁。
+  if (isDesktopPlatform) {
+    await windowManager.ensureInitialized();
+    final display = await screenRetriever.getPrimaryDisplay();
+    final visible = display.visibleSize ?? display.size;
+    await windowManager.setSize(
+      Size(visible.width * 0.8, visible.height * 0.8),
+    );
+    await windowManager.center();
+    // 不调用 windowManager.show()：交给 native 首帧回调，确保无闪烁。
   }
 
   runApp(const ProviderScope(child: NetbarOpsApp()));

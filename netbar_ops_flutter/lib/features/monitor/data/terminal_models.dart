@@ -1,3 +1,6 @@
+/// 终端截图占位图（无截图/离线时使用，内嵌 asset，不联网）。
+const String kScreenshotPlaceholderAsset = 'assets/images/screenshot_placeholder.png';
+
 /// 终端模型
 class Terminal {
   final int id;
@@ -224,14 +227,10 @@ class Terminal {
     return ['server', 'console', 'cashier'].contains(type) ? '服务器' : '终端';
   }
 
-  /// 桌面预览/缩略图 URL（有真实截图则优先使用）
-  String desktopPreviewUrl({int width = 400, int height = 225}) {
-    final url = screenshotUrl;
-    if (url != null && url.isNotEmpty) return url;
-    return 'https://picsum.photos/seed/$id/$width/$height';
-  }
-
-  String get desktopThumbnailUrl => desktopPreviewUrl();
+  /// 是否有可用的真实截图 URL。
+  /// false（无截图/离线）时，UI 改用 [kScreenshotPlaceholderAsset] 本地占位图，
+  /// 不再请求任何外部公开接口（旧实现会回退到 picsum 随机图，已移除）。
+  bool get hasScreenshot => screenshotUrl != null && screenshotUrl!.isNotEmpty;
 }
 
 class TerminalProcess {

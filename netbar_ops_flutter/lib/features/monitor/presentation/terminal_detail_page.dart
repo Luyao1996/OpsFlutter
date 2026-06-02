@@ -962,13 +962,19 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
                       fit: BoxFit.cover,
                       gaplessPlayback: true, // 避免切换图片时闪烁
                     )
-                  else
+                  else if (terminal.hasScreenshot)
                     Image.network(
-                      terminal.desktopPreviewUrl(width: 800, height: 450),
+                      terminal.screenshotUrl!,
                       fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) => const Center(
                         child: Icon(LucideIcons.monitor, color: Colors.white24, size: 48),
                       ),
+                    )
+                  else
+                    // 无截图/离线：本地占位图（不再请求外部随机图）
+                    Image.asset(
+                      kScreenshotPlaceholderAsset,
+                      fit: BoxFit.cover,
                     ),
                   // Overlay gradient
                   Positioned.fill(
@@ -1508,14 +1514,15 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     );
   }
 
-  /// 服务管理按钮区（仅 mode==1 的 server 终端展示）。
+  /// 服务管理按钮区（mode∈{1,2} 的主/副服务器终端展示，见 build 中 1296 行门槛）。
   /// 4 个按钮：重启反代/协助/路由 + 断开远程服务。
   /// 与电源管理同款卡片样式；点击后弹简单确认对话框（"确认X吗？"）再发 WS。
   Widget _buildServiceGrid(Terminal terminal, {required bool isNarrow}) {
     final perm = ref.watch(permissionProvider);
-    // 与顶部菜单/Tab 菜单一致：受 '服务端Windows密码' 细分权限控制 + 总部用户不显示。
-    // 业主分组(group_id=21)用户没有此权限，本项不渲染，避免绕过限制直接改服务器密码。
-    final canWinPwd = !perm.isHQUser && perm.hasDetailPermission('服务端Windows密码');
+    // 与 Web 端(toolboxPage NetbarPage.vue / usePermission.js)对齐：仅受 '服务端Windows密码'
+    // 细分权限控制。总部管理员(hasDetailPermission 内 isTopManager 直接放行)可见；
+    // 业主等分组用户是否可见，由后端下发的 permissions 列表决定（避免在前端硬编码分组判断）。
+    final canWinPwd = perm.hasDetailPermission('服务端Windows密码');
 
     final items = <_ServiceItem>[
       const _ServiceItem(label: '重启反代服务', name: '反代服务', type: 'frpc'),
@@ -1523,7 +1530,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
       const _ServiceItem(label: '重启路由服务', name: '路由服务', type: 'router'),
       const _ServiceItem(label: '重启游戏库服务', name: '游戏库服务', type: 'gamelibray'),
       // 特殊 type 标记：路由到 _openWindowsPasswordDialog（HTTP set/reset/clear）
-      // 区块本身仅 mode∈{1,2} 显示，叠加权限过滤后业主用户不可见
+      // 区块本身仅 mode∈{1,2}（主/副服务器）显示，再叠加 canWinPwd 权限过滤
       if (canWinPwd)
         const _ServiceItem(
           label: 'Windows密码',
@@ -1531,7 +1538,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
           type: '__windows_pwd__',
           icon: LucideIcons.keyRound,
         ),
-      // 复制 2FA：服务管理整体仅 mode==1 显示，与你需求一致。
+      // 复制 2FA：服务管理整体仅 mode∈{1,2}（主/副服务器）显示。
       // 不弹 dialog，调 authApi.getTwoFactorCode 拿一次性 code → 写剪贴板 + toast
       const _ServiceItem(
         label: '复制2FA',
@@ -1840,7 +1847,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
 
   bool _copying2FA = false;
 
-  /// 打开 Windows 密码对话框（仅 mode==1 服务端入口）。
+  /// 打开 Windows 密码对话框（mode∈{1,2} 主/副服务器入口）。
   /// dialog 内部走 set/reset/clear 三种 WS 协议，详见 [_WindowsPasswordDialog]。
   /// 打开前实时拉一次 `GET /merchant?keyword={网吧名称}` 取最新 server_pwd 回填，
   /// 避免缓存导致显示旧密码（保存/重置/清除后下次打开看到的也是最新值）。
@@ -2223,6 +2230,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
                   // 包内部会自动给 token 加 "Bearer " 前缀，此处传原始字符串。
                   accessToken: TokenStore.getToken(),
                   merchantId: _ownerNetbarId?.toString(),
+                  // 全屏控制交给宿主 wrapper：onToggleFullscreen 接 _handleFullscreen
+                  // （win32 操作 desktop_multi_window 子窗），isFullscreen 由 poll 驱动。
+                  // 不接则包内会调 windowManager.setFullScreen，对子窗空操作 → 无法还原。
+                  onToggleFullscreen: toggleFullscreen,
+                  isFullscreen: isFullscreen,
                   onDisconnect: () => Navigator.pop(ctx),
                 ),
               ),
@@ -2235,6 +2247,12 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
         // `Bad state: Cannot use "ref" after the widget was disposed`。
         if (!mounted) return;
         _isWebRTCActive = false;
+        // 笨鸟远程内通过 win32 直接改过窗口最大化状态（绕过 WindowControl），
+        // 退出后重新同步右上角按钮图标，避免显示与真实窗口状态不一致、需多点一次纠正。
+        if (isDesktopPlatform && widget.isStandaloneWindow) {
+          final maximized = await WindowControl.isMaximized(widget.windowId ?? 0);
+          if (mounted) setState(() => _isMaximized = maximized);
+        }
         WebRtcCrashLogger.I.log(
           'INFO',
           'webrtc',
@@ -3655,7 +3673,7 @@ class _PersonnelHoverButtonState extends ConsumerState<_PersonnelHoverButton> {
   }
 }
 
-/// 服务端 Windows 密码对话框（仅 mode==1 终端可用）。
+/// 服务端 Windows 密码对话框（mode∈{1,2} 主/副服务器可用）。
 /// 参考 toolboxPage `ServerWindowsPasswordDialog.vue` 设计：
 ///   - step='set'：初始密码（≥8 位）→ update.windows_pass
 ///   - step='reset'：忘记密码后强口令重置（≥8+大写+小写+数字）→ update.reset_windows_pass
