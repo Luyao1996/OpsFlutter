@@ -12,6 +12,8 @@ class TerminalCard extends StatefulWidget {
   final Uint8List? screenshotBytes; // 实时截图数据
   final String? netbarName; // 网吧名称（顶部信息栏）
   final String? groupName; // 网吧分组（顶部信息栏）
+  final VoidCallback? onHoverStart; // 鼠标进入：父级启动 500ms 硬件+截图轮询
+  final VoidCallback? onHoverEnd; // 鼠标离开：父级停止轮询
 
   const TerminalCard({
     super.key,
@@ -21,6 +23,8 @@ class TerminalCard extends StatefulWidget {
     this.screenshotBytes,
     this.netbarName,
     this.groupName,
+    this.onHoverStart,
+    this.onHoverEnd,
   });
 
   @override
@@ -55,8 +59,14 @@ class _TerminalCardState extends State<TerminalCard> {
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
+      onEnter: (_) {
+        setState(() => _isHovered = true);
+        widget.onHoverStart?.call();
+      },
+      onExit: (_) {
+        setState(() => _isHovered = false);
+        widget.onHoverEnd?.call();
+      },
       child: GestureDetector(
         onTap: widget.onTap,
         onSecondaryTapDown: widget.onSecondaryTapDown,
@@ -112,6 +122,8 @@ class _TerminalCardState extends State<TerminalCard> {
               ? Image.memory(
                   widget.screenshotBytes!,
                   fit: BoxFit.cover,
+                  // hover 每 500ms 换新帧时保留上一帧直到新帧解码完成，消除闪白
+                  gaplessPlayback: true,
                   errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
                 )
               : (t.hasScreenshot
@@ -196,8 +208,9 @@ class _TerminalCardState extends State<TerminalCard> {
               ),
             ),
           ),
-        // 底部覆盖层: CPU/MEM/GPU 统计
-        Positioned(
+        // 底部覆盖层: CPU/MEM/GPU 统计 —— 默认隐藏，仅 hover 在线机器时展示实时占用
+        if (_isHovered && !_isOffline)
+          Positioned(
           left: 0,
           right: 0,
           bottom: 0,

@@ -79,6 +79,10 @@ void _writeCrashLog(String error, String stack, {String prefix = 'dart_crash'}) 
 void main(List<String> args) async {
   runZonedGuarded(() async {
     LoggingWidgetsFlutterBinding.ensureInitialized();
+    // 全局 ErrorWidget 兜底：任意 widget build 抛异常时显示友好框，
+    // 而非 Flutter 默认的红屏(debug)/灰白框(release)，避免整页不可用。
+    ErrorWidget.builder =
+        (FlutterErrorDetails details) => const _GlobalErrorFallback();
     await WebRtcCrashLogger.I.init();
     await _initCrashLogDir();
 
@@ -223,6 +227,41 @@ void main(List<String> args) async {
     WebRtcCrashLogger.I.flush();
     _writeCrashLog(error.toString(), stack.toString());
   });
+}
+
+/// 全局 ErrorWidget 兜底视图：不依赖 Material/DefaultTextStyle 上下文，
+/// 任何 widget build 崩溃时都能安全渲染一个友好提示（自带 Directionality 与显式样式）。
+class _GlobalErrorFallback extends StatelessWidget {
+  const _GlobalErrorFallback();
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: Container(
+        color: const Color(0xFFF7F8FA),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.error_outline_rounded, size: 48, color: Color(0xFFB0B7C3)),
+            SizedBox(height: 12),
+            Text(
+              '页面加载出错，请稍后重试',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 15,
+                color: Color(0xFF4B5563),
+                fontWeight: FontWeight.w500,
+                decoration: TextDecoration.none,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class NetbarOpsApp extends ConsumerStatefulWidget {

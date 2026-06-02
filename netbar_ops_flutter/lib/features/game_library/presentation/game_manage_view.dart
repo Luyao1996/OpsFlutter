@@ -12,8 +12,7 @@ import '../utils/formatter.dart';
 import '../utils/pinyin_match.dart';
 import 'widgets/batch_result_dialog.dart';
 import 'widgets/health_banner.dart';
-import 'widgets/recycle_bar.dart';
-import 'widgets/recycle_schedule_dialog.dart';
+import 'widgets/recycle_task_dialog.dart';
 import 'widgets/seat_picker_dialog.dart';
 
 enum _Tab { local, all, downloads, idle }
@@ -259,17 +258,25 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
       _actionLoading['$platform:$gid:$action'] == true;
 
   Future<void> _onDownload(GameItem row) async {
+    final state = ref.read(gameLibraryNotifierProvider(widget.subdomainFull));
+    // story 平台不支持指定盘符（传 letter 会被后端拒绝）
+    final supportsLetter = row.platform != kPlatformStory;
+    final driveLetters =
+        supportsLetter ? _availableDriveLetters(state) : const <String>[];
+
     final picked = await SeatPickerDialog.show(
       context,
       merchantId: widget.merchantId,
       row: row,
+      driveLetters: driveLetters,
+      supportsLetter: supportsLetter,
     );
-    if (picked == null || picked.isEmpty || !mounted) return;
+    if (picked == null || picked.seat.isEmpty || !mounted) return;
 
     // Web 端规则：用户在 picker 里选了真实机号 → seat 单任务约束抢占旧任务；
     // picker 选了"工具箱身份"或手敲了 WW_TOOLBOX → seat=WW_TOOLBOX + from=wwls 旁路 seat 单任务约束
-    final isToolbox = picked == kToolboxSeat;
-    final seat = isToolbox ? kToolboxSeat : picked;
+    final isToolbox = picked.seat == kToolboxSeat;
+    final seat = picked.seat;
     final fromParam = isToolbox ? 'wwls' : null;
 
     _setActionLoading(row, 'download', true);
@@ -280,6 +287,7 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
         platform: row.platform,
         gid: row.gid,
         from: fromParam,
+        letter: picked.letter,
       );
       if (!mounted) return;
       if (!res.ok) {
@@ -289,7 +297,8 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
       final result = res.results[row.gid];
       if (result == 'ok') {
         final who = isToolbox ? '工具箱' : '机号 $seat';
-        _toast('已加入下载队列：${row.name ?? row.gid}（$who）');
+        final where = picked.letter != null ? '，装到 ${picked.letter} 盘' : '';
+        _toast('已加入下载队列：${row.name ?? row.gid}（$who$where）');
         if (res.cancelled != null) {
           final c = res.cancelled!;
           _toast(
@@ -308,6 +317,20 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
     } finally {
       if (mounted) _setActionLoading(row, 'download', false);
     }
+  }
+
+  /// 从已下载游戏的 local_path 提取可选安装盘符：去重、大写、排序、排除 C。
+  List<String> _availableDriveLetters(GameLibraryState state) {
+    final set = <String>{};
+    for (final g in state.games) {
+      final p = g.localPath;
+      if (p == null || p.length < 2 || p[1] != ':') continue;
+      final c = p[0].toUpperCase();
+      final code = c.codeUnitAt(0);
+      if (code >= 0x41 && code <= 0x5A && c != 'C') set.add(c);
+    }
+    final list = set.toList()..sort();
+    return list;
   }
 
   Future<void> _onUninstall(GameItem row) async {
@@ -428,29 +451,6 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
   }
 
   /// 闲置 Tab：打开「执行时间」弹窗
-  Future<void> _openSchedule() async {
-    final state = ref.read(gameLibraryNotifierProvider(widget.subdomainFull));
-    final cur = state.recyclePlan;
-    final res = await RecycleScheduleDialog.show(
-      context,
-      weekdays: List<int>.from(cur?.weekdays ?? const <int>[]),
-      time: cur?.time ?? RecycleDefaults.time,
-    );
-    if (res == null || !mounted) return;
-    final notifier =
-        ref.read(gameLibraryNotifierProvider(widget.subdomainFull).notifier);
-    final r = await notifier.confirmSchedule(
-      weekdays: res.weekdays,
-      time: res.time,
-    );
-    if (!mounted) return;
-    if (!r.ok) {
-      _toastError('保存失败：${r.error ?? "未知错误"}');
-    } else {
-      _toast('已保存自动清理策略');
-    }
-  }
-
   Future<void> _onCancel(DownloadTask row) async {
     _setActionLoadingDL(row, 'cancel', true);
     try {
@@ -556,12 +556,6 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
           if (!isNarrow) const Divider(height: 1, color: Color(0xFFE5E7EB)),
           _buildTabs(state, isNarrow: isNarrow),
           const Divider(height: 1, color: Color(0xFFE5E7EB)),
-          // 闲置 Tab 顶部回收策略工具条（顶到 list 上方、Tabs 下方，全宽贴边）
-          if (_activeTab == _Tab.idle)
-            RecycleBar(
-              subdomain: widget.subdomainFull,
-              onOpenSchedule: _openSchedule,
-            ),
           Expanded(
             child: Container(
               padding: EdgeInsets.fromLTRB(isNarrow ? 10 : 16, 10, isNarrow ? 10 : 16, 0),
@@ -852,6 +846,7 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
         children: [
           SizedBox(width: 260, child: searchField),
           ...filterChildren,
+          if (_activeTab == _Tab.idle) _taskButton(state),
         ],
       );
     }
@@ -866,6 +861,11 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
             Expanded(child: searchField),
             const SizedBox(width: 6),
             _filtersToggleButton(appliedCount),
+            if (_activeTab == _Tab.idle) ...[
+              const SizedBox(width: 6),
+              _taskButton(state),
+            ],
+            const SizedBox(width: 6),
             SizedBox(width: 40, height: 40, child: _refreshButton(state)),
             if (widget.onToggleFullscreen != null)
               SizedBox(width: 40, height: 40, child: _fullscreenButton()),
@@ -954,6 +954,47 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
               size: 12,
               color: _filtersExpanded ? AppColors.iosBlue : Colors.black54,
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 闲置 Tab「任务」按钮：唤起清理任务设置弹窗。
+  /// 自动删除已开启时右上角带蓝点提示。
+  Widget _taskButton(GameLibraryState state) {
+    final enabled = state.recyclePlan?.enabled ?? false;
+    return InkWell(
+      onTap: () => RecycleTaskDialog.show(context, widget.subdomainFull),
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        height: 38,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: const Color(0xFFD1D5DB)),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(LucideIcons.calendarClock, size: 14, color: Colors.black54),
+            const SizedBox(width: 4),
+            const Text(
+              '任务',
+              style: TextStyle(fontSize: 12, color: Colors.black87),
+            ),
+            if (enabled) ...[
+              const SizedBox(width: 4),
+              Container(
+                width: 7,
+                height: 7,
+                decoration: const BoxDecoration(
+                  color: AppColors.iosBlue,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ],
           ],
         ),
       ),

@@ -12,6 +12,7 @@ import '../../netbar/presentation/netbar_selector_modal.dart';
 import '../data/dashboard_api.dart';
 import 'widgets/stat_card.dart';
 import 'widgets/trend_chart.dart';
+import '../../../shared/widgets/app_error_view.dart';
 
 /// 时间范围枚举
 enum TimeRange { days30, months12 }
@@ -57,25 +58,9 @@ class DashboardPage extends ConsumerWidget {
       backgroundColor: AppColors.iosBg,
       body: dashboardStats.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, stack) => Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                LucideIcons.alertTriangle,
-                size: 48,
-                color: Colors.red.shade400,
-              ),
-              const SizedBox(height: 16),
-              Text('加载失败: $err', style: TextStyle(color: Colors.red.shade700)),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: () => ref.refresh(dashboardStatsProvider),
-                icon: const Icon(LucideIcons.refreshCw, size: 16),
-                label: const Text('重试'),
-              ),
-            ],
-          ),
+        error: (err, stack) => AppErrorView(
+          error: err,
+          onRetry: () => ref.invalidate(dashboardStatsProvider),
         ),
         data: (DashboardStats stats) => LayoutBuilder(
           builder: (context, constraints) {

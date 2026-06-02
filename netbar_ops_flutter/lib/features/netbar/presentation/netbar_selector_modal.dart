@@ -9,6 +9,7 @@ import '../../../shared/utils/top_notice.dart';
 import '../data/netbar_api.dart';
 import '../data/netbar_list_provider.dart';
 import '../data/netbar_pinyin_matcher.dart';
+import '../../../core/network/error_message.dart';
 import 'group_picker.dart';
 import 'edit_netbar_modal.dart';
 
@@ -322,7 +323,7 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
   Widget _buildMobileList(AsyncValue<List<Netbar>> netbarsAsync) {
     return netbarsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (err, _) => _buildError(err.toString()),
+      error: (err, _) => _buildError(friendlyErrorMessage(err)),
       data: (netbars) {
         final filtered = _filterAndSort(netbars);
         if (filtered.isEmpty) return _buildEmpty(noAccess: netbars.isEmpty);
@@ -364,7 +365,7 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
   Widget _buildContent(AsyncValue<List<Netbar>> netbarsAsync) {
     return netbarsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (err, _) => _buildError(err.toString()),
+      error: (err, _) => _buildError(friendlyErrorMessage(err)),
       data: (netbars) {
         final filtered = _filterAndSort(netbars);
         if (filtered.isEmpty) {

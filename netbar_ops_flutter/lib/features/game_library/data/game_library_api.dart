@@ -78,12 +78,14 @@ class GameLibraryApi {
     required String platform,
     required int gid,
     String? from,
+    String? letter,
   }) =>
       _opWrite('/game_library/do_download', {
         'seat': seat,
         'platform': platform,
         'gid': gid,
         if (from != null) 'from': from,
+        if (letter != null && letter.isNotEmpty) 'letter': letter,
       });
 
   /// POST /game_library/cancle_download?seat=&platform=&gid=
@@ -145,6 +147,7 @@ class GameLibraryApi {
   Future<RecyclePlanSaveResult> saveRecyclePlan({
     required RecyclePlan plan,
     required bool enabled,
+    bool clearAll = false,
   }) async {
     final url = _buildUrl('/game_library/delete_plan');
     final ftUi = plan.freeThresholdUi;
@@ -159,14 +162,22 @@ class GameLibraryApi {
             kPlatformStory: false,
           }
         : const <String, bool>{};
-    final body = <String, dynamic>{
-      'free_threshold': apiFt,
-      'retain_days': plan.retainDays,
-      'weekdays': plan.weekdays,
-      'time': plan.time,
-      'del_flags': plan.delFlags,
-      'platforms': platforms,
-    };
+    // clearAll：删除任务——只发空值最短形式（文档「关闭快捷路径」），不传
+    // free_threshold/retain_days，避免 0 经 100-X 反转污染成 UI 100%（其它字段缺省）。
+    final body = clearAll
+        ? <String, dynamic>{
+            'platforms': const <String, bool>{},
+            'weekdays': const <int>[],
+            'time': '',
+          }
+        : <String, dynamic>{
+            'free_threshold': apiFt,
+            'retain_days': plan.retainDays,
+            'weekdays': plan.weekdays,
+            'time': plan.time,
+            'del_flags': plan.delFlags,
+            'platforms': platforms,
+          };
     try {
       final resp = await _dio.post<dynamic>(
         url,

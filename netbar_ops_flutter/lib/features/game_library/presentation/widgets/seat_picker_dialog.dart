@@ -14,22 +14,37 @@ class SeatPickerDialog extends ConsumerStatefulWidget {
   final int merchantId;
   final GameItem row;
 
+  /// 可选安装盘符候选（来自已下载游戏 local_path，已去重/排序/排除 C）
+  final List<String> driveLetters;
+
+  /// 该平台是否支持指定盘符（story 不支持，传 letter 会被后端拒绝）
+  final bool supportsLetter;
+
   const SeatPickerDialog({
     super.key,
     required this.merchantId,
     required this.row,
+    this.driveLetters = const [],
+    this.supportsLetter = false,
   });
 
-  /// 返回用户选择的座位 id；null 表示取消
-  static Future<String?> show(
+  /// 返回 ({seat, letter})；letter 为 null 表示「自动（服务器选盘）」。整体 null 表示取消
+  static Future<({String seat, String? letter})?> show(
     BuildContext context, {
     required int merchantId,
     required GameItem row,
+    List<String> driveLetters = const [],
+    bool supportsLetter = false,
   }) {
-    return showDialog<String>(
+    return showDialog<({String seat, String? letter})>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => SeatPickerDialog(merchantId: merchantId, row: row),
+      builder: (_) => SeatPickerDialog(
+        merchantId: merchantId,
+        row: row,
+        driveLetters: driveLetters,
+        supportsLetter: supportsLetter,
+      ),
     );
   }
 
@@ -39,6 +54,7 @@ class SeatPickerDialog extends ConsumerStatefulWidget {
 
 class _SeatPickerDialogState extends ConsumerState<SeatPickerDialog> {
   static const _prefsKeyPrefix = 'gameLibrary:lastSeat:';
+  static const _prefsKeyLetterPrefix = 'gameLibrary:lastLetter:';
 
   List<Terminal> _seats = [];
   bool _loading = true;
@@ -46,13 +62,17 @@ class _SeatPickerDialogState extends ConsumerState<SeatPickerDialog> {
   String? _lastSeatHint;
   final _manualController = TextEditingController();
   bool _useManual = false;
+  // 选中的安装盘符；null = 自动（服务器选盘）
+  String? _selectedLetter;
 
   String get _prefsKey => '$_prefsKeyPrefix${widget.merchantId}';
+  String get _prefsKeyLetter => '$_prefsKeyLetterPrefix${widget.merchantId}';
 
   @override
   void initState() {
     super.initState();
     _loadLastSeat();
+    if (widget.supportsLetter) _loadLastLetter();
     _fetchSeats();
   }
 
@@ -79,6 +99,27 @@ class _SeatPickerDialogState extends ConsumerState<SeatPickerDialog> {
     try {
       final sp = await SharedPreferences.getInstance();
       await sp.setString(_prefsKey, seatId);
+    } catch (_) {}
+  }
+
+  /// 加载上次选择的盘符；仅当它仍在本次候选列表内才回显，否则保持「自动」
+  Future<void> _loadLastLetter() async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final last = sp.getString(_prefsKeyLetter);
+      if (mounted &&
+          last != null &&
+          last.isNotEmpty &&
+          widget.driveLetters.contains(last)) {
+        setState(() => _selectedLetter = last);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveLastLetter(String letter) async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString(_prefsKeyLetter, letter);
     } catch (_) {}
   }
 
@@ -115,7 +156,11 @@ class _SeatPickerDialogState extends ConsumerState<SeatPickerDialog> {
     if (id != kToolboxSeat) {
       _saveLastSeat(id);
     }
-    Navigator.of(context).pop(id);
+    final letter = widget.supportsLetter ? _selectedLetter : null;
+    if (letter != null && letter.isNotEmpty) {
+      _saveLastLetter(letter);
+    }
+    Navigator.of(context).pop((seat: id, letter: letter));
   }
 
   @override
@@ -188,6 +233,10 @@ class _SeatPickerDialogState extends ConsumerState<SeatPickerDialog> {
                     ],
                   ),
                   const SizedBox(height: 12),
+                  if (widget.supportsLetter) ...[
+                    _buildLetterSection(),
+                    const SizedBox(height: 12),
+                  ],
                   if (_useManual)
                     TextField(
                       controller: _manualController,
@@ -280,6 +329,50 @@ class _SeatPickerDialogState extends ConsumerState<SeatPickerDialog> {
           ],
         ),
       ),
+    );
+  }
+
+  /// 安装盘符选择区：「自动」+ 已下载游戏出现过的盘符
+  Widget _buildLetterSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '安装盘符',
+          style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _letterChip(null, '自动'),
+            for (final l in widget.driveLetters) _letterChip(l, '$l 盘'),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _letterChip(String? value, String label) {
+    final selected = _selectedLetter == value;
+    return ChoiceChip(
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          color: selected ? Colors.white : Colors.black87,
+        ),
+      ),
+      selected: selected,
+      onSelected: (_) => setState(() => _selectedLetter = value),
+      selectedColor: AppColors.iosBlue,
+      backgroundColor: const Color(0xFFF3F4F6),
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      showCheckmark: false,
+      side: BorderSide.none,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
     );
   }
 

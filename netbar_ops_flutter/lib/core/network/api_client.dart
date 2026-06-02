@@ -194,9 +194,28 @@ class ApiClient {
   ApiError _handleError(DioException e) {
     String message = '网络请求失败';
     if (e.response?.data is Map) {
+      // 优先用后端返回的业务错误信息（通常已是中文）
       message = e.response?.data['error'] ?? e.response?.data['message'] ?? message;
-    } else if (e.message != null) {
-      message = e.message!;
+    } else {
+      // 无响应体：按 Dio 异常类型给中文友好文案，避免把英文技术串透给用户
+      switch (e.type) {
+        case DioExceptionType.connectionTimeout:
+        case DioExceptionType.sendTimeout:
+        case DioExceptionType.receiveTimeout:
+          message = '网络连接超时，请稍后重试';
+          break;
+        case DioExceptionType.connectionError:
+          message = '网络连接失败，请检查网络';
+          break;
+        case DioExceptionType.badCertificate:
+          message = '安全证书校验失败';
+          break;
+        case DioExceptionType.cancel:
+          message = '请求已取消';
+          break;
+        default:
+          message = e.message ?? message;
+      }
     }
     return ApiError(
       code: e.response?.statusCode,

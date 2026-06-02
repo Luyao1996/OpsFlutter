@@ -4,6 +4,7 @@ import 'package:syncfusion_flutter_charts/charts.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../data/dashboard_api.dart';
 import '../dashboard_page.dart';
+import '../../../../shared/widgets/app_error_view.dart';
 
 class TrendChart extends ConsumerWidget {
   const TrendChart({super.key});
@@ -71,7 +72,11 @@ class TrendChart extends ConsumerWidget {
           Expanded(
             child: trendAsync.when(
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (err, stack) => Center(child: Text('加载失败: $err')),
+              error: (err, stack) => AppErrorView(
+                error: err,
+                compact: true,
+                onRetry: () => ref.invalidate(dashboardTrendProvider),
+              ),
               data: (trendData) {
                 final data = selectedRange == TimeRange.months12
                     ? trendData.months12

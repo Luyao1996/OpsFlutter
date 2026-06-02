@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../data/group_api.dart';
+import '../../../core/network/error_message.dart';
 
 /// 分组列表 Provider
 final groupListProvider = FutureProvider.autoDispose<List<String>>((ref) async {
@@ -138,7 +139,7 @@ class _GroupSelectorModalState extends ConsumerState<GroupSelectorModal> {
   Widget _buildContent(AsyncValue<List<String>> groupsAsync) {
     return groupsAsync.when(
       loading: () => _buildLoading(),
-      error: (err, _) => _buildError(err.toString()),
+      error: (err, _) => _buildError(friendlyErrorMessage(err)),
       data: (groups) {
         _saveCache(groups);
         final filtered = _filterGroups(groups);

@@ -5,6 +5,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/widgets/search_field.dart';
+import '../../../../shared/widgets/app_error_view.dart';
 import '../data/netbar_api.dart';
 import '../data/netbar_list_provider.dart';
 import '../data/netbar_pinyin_matcher.dart';
@@ -103,24 +104,9 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
           Expanded(
             child: netbarsAsync.when(
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (err, stack) => Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(
-                      LucideIcons.alertTriangle,
-                      size: 48,
-                      color: Colors.red,
-                    ),
-                    const SizedBox(height: 16),
-                    Text('加载失败: $err'),
-                    const SizedBox(height: 16),
-                    ElevatedButton(
-                      onPressed: () => ref.refresh(netbarListProvider),
-                      child: const Text('重试'),
-                    ),
-                  ],
-                ),
+              error: (err, stack) => AppErrorView(
+                error: err,
+                onRetry: () => ref.invalidate(netbarListProvider),
               ),
               data: (response) {
                 // Filter logic: 三级匹配 (name → pinyin_full → pinyin) + id/token/group 兜底

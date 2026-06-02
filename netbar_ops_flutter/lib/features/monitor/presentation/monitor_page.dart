@@ -24,6 +24,7 @@ import '../data/terminal_api.dart';
 import '../data/router_api.dart';
 import '../../logs/data/operation_log_api.dart';
 import 'widgets/terminal_card.dart';
+import '../../../shared/widgets/app_error_view.dart';
 import 'widgets/router_card.dart';
 import 'widgets/router_edit_modal.dart';
 
@@ -85,6 +86,10 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
   final Map<String, Map<String, double>> _realtimeCache = {};
   bool _realtimeLoading = false;
 
+  // hover 轮询：seatId -> 500ms 定时器。鼠标悬停卡片时每 500ms 拉一次该终端的
+  // CPU/内存/GPU + 截图；离开即取消。同一时刻通常只有 1~2 个在跑。
+  final Map<String, Timer> _hoverTimers = {};
+
   /// realtime 是否已经"尝试加载过"一次（不论成功失败）。
   /// 用于阻断"全部失败 → cache 仍空 → build 又触发 → 又全失败"的死循环；
   /// 只有切网吧 / 点刷新按钮才会重置为 false，再次允许首帧自动拉取。
@@ -130,6 +135,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
 
   @override
   void dispose() {
+    _cancelAllHoverTimers();
     _searchController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     if (isDesktopPlatform) {
@@ -248,6 +254,99 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
     );
   }
 
+  /// 鼠标进入卡片：启动该终端 500ms 轮询（CPU/内存/GPU + 截图）。
+  /// 立即拉一次，之后每 500ms 一次。防串台：请求内校验 netbarId。
+  void _onCardHoverStart(Terminal terminal) {
+    if (terminal.status == 0) return; // 离线机器无实时数据，不拉截图/硬件
+    final seatId = terminal.seatId;
+    if (seatId.isEmpty || _hoverTimers.containsKey(seatId)) return;
+    final netbarId = ref.read(currentNetbarIdProvider);
+    void tick() {
+      _loadSingleRealtime(terminal, netbarId);
+      _loadHoverScreenshot(terminal, netbarId);
+    }
+    tick(); // 立即一次，避免等满 500ms 才出数据
+    _hoverTimers[seatId] =
+        Timer.periodic(const Duration(milliseconds: 500), (_) => tick());
+  }
+
+  /// 鼠标离开卡片：停止轮询，并清掉该终端实时硬件缓存（hover 结束即隐藏数值）。
+  /// 截图缓存保留（最后一帧作为更新后的静态缩略图）。
+  void _onCardHoverEnd(String seatId) {
+    _hoverTimers.remove(seatId)?.cancel();
+    if (_realtimeCache.remove(seatId) != null && mounted) {
+      setState(() {});
+    }
+  }
+
+  void _cancelAllHoverTimers() {
+    for (final t in _hoverTimers.values) {
+      t.cancel();
+    }
+    _hoverTimers.clear();
+  }
+
+  /// 单终端实时硬件（hover 轮询用）。解析与批量版一致，写入 _realtimeCache。
+  /// 仅当该终端仍在 hover（timer 未取消）且仍是当前网吧时才写入，
+  /// 避免离开后/切网吧后迟到响应又回显或串台。
+  Future<void> _loadSingleRealtime(Terminal terminal, int? netbarId) async {
+    if (netbarId == null || terminal.seatId.isEmpty) return;
+    try {
+      final api = ref.read(terminalApiProvider);
+      final rt =
+          await api.getHardwareRealtime(terminal.seatId, merchantId: netbarId);
+      if (!mounted || ref.read(currentNetbarIdProvider) != netbarId) return;
+      final stats = <String, double>{};
+      final cpuList = rt['cpu'] as List?;
+      if (cpuList != null && cpuList.isNotEmpty) {
+        final c = cpuList[0];
+        if (c is Map<String, dynamic>) {
+          stats['cpu'] = (c['load_total'] ?? 0).toDouble();
+        }
+      }
+      final gpuList = rt['gpu'] as List?;
+      if (gpuList != null && gpuList.isNotEmpty) {
+        final g = gpuList[0];
+        if (g is Map<String, dynamic>) {
+          stats['gpu'] = (g['load_gpu'] ?? 0).toDouble();
+        }
+      }
+      final memData = rt['memory'];
+      if (memData is List && memData.isNotEmpty) {
+        double total = 0;
+        int count = 0;
+        for (final m in memData) {
+          if (m is Map<String, dynamic>) {
+            total += (m['load_total'] ?? 0).toDouble();
+            count++;
+          }
+        }
+        if (count > 0) stats['ram'] = total / count;
+      } else if (memData is Map<String, dynamic>) {
+        stats['ram'] = (memData['load_total'] ?? 0).toDouble();
+      }
+      if (_hoverTimers.containsKey(terminal.seatId)) {
+        _realtimeCache[terminal.seatId] = stats;
+        setState(() {});
+      }
+    } catch (_) {}
+  }
+
+  /// hover 轮询的截图请求：直接拉缩略图覆盖缓存，失败等下个 tick，不走重试队列
+  /// （高频轮询下 _scheduleRetry 会堆积）。
+  Future<void> _loadHoverScreenshot(Terminal terminal, int? netbarId) async {
+    if (terminal.seatId.isEmpty) return;
+    try {
+      final ws = ref.read(taskWsProvider);
+      final bytes = await requestThumbnail(ws,
+          seatId: terminal.seatId, merchantId: netbarId ?? 0);
+      if (!mounted || ref.read(currentNetbarIdProvider) != netbarId) return;
+      if (bytes != null && _hoverTimers.containsKey(terminal.seatId)) {
+        setState(() => _screenshotCache[terminal.seatId] = bytes);
+      }
+    } catch (_) {}
+  }
+
   /// 批量获取所有在线终端的截图。
   /// [netbarId] 为发起时的网吧 ID，贯穿整条异步链做防串台校验。
   Future<void> _loadScreenshots(List<Terminal> terminals, int? netbarId,
@@ -356,11 +455,12 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
     // 切换网吧时重置搜索和筛选状态
     ref.listen<CurrentNetbar>(currentNetbarProvider, (prev, next) {
       if (prev?.id != next.id) {
+        _cancelAllHoverTimers(); // 切网吧：停掉所有 hover 轮询，防止旧网吧迟到响应串台
         _realtimeLoading = false; // 切网吧：释放加载标志，允许新网吧立即启动 realtime
         _realtimeAttempted = false; // 切网吧：重置尝试标志，新网吧首帧重新触发 realtime 拉取
-        // 切网吧清掉手机端的 "已 push 防重入" set——即使旧网吧某个 terminal.id 因
-        // 崩溃/异常 push 残留在 set 中，切回该网吧时也能重新打开详情页。
-        _mobileOpenTerminals.clear();
+        // 切网吧重置手机端打开详情的去抖记录，避免跨网吧误判去抖窗口。
+        _lastOpenTerminalId = null;
+        _lastOpenTerminalAt = null;
         setState(() {
           _searchQuery = '';
           _filterStatus = 'all';
@@ -391,7 +491,10 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
         color: AppColors.iosBg,
         child: terminalsAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
-          error: (error, _) => _buildErrorView(error.toString()),
+          error: (error, _) => AppErrorView(
+            error: error,
+            onRetry: () => ref.invalidate(terminalsProvider(netbarId)),
+          ),
           data: (terminals) {
             // 批量截图：改用 wsbin thumbnail（300px 缩略图）通道，首帧后批量拉取。
             // 触发条件：首次(_screenshotCache 为空) 或 刷新(_screenshotForceRefresh)。
@@ -406,14 +509,8 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                 _loadScreenshots(terminals, netbarId, force: force);
               });
             }
-            // 批量实时硬件(CPU/内存/GPU)：首帧后批量拉取，分批限流(≤5)，绑定 netbarId 防串台。
-            // 触发条件用 _realtimeAttempted 而非 _realtimeCache.isEmpty——
-            // 后者在所有请求都失败时永远 true，会让 build 不断自动重触发形成死循环。
-            if (terminals.isNotEmpty && !_realtimeAttempted && !_realtimeLoading) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                _loadRealtimeStats(terminals, netbarId);
-              });
-            }
+            // 实时硬件(CPU/内存/GPU)不再默认批量拉取，也不默认展示：
+            // 仅在鼠标 hover 卡片时每 500ms 单点拉取并展示（见 _onCardHoverStart）。
             return _buildContent(terminals);
           },
         ),
@@ -740,6 +837,10 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                                             _openTerminalDetail(terminal),
                                         onSecondaryTapDown: (details) =>
                                             _showContextMenu(details, terminal),
+                                        onHoverStart: () =>
+                                            _onCardHoverStart(terminal),
+                                        onHoverEnd: () =>
+                                            _onCardHoverEnd(terminal.seatId),
                                       );
                                     }, childCount: filteredClients.length),
                                   );
@@ -806,6 +907,8 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                           onTap: () => _openTerminalDetail(terminal),
                           onSecondaryTapDown: (details) =>
                               _showContextMenu(details, terminal),
+                          onHoverStart: () => _onCardHoverStart(terminal),
+                          onHoverEnd: () => _onCardHoverEnd(terminal.seatId),
                         );
                       }, childCount: filteredClients.length),
                     );
@@ -935,8 +1038,11 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
   }
 
   /// 打开终端详情
-  // Track open terminal detail on mobile to prevent duplicates
-  final Set<int> _mobileOpenTerminals = {};
+  // Mobile 去抖：记录最近一次打开的终端 id 与时刻，同一终端 600ms 内只 push 一次。
+  // 不再依赖 push Future 的完成回调来清理——整栈被 context.go 替换时该 Future 永不
+  // 完成，旧方案会让 id 永久残留、对应卡片永久点不动（间歇"点击无反应"根因）。
+  int? _lastOpenTerminalId;
+  DateTime? _lastOpenTerminalAt;
 
   void _openTerminalDetail(Terminal terminal) {
     if (isDesktopPlatform) {
@@ -971,24 +1077,24 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
       );
       return;
     }
-    // Mobile: prevent duplicate push
-    if (_mobileOpenTerminals.contains(terminal.id)) return;
-    _mobileOpenTerminals.add(terminal.id);
+    // Mobile/Web: 时间去抖防止连点重复 push（同一终端 600ms 内只触发一次）。
+    // 超出窗口自动恢复，绝不会出现永久残留导致卡片永久点不动。
+    final now = DateTime.now();
+    if (_lastOpenTerminalId == terminal.id &&
+        _lastOpenTerminalAt != null &&
+        now.difference(_lastOpenTerminalAt!) <
+            const Duration(milliseconds: 600)) {
+      return;
+    }
+    _lastOpenTerminalId = terminal.id;
+    _lastOpenTerminalAt = now;
 
     final location = '/terminal/${terminal.id}';
     if (kIsWeb) {
       openInNewTab(buildWebUrlForLocation(location));
-      _mobileOpenTerminals.remove(terminal.id);
       return;
     }
-    // 用 whenComplete 而非 then：Future 异常完成（如 push 链路崩溃、Navigator
-    // 取消）时 then 不会触发，会让 _mobileOpenTerminals 残留 terminal.id，导致
-    // 用户后续点击同一个终端永远静默 return("偶发点击无反应" bug 的根因)。
-    context
-        .push(location, extra: _screenshotCache[terminal.seatId])
-        .whenComplete(() {
-      _mobileOpenTerminals.remove(terminal.id);
-    });
+    context.push(location, extra: _screenshotCache[terminal.seatId]);
   }
 
   /// 转换并格式化为东八区时间
@@ -1348,6 +1454,8 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                         onTap: () => _openTerminalDetail(d),
                         onSecondaryTapDown: (details) =>
                             _showContextMenu(details, d),
+                        onHoverStart: () => _onCardHoverStart(d),
+                        onHoverEnd: () => _onCardHoverEnd(d.seatId),
                       ),
                     ),
                   ),

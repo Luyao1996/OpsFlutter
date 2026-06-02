@@ -40,6 +40,7 @@ import '../../../../shared/providers/terminal_dock_provider.dart';
 import '../../../../shared/services/terminal_window_bridge.dart';
 import '../../../../shared/services/window_control.dart';
 import '../../../../shared/services/window_state_controller.dart';
+import '../../../../shared/widgets/app_error_view.dart';
 import '../../../../shared/utils/platform_utils.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../netbar/data/netbar_api.dart' as netbar_api;
@@ -416,7 +417,10 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
           backgroundColor: const Color(0xFFF3F4F6),
           body: terminalAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stack) => Center(child: Text('Error: $error')),
+        error: (error, stack) => AppErrorView(
+          error: error,
+          onRetry: () => ref.invalidate(terminalDetailProvider(_detailKey)),
+        ),
         data: (terminal) {
           // 游戏管理 Tab 全屏：跳过 Header / 左侧栏 / TabBar，直接铺满
           if (_selectedTab == '游戏管理' && _gameManageFullscreen) {

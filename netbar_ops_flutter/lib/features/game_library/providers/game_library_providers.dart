@@ -296,6 +296,29 @@ class GameLibraryNotifier extends StateNotifier<GameLibraryState> {
     return submitPlan(enabled: true);
   }
 
+  /// 删除（清空）已设定的清理任务：向后端发送空值（关闭快捷路径），
+  /// 关定时器 + 清掉持久化设定。成功后本地直接置 RecyclePlan.empty——
+  /// 不取后端回填值，避免 free_threshold「剩余%」语义反转出 UI 100% 的脏值。
+  Future<({bool ok, String? error})> deletePlan() async {
+    if (_disposed) return (ok: false, error: 'disposed');
+    state = state.copyWith(planSaving: true);
+    final res = await _api.saveRecyclePlan(
+      plan: RecyclePlan.empty,
+      enabled: false,
+      clearAll: true,
+    );
+    if (_disposed) return (ok: false, error: 'disposed');
+    if (!res.ok) {
+      state = state.copyWith(planSaving: false);
+      return (ok: false, error: res.error);
+    }
+    state = state.copyWith(
+      planSaving: false,
+      recyclePlan: RecyclePlan.empty,
+    );
+    return (ok: true, error: null);
+  }
+
   /// 单条删除（永久删除 + 清盘）
   /// 返回 ({ok, status, resultCode, error})：
   /// - ok=true 表示 HTTP 200 且 results[gid]=='ok'
