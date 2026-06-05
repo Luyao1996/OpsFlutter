@@ -53,6 +53,9 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
   bool _saving = false;
   bool _deleting = false;
 
+  // 维护到期日期（null = 未设置），与 Web 端 maintenance_expired_at 对齐，提交格式 YYYY-MM-DD
+  DateTime? _maintenanceExpiredAt;
+
   @override
   void initState() {
     super.initState();
@@ -76,6 +79,12 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
       // 回填已选用户
       if (widget.netbar!.users != null) {
         _selectedUserIds = widget.netbar!.users!.map((u) => u.id).toList();
+      }
+
+      // 回填维护到期：兼容 'YYYY-MM-DD' 与 'YYYY-MM-DD HH:mm:ss'，只取日期
+      final rawExpired = widget.netbar!.maintenanceExpiredAt;
+      if (rawExpired != null && rawExpired.isNotEmpty) {
+        _maintenanceExpiredAt = DateTime.tryParse(rawExpired);
       }
     }
 
@@ -184,6 +193,9 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
         'group_id': _selectedGroupIds.isNotEmpty ? _selectedGroupIds.first : null,
         'group_ids': _selectedGroupIds,
         'user_ids': _selectedUserIds,
+        // 维护到期：YYYY-MM-DD；未设置/已清除则传空串，与 Web 端 clearable 行为一致
+        'maintenance_expired_at':
+            _maintenanceExpiredAt != null ? _fmtDate(_maintenanceExpiredAt!) : '',
       };
 
       if (widget.isCreateMode) {
@@ -201,7 +213,8 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
       }
 
       widget.onSaved?.call();
-      if (mounted) Navigator.of(context).pop();
+      // 返回 true 通知调用方"已保存"，触发列表刷新（修复保存后重新打开仍显示旧值）
+      if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {
         showTopNotice(context, '${widget.isCreateMode ? '创建' : '保存'}失败: $e', level: NoticeLevel.error);
@@ -241,7 +254,8 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
       widget.onDeleted?.call();
       if (mounted) {
         showTopNotice(context, '删除成功', level: NoticeLevel.success);
-        Navigator.of(context).pop();
+        // 返回 true 通知调用方"已删除"，触发列表刷新
+        Navigator.of(context).pop(true);
       }
     } catch (e) {
       if (mounted) {
@@ -307,6 +321,13 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
           _buildFormField(
             label: '可管理人',
             child: _buildUserSelector(),
+          ),
+          const SizedBox(height: 16),
+
+          // 维护到期
+          _buildFormField(
+            label: '维护到期',
+            child: _buildMaintenanceSelector(),
           ),
         ],
       ),
@@ -407,6 +428,72 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
       onChanged: (ids) => setState(() => _selectedUserIds = ids),
       placeholder: '选择管理人',
     );
+  }
+
+  /// 格式化日期为 YYYY-MM-DD
+  String _fmtDate(DateTime d) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${d.year}-${two(d.month)}-${two(d.day)}';
+  }
+
+  /// 维护到期日期选择器（点击弹日历，可清除，样式与其它字段统一）
+  Widget _buildMaintenanceSelector() {
+    final hasValue = _maintenanceExpiredAt != null;
+    return InkWell(
+      onTap: _pickMaintenanceDate,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.calendar_today_outlined,
+                size: 16, color: Colors.grey.shade500),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                hasValue ? _fmtDate(_maintenanceExpiredAt!) : '选择维护到期日期',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: hasValue ? Colors.grey.shade800 : Colors.grey.shade400,
+                ),
+              ),
+            ),
+            // 有值时显示清除按钮（对应 Web 端 clearable）
+            if (hasValue)
+              InkWell(
+                onTap: () => setState(() => _maintenanceExpiredAt = null),
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: Icon(Icons.close,
+                      size: 16, color: Colors.grey.shade400),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 弹出日期选择器
+  Future<void> _pickMaintenanceDate() async {
+    final now = DateTime.now();
+    final initial = _maintenanceExpiredAt ?? now;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 20),
+      helpText: '选择维护到期日期',
+    );
+    if (picked != null) {
+      setState(() => _maintenanceExpiredAt = picked);
+    }
   }
 
   /// 多选 Chips 组件

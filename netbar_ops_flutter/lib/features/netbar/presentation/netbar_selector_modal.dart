@@ -60,16 +60,17 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
     Navigator.of(context).pop();
   }
 
-  void _handleEdit(Netbar netbar) {
-    showAdaptive<void>(
+  Future<void> _handleEdit(Netbar netbar) async {
+    final saved = await showAdaptive<bool>(
       context,
-      (context) => EditNetbarModal(
-        netbar: netbar,
-        onSaved: () => ref.invalidate(netbarListProvider),
-      ),
+      (context) => EditNetbarModal(netbar: netbar),
       barrierColor: Colors.black.withValues(alpha: 0.2),
       routeName: '/dialog/edit-netbar',
     );
+    // 保存/删除成功后等待列表刷新落地，确保重新打开编辑显示的是新值（消除竞态）
+    if (saved == true) {
+      await ref.refresh(netbarListProvider.future);
+    }
   }
 
   List<Netbar> _filterAndSort(List<Netbar> netbars) {
@@ -216,15 +217,16 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
     );
   }
 
-  void _handleAdd() {
-    showAdaptive<void>(
+  Future<void> _handleAdd() async {
+    final saved = await showAdaptive<bool>(
       context,
-      (context) => EditNetbarModal(
-        onSaved: () => ref.invalidate(netbarListProvider),
-      ),
+      (context) => const EditNetbarModal(),
       barrierColor: Colors.black.withValues(alpha: 0.2),
       routeName: '/dialog/edit-netbar',
     );
+    if (saved == true) {
+      await ref.refresh(netbarListProvider.future);
+    }
   }
 
   Widget _buildMobileFilter(AsyncValue<NetbarListResponse> responseAsync) {

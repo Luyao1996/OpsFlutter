@@ -20,8 +20,15 @@ import '../../../shared/utils/adaptive_show.dart';
 import '../../../shared/utils/platform_utils.dart';
 import '../../../shared/utils/top_notice.dart';
 import '../../../shared/utils/open_in_new_tab.dart';
+import 'package:file_picker/file_picker.dart';
 import '../data/terminal_api.dart';
 import '../data/router_api.dart';
+import '../../netbar/data/netbar_api.dart';
+import '../../netbar/data/netbar_list_provider.dart';
+import '../../netbar/presentation/widgets/totp_dialog.dart';
+import '../../netbar/presentation/edit_netbar_modal.dart';
+import '../../../shared/providers/permission_provider.dart';
+import '../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../logs/data/operation_log_api.dart';
 import 'widgets/terminal_card.dart';
 import '../../../shared/widgets/app_error_view.dart';
@@ -62,6 +69,14 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
   // 右键菜单状态
   OverlayEntry? _menuOverlay;
   Terminal? _selectedTerminal;
+
+  // 「下载服务端」状态：下载中标志 + 进度(0~1，total 缺失时为 null 表示不确定)
+  // 空状态页按钮与关键设备区标题栏按钮共用（两者互斥显示，不会同时下载）
+  bool _serverDownloading = false;
+  double? _serverProgress;
+  // 「下载副服务器」状态（仅关键设备区标题栏，桌面端）
+  bool _subServerDownloading = false;
+  double? _subServerProgress;
 
   // 关键设备区路由器流量手动刷新计数器：每次点击"刷新"按钮 +1，
   // RouterCard 通过 didUpdateWidget 检测变化后立即重拉一次流量并重置 15s 计时。
@@ -254,8 +269,8 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
     );
   }
 
-  /// 鼠标进入卡片：启动该终端 500ms 轮询（CPU/内存/GPU + 截图）。
-  /// 立即拉一次，之后每 500ms 一次。防串台：请求内校验 netbarId。
+  /// 鼠标进入卡片：启动该终端 1s 轮询（CPU/内存/GPU + 截图）。
+  /// 立即拉一次，之后每 1s 一次。防串台：请求内校验 netbarId。
   void _onCardHoverStart(Terminal terminal) {
     if (terminal.status == 0) return; // 离线机器无实时数据，不拉截图/硬件
     final seatId = terminal.seatId;
@@ -265,9 +280,9 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
       _loadSingleRealtime(terminal, netbarId);
       _loadHoverScreenshot(terminal, netbarId);
     }
-    tick(); // 立即一次，避免等满 500ms 才出数据
+    tick(); // 立即一次，避免等满 1s 才出数据
     _hoverTimers[seatId] =
-        Timer.periodic(const Duration(milliseconds: 500), (_) => tick());
+        Timer.periodic(const Duration(seconds: 1), (_) => tick());
   }
 
   /// 鼠标离开卡片：停止轮询，并清掉该终端实时硬件缓存（hover 结束即隐藏数值）。
@@ -574,6 +589,10 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
   }
 
   Widget _buildEmptyState() {
+    // 与 Web 端(toolboxPage usePermission.js)对齐：受 '服务端下载' 细分权限控制，
+    // 总部管理员(hasDetailPermission 内 isTopManager)直接放行；无权限则隐藏按钮。
+    final canServerDownload =
+        ref.watch(permissionProvider).hasDetailPermission('服务端下载');
     return Center(
       child: Container(
         margin: const EdgeInsets.all(32),
@@ -627,13 +646,111 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                 foregroundColor: Colors.white,
               ),
             ),
+            if (canServerDownload) ...[
+              const SizedBox(height: 12),
+              _buildServerDownloadButton(),
+            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _buildNetbarHeader({EdgeInsets padding = EdgeInsets.zero}) {
+  /// 「服务端下载」按钮：空闲时可点击；下载中显示进度（有总长显示百分比，否则不确定转圈）
+  Widget _buildServerDownloadButton() {
+    if (_serverDownloading) {
+      final hasPercent = _serverProgress != null;
+      return OutlinedButton.icon(
+        onPressed: null,
+        icon: SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            value: _serverProgress, // null => 不确定动画
+            color: AppColors.iosBlue,
+          ),
+        ),
+        label: Text(
+          hasPercent
+              ? '下载中 ${(_serverProgress! * 100).toInt()}%'
+              : '下载中…',
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.iosBlue,
+        ),
+      );
+    }
+    return OutlinedButton.icon(
+      onPressed: _handleServerDownload,
+      icon: const Icon(LucideIcons.download, size: 16),
+      label: const Text('服务端下载'),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: AppColors.iosBlue,
+        side: BorderSide(color: AppColors.iosBlue.withValues(alpha: 0.4)),
+      ),
+    );
+  }
+
+  /// 处理服务端程序下载：选自定义保存路径 → 流式下载 → 进度上报 → 结果提示
+  Future<void> _handleServerDownload() async {
+    // 手机端不支持本地下载安装，引导用户去 PC 端（无 Web 端，非桌面即手机）
+    if (!isDesktopPlatform) {
+      if (mounted) {
+        showTopNotice(context, '请前往PC端下载并安装服务端',
+            level: NoticeLevel.info);
+      }
+      return;
+    }
+
+    final id = ref.read(currentNetbarProvider).id;
+    if (id == null) {
+      if (mounted) {
+        showTopNotice(context, '未选择网吧，无法下载', level: NoticeLevel.warning);
+      }
+      return;
+    }
+
+    // 让用户自定义保存路径（文件名与 Web 端一致：ChannelLaunch_{id}.zip）
+    final savePath = await FilePicker.platform.saveFile(
+      dialogTitle: '保存服务端程序',
+      fileName: 'ChannelLaunch_$id.zip',
+    );
+    if (savePath == null) return; // 用户取消
+
+    setState(() {
+      _serverDownloading = true;
+      _serverProgress = null;
+    });
+    try {
+      await NetbarApi().downloadServerToFile(
+        id,
+        savePath,
+        onReceiveProgress: (received, total) {
+          if (!mounted) return;
+          setState(() {
+            _serverProgress = total > 0 ? received / total : null;
+          });
+        },
+      );
+      if (mounted) {
+        showTopNotice(context, '下载成功: $savePath', level: NoticeLevel.success);
+      }
+    } catch (e) {
+      if (mounted) {
+        showTopNotice(context, '下载失败: $e', level: NoticeLevel.error);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _serverDownloading = false;
+          _serverProgress = null;
+        });
+      }
+    }
+  }
+
+  Widget _buildNetbarHeader({EdgeInsets padding = EdgeInsets.zero, bool showActions = false}) {
     final netbar = ref.watch(currentNetbarProvider);
     final group = netbar.groupName;
     final name = netbar.name ?? '';
@@ -643,26 +760,160 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
       padding: padding,
       child: Row(
         children: [
-          if (group != null && group.isNotEmpty) ...[
-            Text(
-              group,
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Icon(LucideIcons.chevronRight, size: 14, color: Colors.grey.shade400),
-            ),
-          ],
-          Flexible(
-            child: Text(
-              name,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-              overflow: TextOverflow.ellipsis,
+          // 面包屑（组名 + chevron + 名称）独占左侧弹性空间，把操作按钮挤到最右。
+          // 注意：不能用 Flexible(名称)+Spacer() 双弹性子节点——它们会平分剩余空间，
+          // 导致按钮停在中间。改用单一 Expanded 包裹面包屑，才能让按钮真正贴右。
+          Expanded(
+            child: Row(
+              children: [
+                if (group != null && group.isNotEmpty) ...[
+                  Text(
+                    group,
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Icon(LucideIcons.chevronRight, size: 14, color: Colors.grey.shade400),
+                  ),
+                ],
+                Flexible(
+                  child: Text(
+                    name,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
             ),
           ),
+          // 右侧操作区（仅桌面端面包屑行显示）：生成超级密码 / 下载服务端 / 下载副服务器
+          if (showActions) _buildHeaderActions(),
         ],
       ),
     );
+  }
+
+  /// 面包屑行右侧操作按钮区：生成超级密码 / 下载服务端 / 下载副服务器
+  /// （从「设置菜单」「关键设备状态行」迁移而来，权限规则保持一致）
+  Widget _buildHeaderActions() {
+    final perm = ref.watch(permissionProvider);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 「编辑网吧信息」复用切换网吧页(netbar_selector_modal _handleEdit)的逻辑，
+        // 始终显示在最左侧（与切换网吧页一致，无权限门槛）
+        _buildEditNetbarButton(),
+        const SizedBox(width: 8),
+        // 「生成超级密码」受 '生成超级密码' 细分权限控制
+        if (perm.hasDetailPermission('生成超级密码')) ...[
+          _buildSuperPwdButton(),
+          const SizedBox(width: 8),
+        ],
+        // 「下载服务端」受 '服务端下载' 细分权限控制（与 Web 端一致）
+        if (perm.hasDetailPermission('服务端下载')) ...[
+          _buildKeyDeviceDownloadButton(
+            label: '下载服务端',
+            busy: _serverDownloading,
+            progress: _serverProgress,
+            onPressed: _handleServerDownload,
+          ),
+          const SizedBox(width: 8),
+        ],
+        // 「下载副服务器」无权限控制（与 Web 端一致，任何人可下）
+        _buildKeyDeviceDownloadButton(
+          label: '下载副服务器',
+          busy: _subServerDownloading,
+          progress: _subServerProgress,
+          onPressed: _handleSubServerDownload,
+        ),
+      ],
+    );
+  }
+
+  /// 「生成超级密码」按钮（样式与关键设备下载按钮一致，点击弹 TotpDialog）
+  Widget _buildSuperPwdButton() {
+    return SizedBox(
+      height: 32,
+      child: ElevatedButton.icon(
+        onPressed: () => showAdaptive<void>(
+          context,
+          (_) => const TotpDialog(),
+          routeName: '/dialog/totp',
+        ),
+        icon: const Icon(LucideIcons.keyRound, size: 14),
+        label: const Text('生成超级密码', style: TextStyle(fontSize: 12)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.iosBlue,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          elevation: 0,
+        ),
+      ),
+    );
+  }
+
+  /// 「编辑网吧信息」按钮（样式与其它 header 按钮一致，点击复用切换网吧页编辑逻辑）
+  Widget _buildEditNetbarButton() {
+    return SizedBox(
+      height: 32,
+      child: ElevatedButton.icon(
+        onPressed: _handleEditNetbar,
+        icon: const Icon(LucideIcons.edit2, size: 14),
+        label: const Text('编辑网吧信息', style: TextStyle(fontSize: 12)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.iosBlue,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          elevation: 0,
+        ),
+      ),
+    );
+  }
+
+  /// 编辑当前网吧信息：复用切换网吧页(netbar_selector_modal _handleEdit)逻辑。
+  /// EditNetbarModal 需要完整 Netbar 对象回填，而其数据需异步拉取——为避免点击后
+  /// 长时间无响应，这里先用 _EditNetbarLoader 立即弹窗显示加载特效，数据就绪后再
+  /// 原地切换成编辑表单。保存/删除成功后同步 currentNetbar。
+  Future<void> _handleEditNetbar() async {
+    final id = ref.read(currentNetbarIdProvider);
+    if (id == null) return;
+
+    final saved = await showAdaptive<bool>(
+      context,
+      (context) => _EditNetbarLoader(netbarId: id),
+      barrierColor: Colors.black.withValues(alpha: 0.2),
+      routeName: '/dialog/edit-netbar',
+    );
+    if (saved != true) return;
+
+    // 与切换网吧页一致：保存/删除成功后刷新列表
+    final refreshed = await ref.refresh(netbarListProvider.future);
+
+    // 编辑的是「当前网吧」，可能被改名/改分组/删除 → 同步 currentNetbar
+    Netbar? updated;
+    for (final n in refreshed.merchants) {
+      if (n.id == id) {
+        updated = n;
+        break;
+      }
+    }
+    if (!mounted) return;
+    if (updated != null) {
+      // 改名/改分组后同步，面包屑等立即反映新值
+      await ref.read(currentNetbarProvider.notifier).setNetbar(
+            updated.id,
+            updated.name,
+            updated.status,
+            subdomainFull: updated.subdomainFull,
+            groupName: updated.group,
+          );
+    } else {
+      // 当前网吧已被删除：清空当前网吧并返回网吧列表，避免停留在已删网吧的监控页
+      await ref.read(currentNetbarProvider.notifier).clear();
+      if (mounted) context.go('/netbar-list');
+    }
   }
 
   Widget _buildContent(List<Terminal> terminals) {
@@ -861,7 +1112,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
     return CustomScrollView(
       slivers: [
         // 当前网吧标题
-        SliverToBoxAdapter(child: _buildNetbarHeader(padding: const EdgeInsets.fromLTRB(32, 24, 32, 0))),
+        SliverToBoxAdapter(child: _buildNetbarHeader(padding: const EdgeInsets.fromLTRB(32, 24, 32, 0), showActions: true)),
         // 关键设备区域
         SliverToBoxAdapter(child: _buildDevicesSection(devices)),
         // 工具栏
@@ -1388,6 +1639,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                 ),
                 const Spacer(),
                 _buildAddRouterButton(compact: false),
+                // 「下载服务端」「下载副服务器」已迁移至顶部面包屑行右侧（_buildHeaderActions）
                 const SizedBox(width: 8),
                 _buildDevicesRefreshButton(),
               ],
@@ -1491,6 +1743,97 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
         ],
       ),
     );
+  }
+
+  /// 关键设备区标题栏紧凑下载按钮（高度与"新增路由器"一致）
+  /// 下载中显示环形进度 + 百分比（progress 为 null 时显示"下载中…"不确定动画）
+  Widget _buildKeyDeviceDownloadButton({
+    required String label,
+    required bool busy,
+    required double? progress,
+    required VoidCallback onPressed,
+  }) {
+    return SizedBox(
+      height: 32,
+      child: ElevatedButton.icon(
+        onPressed: busy ? null : onPressed,
+        icon: busy
+            ? SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  value: progress,
+                  color: Colors.white,
+                ),
+              )
+            : const Icon(LucideIcons.download, size: 14),
+        label: Text(
+          busy
+              ? (progress != null ? '${(progress * 100).toInt()}%' : '下载中…')
+              : label,
+          style: const TextStyle(fontSize: 12),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.iosBlue,
+          foregroundColor: Colors.white,
+          disabledBackgroundColor: AppColors.iosBlue.withValues(alpha: 0.6),
+          disabledForegroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          elevation: 0,
+        ),
+      ),
+    );
+  }
+
+  /// 处理副服务器安装包下载：选自定义保存路径 → 流式下载固定 OSS 地址 → 进度 → 提示
+  Future<void> _handleSubServerDownload() async {
+    // 手机端不支持本地下载安装，引导去 PC 端（无 Web 端，非桌面即手机）
+    if (!isDesktopPlatform) {
+      if (mounted) {
+        showTopNotice(context, '请前往PC端下载并安装服务端',
+            level: NoticeLevel.info);
+      }
+      return;
+    }
+
+    // 让用户自定义保存路径（文件名与 Web 端一致：ControlChannelInstall.exe）
+    final savePath = await FilePicker.platform.saveFile(
+      dialogTitle: '保存副服务器安装包',
+      fileName: 'ControlChannelInstall.exe',
+    );
+    if (savePath == null) return; // 用户取消
+
+    setState(() {
+      _subServerDownloading = true;
+      _subServerProgress = null;
+    });
+    try {
+      await NetbarApi().downloadSubServerToFile(
+        savePath,
+        onReceiveProgress: (received, total) {
+          if (!mounted) return;
+          setState(() {
+            _subServerProgress = total > 0 ? received / total : null;
+          });
+        },
+      );
+      if (mounted) {
+        showTopNotice(context, '下载成功: $savePath', level: NoticeLevel.success);
+      }
+    } catch (e) {
+      if (mounted) {
+        showTopNotice(context, '下载失败: $e', level: NoticeLevel.error);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _subServerDownloading = false;
+          _subServerProgress = null;
+        });
+      }
+    }
   }
 
   Widget _buildAddRouterButton({required bool compact}) {
@@ -1890,6 +2233,93 @@ class _RouterPlaceholderCard extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+}
+
+/// 「编辑网吧信息」加载包装：点击后立即弹窗并显示加载特效，
+/// 在后台异步拉取完整 Netbar 对象（EditNetbarModal 回填所需），就绪后原地切换成
+/// 编辑表单。loading/error 占位与 EditNetbarModal 共用 ResponsiveDialogScaffold
+/// (title:'编辑网吧', maxWidth:500)，外层尺寸一致，切换不跳变。
+class _EditNetbarLoader extends ConsumerStatefulWidget {
+  final int netbarId;
+
+  const _EditNetbarLoader({required this.netbarId});
+
+  @override
+  ConsumerState<_EditNetbarLoader> createState() => _EditNetbarLoaderState();
+}
+
+class _EditNetbarLoaderState extends ConsumerState<_EditNetbarLoader> {
+  Netbar? _netbar;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final resp = await ref.read(netbarListProvider.future);
+      Netbar? target;
+      for (final n in resp.merchants) {
+        if (n.id == widget.netbarId) {
+          target = n;
+          break;
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        if (target == null) {
+          _error = '未找到当前网吧信息，请关闭后重试';
+        } else {
+          _netbar = target;
+        }
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = '网吧信息加载失败，请关闭后重试');
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 数据就绪 → 渲染真正的编辑表单
+    if (_netbar != null) {
+      return EditNetbarModal(netbar: _netbar);
+    }
+    // 加载中 / 加载失败 → 占位（外层骨架与编辑表单一致，避免尺寸跳变）
+    return ResponsiveDialogScaffold(
+      title: '编辑网吧',
+      maxWidth: 500,
+      scrollableBody: false,
+      body: SizedBox(
+        height: 160,
+        child: Center(
+          child: _error == null
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(strokeWidth: 2.5),
+                    const SizedBox(height: 16),
+                    Text('加载中…', style: TextStyle(color: Colors.grey.shade600)),
+                  ],
+                )
+              : Text(_error!, style: TextStyle(color: Colors.grey.shade700)),
+        ),
+      ),
+      footer: _error == null
+          ? null
+          : Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('关闭'),
+              ),
+            ),
     );
   }
 }

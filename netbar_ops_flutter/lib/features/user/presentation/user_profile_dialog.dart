@@ -1,5 +1,6 @@
 import 'dart:ui';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -935,53 +936,55 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
             ],
           ),
         ),
-        const SizedBox(height: 24),
-
-        // 配套软件
-        const Row(
-          children: [
-            Icon(LucideIcons.downloadCloud, size: 16, color: Color(0xFF6B7280)),
-            SizedBox(width: 8),
-            Text(
-              '配套软件',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF111827)),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: DownloadCard(
-                icon: LucideIcons.smartphone,
-                title: '下载 APP',
-                // hover 显示二维码（手机扫码下载到手机）
-                urlProvider: () => UpdateApi().fetchLatestApkUrl(),
-                // 点击弹下载对话框（PC 下载 APK 到本机）
-                customAction: (ctx) => FileDownloadDialog.show(
-                  ctx,
-                  ApkDownloader(),
+        // 配套软件：iOS 隐藏——App 内引导下载 APK/EXE 触碰 App Store 审核 2.5.2/3.2.2，
+        // 且 iOS 用户应从 App Store 获取本 App，无需此入口。Android/桌面端行为不变。
+        if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) ...[
+          const SizedBox(height: 24),
+          const Row(
+            children: [
+              Icon(LucideIcons.downloadCloud, size: 16, color: Color(0xFF6B7280)),
+              SizedBox(width: 8),
+              Text(
+                '配套软件',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF111827)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: DownloadCard(
+                  icon: LucideIcons.smartphone,
                   title: '下载 APP',
+                  // hover 显示二维码（手机扫码下载到手机）
+                  urlProvider: () => UpdateApi().fetchLatestApkUrl(),
+                  // 点击弹下载对话框（PC 下载 APK 到本机）
+                  customAction: (ctx) => FileDownloadDialog.show(
+                    ctx,
+                    ApkDownloader(),
+                    title: '下载 APP',
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: DownloadCard(
-                icon: LucideIcons.monitor,
-                title: '下载被控端',
-                customAction: (ctx) => FileDownloadDialog.show(
-                  ctx,
-                  ControllerDownloader(),
+              const SizedBox(width: 12),
+              Expanded(
+                child: DownloadCard(
+                  icon: LucideIcons.monitor,
                   title: '下载被控端',
-                  // 手机端的 .exe 无法打开（Android 不识别 PE），隐藏"打开文件"按钮；
-                  // PC 端不受此参数影响，仍可"打开文件"直接运行 setup.exe
-                  showOpenFile: false,
+                  customAction: (ctx) => FileDownloadDialog.show(
+                    ctx,
+                    ControllerDownloader(),
+                    title: '下载被控端',
+                    // 手机端的 .exe 无法打开（Android 不识别 PE），隐藏"打开文件"按钮；
+                    // PC 端不受此参数影响，仍可"打开文件"直接运行 setup.exe
+                    showOpenFile: false,
+                  ),
                 ),
               ),
-            ),
-          ],
-        ),
+            ],
+          ),
+        ],
       ],
     );
   }

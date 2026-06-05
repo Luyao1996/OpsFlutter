@@ -10,9 +10,13 @@ import '../../../shared/providers/netbar_tabs_provider.dart';
 import '../../../shared/utils/adaptive_show.dart';
 import '../../netbar/presentation/netbar_selector_modal.dart';
 import '../data/dashboard_api.dart';
+import '../../netbar/data/netbar_api.dart';
 import 'widgets/stat_card.dart';
 import 'widgets/trend_chart.dart';
+import 'widgets/alert_netbar_list.dart';
+import 'widgets/expiring_netbar_list.dart';
 import '../../../shared/widgets/app_error_view.dart';
+import '../../../shared/widgets/responsive_dialog_scaffold.dart';
 
 /// 时间范围枚举
 enum TimeRange { days30, months12 }
@@ -42,6 +46,18 @@ final dashboardTrendProvider = FutureProvider.autoDispose<TrendData>((ref) async
   }
   final api = ref.read(dashboardApiProvider);
   return api.getTrendData();
+});
+
+/// 终端异常网吧列表（全局，跨所有网吧；不依赖当前网吧上下文）
+final dashboardAlertListProvider =
+    FutureProvider.autoDispose<List<Netbar>>((ref) async {
+  return NetbarApi().getAlertList();
+});
+
+/// 网维即将到期网吧列表（全局，跨所有网吧）
+final dashboardExpiringListProvider =
+    FutureProvider.autoDispose<List<Netbar>>((ref) async {
+  return NetbarApi().getExpiringList();
 });
 
 class DashboardPage extends ConsumerWidget {
@@ -76,9 +92,9 @@ class DashboardPage extends ConsumerWidget {
             if (isPhone) {
               columns = 2;
             } else if (constraints.maxWidth >= 1024) {
-              columns = 4;
+              columns = 3;
             } else if (constraints.maxWidth >= 768) {
-              columns = 2;
+              columns = 3;
             } else {
               columns = 1;
             }
@@ -140,15 +156,6 @@ class DashboardPage extends ConsumerWidget {
                       ),
                       _buildStatItem(
                         itemWidth,
-                        '终端数',
-                        stats.terminalTotal.toString(),
-                        null,
-                        LucideIcons.monitor,
-                        Colors.orange,
-                        compact: isPhone,
-                      ),
-                      _buildStatItem(
-                        itemWidth,
                         '近7日运行终端数',
                         stats.terminal7days.toString(),
                         null,
@@ -156,10 +163,36 @@ class DashboardPage extends ConsumerWidget {
                         Colors.green,
                         compact: isPhone,
                       ),
+                      // 手机端：异常 / 到期改为统计卡，点击打开全屏弹窗
+                      if (isPhone) ...[
+                        _buildStatItem(
+                          itemWidth,
+                          '终端异常网吧',
+                          _countLabel(ref.watch(dashboardAlertListProvider)),
+                          null,
+                          LucideIcons.alertTriangle,
+                          Colors.red,
+                          compact: true,
+                          onTap: () => _showAlertListDialog(context, ref),
+                        ),
+                        _buildStatItem(
+                          itemWidth,
+                          '网维即将到期',
+                          _countLabel(ref.watch(dashboardExpiringListProvider)),
+                          null,
+                          LucideIcons.clock,
+                          Colors.orange,
+                          compact: true,
+                          onTap: () => _showExpiringListDialog(context, ref),
+                        ),
+                      ],
                     ],
                   ),
 
                   const SizedBox(height: 32),
+
+                  // 终端异常 / 网维即将到期 列表区块（桌面端始终渲染；手机端隐藏，改由顶部卡片+弹窗承载）
+                  _buildAlertSections(context, ref, isPhone, gap),
 
                   // Chart
                   SizedBox(
@@ -214,6 +247,158 @@ class DashboardPage extends ConsumerWidget {
               ),
       ),
     );
+  }
+
+  /// 构建「终端异常 / 网维即将到期」两个列表区块
+  /// - 两者皆空：不渲染
+  /// - 宽屏且两者皆有数据：左右平分；否则纵向堆叠
+  Widget _buildAlertSections(
+    BuildContext context,
+    WidgetRef ref,
+    bool isPhone,
+    double gap,
+  ) {
+    // 手机端不展示底部完整列表，改由顶部统计卡 + 全屏弹窗承载
+    if (isPhone) return const SizedBox.shrink();
+
+    final alertAsync = ref.watch(dashboardAlertListProvider);
+    final expiringAsync = ref.watch(dashboardExpiringListProvider);
+    final alertList = alertAsync.valueOrNull ?? const <Netbar>[];
+    final expiringList = expiringAsync.valueOrNull ?? const <Netbar>[];
+
+    // 两块区域始终渲染：加载中 / 失败 / 空 / 有数据 四态均由各 widget 内部展示，
+    // 不再因无数据而整块消失
+    final cards = <Widget>[
+      AlertNetbarList(
+        netbars: alertList,
+        loading: alertAsync.isLoading,
+        error: alertAsync.hasError ? alertAsync.error : null,
+        compact: isPhone,
+        onRefresh: () => ref.invalidate(dashboardAlertListProvider),
+        onTapNetbar: (n) => _openNetbarMonitor(context, ref, n),
+      ),
+      ExpiringNetbarList(
+        netbars: expiringList,
+        loading: expiringAsync.isLoading,
+        error: expiringAsync.hasError ? expiringAsync.error : null,
+        compact: isPhone,
+        onRefresh: () => ref.invalidate(dashboardExpiringListProvider),
+        onTapNetbar: (n) => _openNetbarMonitor(context, ref, n),
+      ),
+    ];
+
+    final Widget section;
+    if (!isPhone && !context.isNarrow && cards.length == 2) {
+      // 宽屏：左右平分（crossAxisAlignment.start，高度各随内容，避免 ListView intrinsic 测量问题）
+      section = Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: cards[0]),
+          SizedBox(width: gap),
+          Expanded(child: cards[1]),
+        ],
+      );
+    } else {
+      // 窄屏 / 手机 / 仅一个：纵向堆叠
+      section = Column(
+        children: [
+          for (int i = 0; i < cards.length; i++) ...[
+            if (i > 0) SizedBox(height: gap),
+            cards[i],
+          ],
+        ],
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 32),
+      child: section,
+    );
+  }
+
+  /// 统计卡数字：仅成功有数据时显示数量，加载中/失败均显示 '-'
+  String _countLabel(AsyncValue<List<Netbar>> async) =>
+      async.maybeWhen(data: (l) => l.length.toString(), orElse: () => '-');
+
+  /// 手机端：全屏弹窗展示「终端异常网吧」完整列表
+  void _showAlertListDialog(BuildContext context, WidgetRef ref) {
+    showAdaptive<void>(
+      context,
+      (dialogContext) => Consumer(
+        builder: (dialogContext, dref, _) {
+          final async = dref.watch(dashboardAlertListProvider);
+          return ResponsiveDialogScaffold(
+            title: '终端异常网吧',
+            scrollableBody: false,
+            bodyPadding: const EdgeInsets.all(16),
+            body: AlertNetbarList(
+              netbars: async.valueOrNull ?? const <Netbar>[],
+              loading: async.isLoading,
+              error: async.hasError ? async.error : null,
+              compact: true,
+              embedded: true,
+              onRefresh: () => dref.invalidate(dashboardAlertListProvider),
+              onTapNetbar: (n) {
+                Navigator.of(dialogContext).pop();
+                _openNetbarMonitor(context, ref, n);
+              },
+            ),
+          );
+        },
+      ),
+      routeName: '/dialog/alert-list',
+    );
+  }
+
+  /// 手机端：全屏弹窗展示「网维即将到期」完整列表
+  void _showExpiringListDialog(BuildContext context, WidgetRef ref) {
+    showAdaptive<void>(
+      context,
+      (dialogContext) => Consumer(
+        builder: (dialogContext, dref, _) {
+          final async = dref.watch(dashboardExpiringListProvider);
+          return ResponsiveDialogScaffold(
+            title: '网维即将到期',
+            scrollableBody: false,
+            bodyPadding: const EdgeInsets.all(16),
+            body: ExpiringNetbarList(
+              netbars: async.valueOrNull ?? const <Netbar>[],
+              loading: async.isLoading,
+              error: async.hasError ? async.error : null,
+              compact: true,
+              embedded: true,
+              onRefresh: () => dref.invalidate(dashboardExpiringListProvider),
+              onTapNetbar: (n) {
+                Navigator.of(dialogContext).pop();
+                _openNetbarMonitor(context, ref, n);
+              },
+            ),
+          );
+        },
+      ),
+      routeName: '/dialog/expiring-list',
+    );
+  }
+
+  /// 打开该网吧的网吧管理（= 开标签页 + 切当前网吧 + 进监控页/终端列表）
+  void _openNetbarMonitor(BuildContext context, WidgetRef ref, Netbar n) {
+    final groupName =
+        (n.groups != null && n.groups!.isNotEmpty) ? n.groups!.first.name : null;
+    ref.read(netbarTabsProvider.notifier).openTab(
+          n.id,
+          n.name,
+          n.status,
+          subdomainFull: n.subdomainFull,
+          groupName: groupName,
+        );
+    ref.read(currentNetbarProvider.notifier).setNetbar(
+          n.id,
+          n.name,
+          n.status,
+          subdomainFull: n.subdomainFull,
+          groupName: groupName,
+        );
+    context.go('/monitor');
   }
 
   void _showNetbarSelector(BuildContext context, WidgetRef ref) {

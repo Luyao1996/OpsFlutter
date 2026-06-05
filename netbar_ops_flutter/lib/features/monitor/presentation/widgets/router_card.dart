@@ -36,9 +36,15 @@ class _RouterCardState extends State<RouterCard> {
   bool _isHovered = false;
   RouterTraffic _traffic = const RouterTraffic();
   Timer? _pollTimer;
-  bool _polling = false;
+  // 轮询代次：每次 start/stop 自增，作废所有在途的 _pollOnce 链，
+  // 避免 hover 频繁进出时"stop 后紧接 start"导致旧请求误判未过期、出现双计时链。
+  int _pollEpoch = 0;
 
   bool get _shouldPoll => widget.active && widget.router.enabled;
+
+  /// 轮询间隔：hover 时 1s 高频刷新，否则 15s baseline。
+  Duration get _pollInterval =>
+      _isHovered ? const Duration(seconds: 1) : const Duration(seconds: 15);
 
   @override
   void initState() {
@@ -72,27 +78,29 @@ class _RouterCardState extends State<RouterCard> {
   }
 
   void _startPolling() {
-    _pollOnce();
+    final epoch = ++_pollEpoch;
+    _pollOnce(epoch);
   }
 
   void _stopPolling() {
-    _polling = false;
+    _pollEpoch++; // 作废所有在途轮询循环
     _pollTimer?.cancel();
     _pollTimer = null;
   }
 
-  Future<void> _pollOnce() async {
+  Future<void> _pollOnce(int epoch) async {
     if (!mounted || widget.api == null || !widget.router.enabled) return;
-    _polling = true;
+    if (epoch != _pollEpoch) return;
     try {
       final interfaces = await widget.api!.getTraffic(widget.router.id);
-      if (!mounted || !_polling) return;
+      if (!mounted || epoch != _pollEpoch) return;
       setState(() => _traffic = RouterTraffic.fromInterfaces(interfaces));
     } catch (_) {
       // silently ignore traffic errors
     }
-    if (!mounted || !_polling) return;
-    _pollTimer = Timer(const Duration(seconds: 15), _pollOnce);
+    if (!mounted || epoch != _pollEpoch) return;
+    // 下一次按当前 hover 状态决定间隔：hover=500ms / 否则 15s
+    _pollTimer = Timer(_pollInterval, () => _pollOnce(epoch));
   }
 
   @override
@@ -101,8 +109,22 @@ class _RouterCardState extends State<RouterCard> {
     final enabled = r.enabled;
 
     return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
+      onEnter: (_) {
+        setState(() => _isHovered = true);
+        // 立即切到 500ms 高频，无需等当前 15s 计时走完
+        if (_shouldPoll) {
+          _stopPolling();
+          _startPolling();
+        }
+      },
+      onExit: (_) {
+        setState(() => _isHovered = false);
+        // 恢复 15s baseline
+        if (_shouldPoll) {
+          _stopPolling();
+          _startPolling();
+        }
+      },
       child: GestureDetector(
         onTap: widget.onTap == null
             ? null

@@ -13,7 +13,6 @@ import '../../features/netbar/presentation/netbar_selector_modal.dart';
 import '../../features/netbar/presentation/widgets/default_win_pwd_dialog.dart';
 import '../../features/netbar/presentation/widgets/batch_reset_pwd_dialog.dart';
 import '../../features/netbar/presentation/widgets/batch_update_program_dialog.dart';
-import '../../features/netbar/presentation/widgets/totp_dialog.dart';
 import '../providers/app_providers.dart';
 import '../providers/netbar_tabs_provider.dart';
 import '../providers/permission_provider.dart';
@@ -348,10 +347,7 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
       items.add(const PopupMenuItem(value: 'batchUpdate', child: Text('批量更新程序', style: TextStyle(fontSize: 14))));
     }
 
-    // "生成超级密码"
-    if (perm.hasDetailPermission('生成超级密码')) {
-      items.add(const PopupMenuItem(value: 'superPwd', child: Text('生成超级密码', style: TextStyle(fontSize: 14))));
-    }
+    // "生成超级密码" 已迁移至监控页顶部面包屑行右侧（monitor_page _buildHeaderActions）
 
     // 无可见项则不渲染按钮
     if (items.isEmpty) return const SizedBox.shrink();
@@ -371,9 +367,6 @@ class _NetbarTabBarState extends ConsumerState<NetbarTabBar> {
             break;
           case 'batchUpdate':
             showAdaptive<void>(context, (_) => const BatchUpdateProgramDialog(), routeName: '/dialog/batch-update-program');
-            break;
-          case 'superPwd':
-            showAdaptive<void>(context, (_) => const TotpDialog(), routeName: '/dialog/totp');
             break;
         }
       },

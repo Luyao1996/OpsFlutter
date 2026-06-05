@@ -45,5 +45,20 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- 远程桌面音视频权限：缺失会导致 App Store 上传被拒(ITMS-90683)+ 连接含音频的远程会话时崩溃 -->
+	<key>NSCameraUsageDescription</key>
+	<string>用于远程桌面的画面采集与音视频通话</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>用于远程桌面的语音通话</string>
+	<!-- 出口合规：仅使用标准 HTTPS/TLS，声明后免去每次上传手动应答出口合规问题 -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<!-- 微信快速登录(weixin scheme)与拨号(tel)需登记，否则 launchUrl/canLaunch 检测不到 -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>weixin</string>
+		<string>weixinULAPI</string>
+		<string>tel</string>
+	</array>
 </dict>
 </plist>

@@ -9,7 +9,7 @@ import 'remote_wake_modal.dart';
 
 class NetbarGridView extends StatelessWidget {
   final List<Netbar> netbars;
-  final VoidCallback onRefresh;
+  final Future<void> Function() onRefresh;
 
   const NetbarGridView({
     super.key,
@@ -57,7 +57,7 @@ class NetbarGridView extends StatelessWidget {
 
 class _NetbarGridCard extends StatelessWidget {
   final Netbar netbar;
-  final VoidCallback onRefresh;
+  final Future<void> Function() onRefresh;
 
   const _NetbarGridCard({required this.netbar, required this.onRefresh});
 
@@ -303,15 +303,15 @@ class _NetbarGridCard extends StatelessWidget {
                             Row(
                               children: [
                                 InkWell(
-                                  onTap: () {
-                                    showAdaptive<bool>(
+                                  onTap: () async {
+                                    final changed = await showAdaptive<bool>(
                                       context,
                                       (context) =>
                                           EditNetbarModal(netbar: netbar),
                                       routeName: '/dialog/edit-netbar',
-                                    ).then((changed) {
-                                      if (changed == true) onRefresh();
-                                    });
+                                    );
+                                    // 等待刷新落地，消除"保存后重开仍旧值"竞态
+                                    if (changed == true) await onRefresh();
                                   },
                                   borderRadius: BorderRadius.circular(8),
                                   child: Padding(

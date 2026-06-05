@@ -61,9 +61,17 @@ class Netbar {
   final NetbarServerMetrics? serverMetrics;
   final String? serverPwd; // 后端 server_pwd：服务端 Windows 当前密码（敏感字段，仅用于编辑回填）
   final String? version; // 后端 version：网吧客户端版本号（显示用，可空）
+  // 终端异常列表用：离线时间（后端可能返回 logout_at / offline_at / last_online_at 之一）
+  final String? logoutAt;
+  final String? offlineAt;
+  final String? lastOnlineAt;
+  // 网维即将到期列表用：网维到期时间
+  final String? maintenanceExpiredAt;
 
   // 兼容旧代码的getter
   String get code => token;
+  /// 离线时间：按 logout_at → offline_at → last_online_at 优先级兜底
+  String? get offlineTime => logoutAt ?? offlineAt ?? lastOnlineAt;
   String get status => isOnline ? 'online' : 'offline';
   String get group => groups?.isNotEmpty == true ? groups!.first.name : '默认分组';
   String get admin => users?.isNotEmpty == true ? users!.first.nickname : '-';
@@ -92,6 +100,10 @@ class Netbar {
     this.serverMetrics,
     this.serverPwd,
     this.version,
+    this.logoutAt,
+    this.offlineAt,
+    this.lastOnlineAt,
+    this.maintenanceExpiredAt,
   });
 
   factory Netbar.fromJson(Map<String, dynamic> json) {
@@ -120,6 +132,10 @@ class Netbar {
           : null,
       serverPwd: json['server_pwd']?.toString(),
       version: json['version']?.toString(),
+      logoutAt: json['logout_at']?.toString(),
+      offlineAt: json['offline_at']?.toString(),
+      lastOnlineAt: json['last_online_at']?.toString(),
+      maintenanceExpiredAt: json['maintenance_expired_at']?.toString(),
     );
   }
 
@@ -278,6 +294,18 @@ class NetbarApi {
     return NetbarListResponse.fromJson(response.data ?? {});
   }
 
+  /// 获取终端异常网吧列表（全局，跨所有网吧）—— `GET /merchant?alert_only=1`
+  Future<List<Netbar>> getAlertList() async {
+    final response = await _client.get('/merchant', queryParameters: {'alert_only': 1});
+    return NetbarListResponse.fromJson(response.data ?? {}).merchants;
+  }
+
+  /// 获取网维即将到期网吧列表（全局，跨所有网吧）—— `GET /merchant?expiring_only=1`
+  Future<List<Netbar>> getExpiringList() async {
+    final response = await _client.get('/merchant', queryParameters: {'expiring_only': 1});
+    return NetbarListResponse.fromJson(response.data ?? {}).merchants;
+  }
+
   /// 获取商户列表（简化版，兼容旧代码）
   Future<List<Netbar>> getList({
     String? keyword,
@@ -386,5 +414,36 @@ class NetbarApi {
   /// 下载商户配置（返回下载URL）
   String getDownloadUrl(int id) {
     return '${_client.dio.options.baseUrl}/merchant/down/$id';
+  }
+
+  /// 下载服务端程序（ChannelLaunch_{id}.zip）到指定本地路径
+  /// 流式下载，[onReceiveProgress] 上报 (已接收字节, 总字节)，总字节缺失时为 -1
+  Future<void> downloadServerToFile(
+    int id,
+    String savePath, {
+    ProgressCallback? onReceiveProgress,
+  }) async {
+    await _client.dio.download(
+      '/merchant/down/$id',
+      savePath,
+      onReceiveProgress: onReceiveProgress,
+    );
+  }
+
+  /// 副服务器（被控端）安装包固定下载地址（OSS 公共资源，与 Web 端一致）
+  static const String subServerDownloadUrl =
+      'https://xem.oss-cn-hangzhou.aliyuncs.com/StartChannel/release/ControlChannelInstall.exe';
+
+  /// 下载副服务器安装包（ControlChannelInstall.exe）到指定本地路径
+  /// 传入绝对 URL，dio 会忽略 baseUrl 直接请求 OSS；[onReceiveProgress] 上报 (已接收, 总字节)
+  Future<void> downloadSubServerToFile(
+    String savePath, {
+    ProgressCallback? onReceiveProgress,
+  }) async {
+    await _client.dio.download(
+      subServerDownloadUrl,
+      savePath,
+      onReceiveProgress: onReceiveProgress,
+    );
   }
 }

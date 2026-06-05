@@ -280,7 +280,9 @@ class GameLibraryNotifier extends StateNotifier<GameLibraryState> {
     return r;
   }
 
-  /// 执行时间确定（draft → recyclePlan → submit，并 enable=true）
+  /// 执行时间确定（draft → recyclePlan → submit）
+  /// 仅保存周天/时间，不触碰自动删除开关与 platforms——沿用当前 enabled 状态，
+  /// 避免「设置执行时间」误把 icafe8/cloud 强制置 true（与 confirmThresholds 一致）。
   Future<({bool ok, String? error})> confirmSchedule({
     required List<int> weekdays,
     required String time,
@@ -293,7 +295,7 @@ class GameLibraryNotifier extends StateNotifier<GameLibraryState> {
         time: time,
       ),
     );
-    return submitPlan(enabled: true);
+    return submitPlan(enabled: cur.enabled);
   }
 
   /// 删除（清空）已设定的清理任务：向后端发送空值（关闭快捷路径），

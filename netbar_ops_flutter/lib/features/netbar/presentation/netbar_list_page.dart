@@ -121,11 +121,12 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
                 return _isListView
                     ? NetbarListView(
                         netbars: filtered,
-                        onRefresh: () => ref.refresh(netbarListProvider),
+                        // await .future 等刷新完成，确保重新打开编辑显示新值
+                        onRefresh: () => ref.refresh(netbarListProvider.future),
                       )
                     : NetbarGridView(
                         netbars: filtered,
-                        onRefresh: () => ref.refresh(netbarListProvider),
+                        onRefresh: () => ref.refresh(netbarListProvider.future),
                       );
               },
             ),
