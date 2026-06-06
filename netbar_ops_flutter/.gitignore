@@ -53,3 +53,11 @@ app.*.map.json
 AuthKey_*.p8
 scripts/ios/.ipa_release.env
 scripts/ios/logs/
+
+# iOS 发布脚本: 敏感文件, 切勿提交
+*.p8
+AuthKey_*.p8
+scripts/ios/.ipa_release.env
+scripts/ios/logs/
+*.bak.*
+ios/ExportOptions.plist

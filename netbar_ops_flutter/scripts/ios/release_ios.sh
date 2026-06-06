@@ -381,7 +381,7 @@ phase_b_config() {
   # B3 立即验证三要素能认证(把"Key 填错"提前到网页操作之前发现)
   log_info "正在用 altool 验证 API Key 是否可认证..." "auth"
   local out rc
-  out="$(xcrun altool --list-providers --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" 2>&1)"
+  out="$(xcrun altool --list-apps --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" 2>&1)"
   rc=$?
   printf '%s\n' "$out" >> "$LOG_FILE"
   if [ "$rc" -ne 0 ]; then

@@ -1,0 +1,5 @@
+# 由 release_ios.sh 自动维护; 此文件含发布配置, 已被 .gitignore 忽略, 切勿提交。
+TEAM_ID="FP8Z6Y942P"
+KEY_ID="54B2A79Y4G"
+ISSUER_ID="69a6de8c-17f5-47e3-e053-5b8c7c11a4d1"
+LAST_BUILD=""
