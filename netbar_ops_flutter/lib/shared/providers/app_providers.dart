@@ -89,15 +89,16 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  /// 传统登录（后端不支持，会报错）
+  /// 账号密码登录（走 /alpha/passport/login；返回 token 后复用扫码登录的取用户流程）
   Future<void> login(String username, String password) async {
-    final response = await _authApi.login(
+    final tokenResp = await _authApi.login(
       LoginRequest(username: username, password: password),
     );
-    await TokenStore.setToken(response.token);
-    await TokenStore.setUser(response.user.toJson());
-    state = AuthState(isLoggedIn: true, user: response.user);
-    _startWatchdog();
+    if (!tokenResp.isValid) {
+      throw ApiError(message: '登录失败：未获取到访问令牌');
+    }
+    // 拿到 access_token 后存 token 并调 /passport/profile 获取用户信息
+    await loginWithToken(tokenResp.accessToken);
   }
 
   /// 使用Token登录（扫码登录第二步）

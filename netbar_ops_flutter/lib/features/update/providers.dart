@@ -12,6 +12,15 @@ final updateServiceProvider = Provider<UpdateService>((ref) {
 /// 非 0 时启动检查会判断 local.build == 此值则跳过自动弹窗（手动检查不受影响）。
 const String spKeyPinnedBuild = 'update.pinned_build';
 
+/// iOS App Store 更新检查的节流/跳过状态（仅 iOS 用，与上面的下载安装体系无关）：
+/// - [spKeyIosLastPromptVersion] / [spKeyIosLastPromptAt]：上次"启动自动提示"的 storeVersion 与时间戳，
+///   用于同一版本一天最多自动弹一次；
+/// - [spKeyIosSkippedVersion]：用户点"稍后/跳过此版本"时记下的 storeVersion，该版本启动不再自动弹。
+/// 三者都以 storeVersion 字符串为准，App Store 发新版后旧记录自然失效，不会永久静音。
+const String spKeyIosLastPromptVersion = 'update.ios_last_prompt_version';
+const String spKeyIosLastPromptAt = 'update.ios_last_prompt_at';
+const String spKeyIosSkippedVersion = 'update.ios_skipped_version';
+
 /// 同步访问 SharedPreferences 的入口。`main()` 启动时必须先调用
 /// [ensureInitialized] 一次，之后 UI 同步线程才能用 [instance]。
 class SharedPreferencesHolder {
