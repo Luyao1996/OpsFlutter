@@ -1,7 +1,8 @@
 import 'package:dio/dio.dart';
+import '../../../core/config/app_config.dart';
 import '../../../core/network/api_client.dart';
 
-/// 登录请求（保留原有，但后端不支持直接密码登录）
+/// 账号密码登录请求（生产登录接口 /alpha/passport/login，form-data 提交）
 class LoginRequest {
   final String username;
   final String password;
@@ -217,11 +218,22 @@ class AuthApi {
     return TokenResponse.fromJson(response.data ?? {});
   }
 
-  /// 登录（保留原有接口，但实际会走扫码流程）
-  /// 这个方法会直接报错，因为后端不支持直接密码登录
-  Future<LoginResponse> login(LoginRequest request) async {
-    final response = await _client.post('/passport/login', data: request.toJson());
-    return LoginResponse.fromJson(response.data ?? {});
+  /// 账号密码登录
+  /// 生产登录前缀为 /alpha（其它业务接口走 /api），form-data 提交 username/password。
+  /// 后端返回 {access_token, token_type, ...}（不含 user），故返回 TokenResponse，
+  /// 由调用方拿 access_token 走 loginWithToken 再获取用户信息。
+  Future<TokenResponse> login(LoginRequest request) async {
+    final loginUrl = Uri.parse(AppConfig.baseUrl)
+        .replace(path: '/alpha/passport/login')
+        .toString();
+    final response = await _client.post(
+      loginUrl,
+      data: FormData.fromMap({
+        'username': request.username,
+        'password': request.password,
+      }),
+    );
+    return TokenResponse.fromJson(response.data ?? {});
   }
 
   /// 登出

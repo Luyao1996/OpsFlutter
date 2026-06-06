@@ -20,6 +20,7 @@ import '../../update/data/update_api.dart';
 import '../../update/presentation/download_card.dart';
 import '../../update/presentation/file_download_dialog.dart';
 import '../../update/presentation/manual_update_check_dialog.dart';
+import '../../update/presentation/app_store_update_dialog.dart';
 import '../../update/providers.dart' as update_providers;
 
 class UserProfileDialog extends ConsumerStatefulWidget {
@@ -597,7 +598,9 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
     final isPreview = ref.watch(update_providers.isPreviewProvider);
     final isPinned = ref.watch(update_providers.isPinnedProvider);
     return InkWell(
-      onTap: () => showManualUpdateCheckDialog(context),
+      onTap: () => defaultTargetPlatform == TargetPlatform.iOS
+          ? showAppStoreManualCheck(context)
+          : showManualUpdateCheckDialog(context),
       borderRadius: BorderRadius.circular(12),
       child: Container(
         width: double.infinity,

@@ -8,11 +8,18 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/logging/webrtc_crash_logger.dart';
+import '../data/app_store_lookup_api.dart';
 import '../data/installer.dart';
 import '../data/installer_factory.dart';
 import '../data/update_api.dart';
 import '../data/update_downloader.dart';
-import '../providers.dart' show spKeyPinnedBuild;
+import '../providers.dart'
+    show
+        spKeyPinnedBuild,
+        spKeyIosLastPromptVersion,
+        spKeyIosLastPromptAt,
+        spKeyIosSkippedVersion;
+import 'models/app_store_check_result.dart';
 import 'models/release_info.dart';
 import 'models/version_manifest.dart';
 import 'update_check_result.dart';
@@ -28,14 +35,17 @@ class UpdateService {
   final UpdateApi _api;
   final UpdateDownloader _downloader;
   final UpdateInstaller _installer;
+  final AppStoreLookupApi _appStoreApi;
 
   UpdateService({
     UpdateApi? api,
     UpdateDownloader? downloader,
     UpdateInstaller? installer,
+    AppStoreLookupApi? appStoreApi,
   })  : _api = api ?? UpdateApi(),
         _downloader = downloader ?? UpdateDownloader(),
-        _installer = installer ?? createInstaller();
+        _installer = installer ?? createInstaller(),
+        _appStoreApi = appStoreApi ?? AppStoreLookupApi();
 
   /// 检查更新。所有异常都吞掉，最坏情况返回 skipped。
   ///
@@ -175,6 +185,110 @@ class UpdateService {
     } catch (e) {
       _log('WARN', 'isPinnedToCurrentBuild', 'error=$e');
       return false;
+    }
+  }
+
+  // ===================== iOS App Store 更新检查 =====================
+  // iOS 独立路径：不碰 manifest / _downloader / _installer（守住 Apple 2.5.2），
+  // 只查 App Store 版本 + 比较 + 跳转。_currentPlatform() 对 iOS 仍返回 null，
+  // 确保 iOS 永远不会进入下载安装流程。
+
+  /// 查 App Store 是否有新版本。所有异常吞掉，返回 skipped。
+  Future<AppStoreCheckResult> checkAppStore() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final localVersion = info.version; // CFBundleShortVersionString
+      final bundleId = info.packageName; // iOS = CFBundleIdentifier
+      if (bundleId.isEmpty) return AppStoreCheckResult.skipped();
+
+      final store = await _appStoreApi.lookup(bundleId);
+      if (store == null) {
+        _log('INFO', 'checkAppStore', 'lookup empty/failed, skip');
+        return AppStoreCheckResult.skipped();
+      }
+
+      final newer = _isStoreVersionNewer(store.version, localVersion);
+      _log('INFO', 'checkAppStore',
+          'local=$localVersion store=${store.version} newer=$newer');
+      if (!newer) {
+        return AppStoreCheckResult.upToDate(localVersion,
+            storeVersion: store.version);
+      }
+
+      final url = store.trackViewUrl.isNotEmpty
+          ? store.trackViewUrl
+          : (store.trackId != null
+              ? 'https://apps.apple.com/cn/app/id${store.trackId}'
+              : '');
+      return AppStoreCheckResult.update(
+        localVersion: localVersion,
+        storeVersion: store.version,
+        storeUrl: url,
+        releaseNotes: store.releaseNotes,
+      );
+    } catch (e) {
+      _log('WARN', 'checkAppStore', 'error=$e');
+      return AppStoreCheckResult.skipped();
+    }
+  }
+
+  /// 语义化版本比较：store 是否【严格新于】local。
+  /// 必须逐段数值比较，绝不能用字符串 compareTo（否则 1.0.10 < 1.0.9 会被误判）。
+  bool _isStoreVersionNewer(String store, String local) {
+    List<int> parse(String v) => v
+        .trim()
+        .split('.')
+        .map((s) => int.tryParse(s.trim()) ?? 0)
+        .toList(growable: false);
+    final a = parse(store);
+    final b = parse(local);
+    final len = a.length > b.length ? a.length : b.length;
+    for (var i = 0; i < len; i++) {
+      final x = i < a.length ? a[i] : 0;
+      final y = i < b.length ? b[i] : 0;
+      if (x != y) return x > y;
+    }
+    return false;
+  }
+
+  /// 启动自动检查时调用：该 storeVersion 现在是否应该弹提示。
+  /// 规则：用户已"跳过此版本"→否；同一版本一天内已弹过→否；否则是。
+  Future<bool> shouldPromptAppStore(String storeVersion) async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      if (sp.getString(spKeyIosSkippedVersion) == storeVersion) return false;
+      final lastVer = sp.getString(spKeyIosLastPromptVersion);
+      final lastAt = sp.getInt(spKeyIosLastPromptAt) ?? 0;
+      if (lastVer == storeVersion) {
+        final elapsed = DateTime.now().millisecondsSinceEpoch - lastAt;
+        if (elapsed < 24 * 60 * 60 * 1000) return false;
+      }
+      return true;
+    } catch (e) {
+      _log('WARN', 'shouldPromptAppStore', 'error=$e');
+      return true;
+    }
+  }
+
+  /// 记录"已对该 storeVersion 弹过启动提示"（用于一天一次节流）。
+  Future<void> markAppStorePrompted(String storeVersion) async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString(spKeyIosLastPromptVersion, storeVersion);
+      await sp.setInt(
+          spKeyIosLastPromptAt, DateTime.now().millisecondsSinceEpoch);
+    } catch (e) {
+      _log('WARN', 'markAppStorePrompted', 'error=$e');
+    }
+  }
+
+  /// 用户点"稍后/跳过此版本"：记下后该 storeVersion 启动不再自动弹。
+  Future<void> skipAppStoreVersion(String storeVersion) async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString(spKeyIosSkippedVersion, storeVersion);
+    } catch (e) {
+      _log('WARN', 'skipAppStoreVersion', 'error=$e');
     }
   }
 

@@ -24,6 +24,7 @@ import 'core/theme/app_theme.dart';
 import 'app/router.dart';
 import 'features/monitor/presentation/terminal_detail_window_app.dart';
 import 'features/update/domain/update_check_result.dart';
+import 'features/update/presentation/app_store_update_dialog.dart';
 import 'features/update/presentation/update_dialog.dart';
 import 'features/update/providers.dart';
 import 'features/update/update_navigator_key.dart';
@@ -288,6 +289,31 @@ class _NetbarOpsAppState extends ConsumerState<NetbarOpsApp> {
     if (kDebugMode) {
       WebRtcCrashLogger.I
           .log('INFO', 'update', 'startupCheck', '-', 'debug build, skip');
+      return;
+    }
+    // iOS：独立走 App Store 版本检查（不碰 manifest/下载/安装，守 Apple 2.5.2）。
+    // 软提示 + 节流：同版本一天最多弹一次、可"跳过此版本"；无网/查不到一律静默。
+    if (Platform.isIOS) {
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+      if (!mounted) return;
+      try {
+        final svc = ref.read(updateServiceProvider);
+        final r = await svc.checkAppStore();
+        if (!mounted || !r.hasUpdate) return;
+        if (!await svc.shouldPromptAppStore(r.storeVersion)) return;
+        if (!mounted) return;
+        final ctx = updateNavigatorKey.currentContext;
+        if (ctx == null) return;
+        await svc.markAppStorePrompted(r.storeVersion);
+        await showAppStoreUpdateDialog(
+          ctx,
+          r,
+          onSkip: () => svc.skipAppStoreVersion(r.storeVersion),
+        );
+      } catch (e) {
+        WebRtcCrashLogger.I.log(
+            'WARN', 'update', 'startupCheck', '-', 'ios appstore error=$e');
+      }
       return;
     }
     // 用户主动通过"安装此版本"固定到了某个版本 → 启动不再自动弹更新对话框。

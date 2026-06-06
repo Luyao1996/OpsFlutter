@@ -471,6 +471,22 @@ class _LoginPageState extends ConsumerState<LoginPage>
     }
   }
 
+  /// 从账号密码界面返回微信/扫码登录
+  void _backToWeChatLogin() {
+    _usernameController.clear();
+    _passwordController.clear();
+    setState(() {
+      _loginError = null;
+      if (_isMobile) {
+        _viewState = 'wechat_mobile';
+        _qrStatus = 'idle'; // 手机端回到"通过微信登录"按钮
+      } else {
+        _viewState = 'qrcode'; // 桌面端回到二维码
+      }
+    });
+    if (!_isMobile) _createQRSession();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -607,11 +623,20 @@ class _LoginPageState extends ConsumerState<LoginPage>
   }
 
   Widget _buildMainContent() {
-    if (_viewState == 'wechat_mobile') {
-      return _buildWeChatMobileLogin();
+    switch (_viewState) {
+      case 'wechat_mobile':
+        return _buildWeChatMobileLogin();
+      case 'manual':
+        return _buildManualLogin();
+      case 'users':
+        return _buildUserSelection();
+      case 'password':
+        return _buildPasswordInput();
+      case 'qrcode':
+      default:
+        // 桌面端：二维码登录
+        return _buildQRCodeLogin();
     }
-    // 桌面端：二维码登录
-    return _buildQRCodeLogin();
   }
 
   /// 手机端微信登录界面
@@ -681,6 +706,21 @@ class _LoginPageState extends ConsumerState<LoginPage>
             },
             child: Text(
               '使用其他设备扫码登录',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.5),
+                fontSize: 13,
+              ),
+            ),
+          ),
+          // 切换到账号密码登录（无微信 / App 审核场景）
+          TextButton(
+            onPressed: () {
+              _qrPollTimer?.cancel();
+              _qrRefreshTimer?.cancel();
+              setState(() => _viewState = 'manual');
+            },
+            child: Text(
+              '使用账号密码登录',
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.5),
                 fontSize: 13,
@@ -1178,8 +1218,21 @@ class _LoginPageState extends ConsumerState<LoginPage>
             ],
           ),
         ),
-        if (_savedUsers.isNotEmpty) ...[
-          const SizedBox(height: 24),
+        const SizedBox(height: 24),
+        // 返回微信/扫码登录（始终显示，避免卡在账号密码界面回不去）
+        TextButton.icon(
+          onPressed: _backToWeChatLogin,
+          icon: Icon(
+            LucideIcons.chevronLeft,
+            size: 16,
+            color: Colors.white.withValues(alpha: 0.5),
+          ),
+          label: Text(
+            '返回微信登录',
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+          ),
+        ),
+        if (_savedUsers.isNotEmpty)
           TextButton.icon(
             onPressed: () => setState(() => _viewState = 'users'),
             icon: Icon(
@@ -1192,7 +1245,6 @@ class _LoginPageState extends ConsumerState<LoginPage>
               style: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
             ),
           ),
-        ],
       ],
     );
   }

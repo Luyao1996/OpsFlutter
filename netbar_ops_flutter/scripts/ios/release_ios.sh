@@ -379,12 +379,16 @@ phase_b_config() {
   save_env
 
   # B3 立即验证三要素能认证(把"Key 填错"提前到网页操作之前发现)
+  # 注意: altool 的 --list-providers 不支持 API Key 认证(会报 "list-providers does not
+  #       support APIKey authentication"); --list-apps 支持 API Key, 用它做轻量预验证。
   log_info "正在用 altool 验证 API Key 是否可认证..." "auth"
   local out rc
   out="$(xcrun altool --list-apps --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" 2>&1)"
   rc=$?
   printf '%s\n' "$out" >> "$LOG_FILE"
-  if [ "$rc" -ne 0 ]; then
+  if [ "$rc" -eq 0 ]; then
+    log_ok "API Key 认证通过(三要素正确)" "auth"
+  elif printf '%s' "$out" | grep -qiE 'AuthenticationFailure|Unauthorized|NOT_FOUND|invalid|forbidden|does not have access|401|403'; then
     log_err "API Key 认证失败, altool 输出:" "auth"
     printf '%s\n' "$out" | sed 's/^/    /'
     die "App Store Connect API Key 认证不通过" \
@@ -392,8 +396,11 @@ phase_b_config() {
         "        ② .p8 文件名是否为 AuthKey_<KeyID>.p8 且 KeyID 与输入完全一致(大小写敏感);" \
         "        ③ 该 Key 角色是否为 App Manager(Developer 角色权限不足会被拒)。" \
         "改完重跑: ./release_ios.sh --from B"
+  else
+    # 命令本身不被支持/网络问题等非认证错误: 不误杀, 降级跳过, 留给阶段 E 的 --validate-app 真正验证
+    log_warn "无法在此自动预验证 API Key(可能 altool 版本差异/网络), 跳过预验证;" "auth"
+    log_warn "  将在阶段 E 上传时用 --validate-app 真正验证。altool 输出摘要: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-160)" "auth"
   fi
-  log_ok "API Key 认证通过(三要素正确)" "auth"
   log_ok "阶段 B 通过" "phaseB"
   echo ""
 }
