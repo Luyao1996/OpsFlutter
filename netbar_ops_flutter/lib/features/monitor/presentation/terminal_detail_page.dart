@@ -35,6 +35,8 @@ import '../../desktop/data/desktop_api.dart';
 import '../../logs/data/operation_log_api.dart';
 import 'monitor_page.dart' show terminalsProvider;
 import '../../../../shared/providers/app_providers.dart';
+import '../../../../shared/utils/adaptive_show.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../../../shared/providers/permission_provider.dart';
 import '../../../../shared/providers/terminal_dock_provider.dart';
 import '../../../../shared/services/terminal_window_bridge.dart';
@@ -1551,12 +1553,12 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
           type: '__windows_pwd__',
           icon: LucideIcons.keyRound,
         ),
-      // 复制 2FA：服务管理整体仅 mode∈{1,2}（主/副服务器）显示。
-      // 不弹 dialog，调 authApi.getTwoFactorCode 拿一次性 code → 写剪贴板 + toast
+      // 2FA 管理：服务管理整体仅 mode∈{1,2}（主/副服务器）显示。
+      // 点击弹出 _TwoFactorManageDialog（复制 2FA 按钮 + 2FA 锁屏开关）
       const _ServiceItem(
-        label: '复制2FA',
+        label: '2FA管理',
         name: '2FA',
-        type: '__copy_2fa__',
+        type: '__2fa_manage__',
         icon: LucideIcons.shieldCheck,
       ),
     ];
@@ -1603,7 +1605,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
   /// 服务管理操作明确选用了简单 AlertDialog，避免每次让用户打字（用户决策 selection B）。
   /// 路由：
   ///   - `__windows_pwd__` → 直接弹自定义 dialog（不走简单确认）
-  ///   - `__copy_2fa__` → 直接调 [_handleCopy2FA]（无确认，立即复制 + toast）
+  ///   - `__2fa_manage__` → 弹出 [_TwoFactorManageDialog]（复制 2FA + 2FA 锁屏开关）
   ///   - `__disconnect_remote__` → 简单确认 → [_disconnectRemoteService]
   ///   - 其它（frpc/client/router） → 简单确认 → [_restartService]
   void _confirmRestartService(Terminal terminal, _ServiceItem item) {
@@ -1612,9 +1614,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
       _openWindowsPasswordDialog(terminal);
       return;
     }
-    // 复制 2FA 是无副作用动作（仅本地剪贴板 + 调一次接口），不走二次确认
-    if (item.type == '__copy_2fa__') {
-      _handleCopy2FA();
+    // 2FA 管理：弹出对话框（复制 2FA 按钮 + 2FA 锁屏开关），不走二次确认
+    if (item.type == '__2fa_manage__') {
+      _open2FAManageDialog(terminal);
       return;
     }
     showDialog<bool>(
@@ -1859,6 +1861,20 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
   }
 
   bool _copying2FA = false;
+
+  /// 打开「2FA 管理」对话框（mode∈{1,2} 主/副服务器入口）。
+  /// 内含：复制 2FA 按钮（复用 [_handleCopy2FA]）+ 2FA 锁屏开关（[TerminalApi.setLockScreen]）。
+  /// 手机端走全屏页、桌面端走 Dialog（[showAdaptive]）。
+  Future<void> _open2FAManageDialog(Terminal terminal) async {
+    await showAdaptive<void>(
+      context,
+      (_) => _TwoFactorManageDialog(
+        terminal: terminal,
+        onCopy: _handleCopy2FA,
+      ),
+      routeName: '/dialog/2fa-manage',
+    );
+  }
 
   /// 打开 Windows 密码对话框（mode∈{1,2} 主/副服务器入口）。
   /// dialog 内部走 set/reset/clear 三种 WS 协议，详见 [_WindowsPasswordDialog]。
@@ -3666,6 +3682,120 @@ class _PersonnelHoverButtonState extends ConsumerState<_PersonnelHoverButton> {
 ///   - step='set'：初始密码（≥8 位）→ update.windows_pass
 ///   - step='reset'：忘记密码后强口令重置（≥8+大写+小写+数字）→ update.reset_windows_pass
 ///   - 清除：弹二次确认 → update.clear_windows_pass
+/// 「2FA 管理」对话框：复制 2FA 按钮 + 2FA 锁屏开关。
+/// - 复制 2FA：调用父页传入的 [onCopy]（即 _handleCopy2FA），功能与原"复制2FA"按钮一致。
+/// - 2FA 锁屏：开关切换调 [TerminalApi.setLockScreen]，逻辑对标 toolboxPage「启用锁屏」开关
+///   （切换中 loading + 禁用；成功更新本地态 + toast + 记操作日志；失败开关回滚 + toast）。
+class _TwoFactorManageDialog extends ConsumerStatefulWidget {
+  final Terminal terminal;
+  final Future<void> Function() onCopy;
+  const _TwoFactorManageDialog({
+    required this.terminal,
+    required this.onCopy,
+  });
+
+  @override
+  ConsumerState<_TwoFactorManageDialog> createState() =>
+      _TwoFactorManageDialogState();
+}
+
+class _TwoFactorManageDialogState
+    extends ConsumerState<_TwoFactorManageDialog> {
+  late bool _lockEnabled = widget.terminal.lockScreenEnabled;
+  bool _lockLoading = false;
+  bool _copying = false;
+
+  /// 复制 2FA：复用父页 _handleCopy2FA（剪贴板 + toast），本弹窗仅加防重入 loading
+  Future<void> _handleCopy() async {
+    if (_copying) return;
+    setState(() => _copying = true);
+    try {
+      await widget.onCopy();
+    } finally {
+      if (mounted) setState(() => _copying = false);
+    }
+  }
+
+  /// 切换 2FA 锁屏：POST /terminals/{id}/lockScreen，成功更新本地态 + 记操作日志，失败回滚
+  Future<void> _toggleLock(bool val) async {
+    if (_lockLoading) return;
+    setState(() => _lockLoading = true);
+    try {
+      await ref.read(terminalApiProvider).setLockScreen(widget.terminal.id, val);
+      ref.read(operationLogApiProvider).add(
+            event: 'terminal.lockScreen',
+            description: '${val ? "启用" : "禁用"}2FA锁屏: ${widget.terminal.name}',
+          );
+      if (!mounted) return;
+      setState(() => _lockEnabled = val);
+      showTopNotice(context, val ? '已启用锁屏' : '已禁用锁屏',
+          level: NoticeLevel.success);
+    } catch (e) {
+      if (!mounted) return;
+      // 失败不改 _lockEnabled，Switch 视觉回到旧值
+      showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
+    } finally {
+      if (mounted) setState(() => _lockLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ResponsiveDialogScaffold(
+      title: '2FA管理',
+      maxWidth: 420,
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 复制 2FA 按钮（与原"复制2FA"功能一致）
+          SizedBox(
+            height: 44,
+            child: FilledButton.icon(
+              onPressed: _copying ? null : _handleCopy,
+              icon: const Icon(LucideIcons.copy, size: 18),
+              label: Text(_copying ? '复制中…' : '复制2FA'),
+            ),
+          ),
+          const SizedBox(height: 20),
+          // 2FA 锁屏开关行（对标 toolboxPage「启用锁屏」）
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    '2FA锁屏',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                  ),
+                ),
+                if (_lockLoading)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 8),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                Switch(
+                  value: _lockEnabled,
+                  onChanged: _lockLoading ? null : _toggleLock,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _WindowsPasswordDialog extends ConsumerStatefulWidget {
   final String terminalName;
   final int merchantId;

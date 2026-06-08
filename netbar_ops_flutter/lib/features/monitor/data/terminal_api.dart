@@ -734,6 +734,16 @@ class TerminalApi {
     );
   }
 
+  /// 切换终端 2FA 锁屏 —— 中央 HTTP `POST /terminals/{id}/lockScreen` body `{enabled: 1|0}`
+  /// 对标 toolboxPage ServerWindowsPasswordDialog 的「启用锁屏」开关。
+  /// 错误由 ApiClient 拦截器统一抛出（与 [saveRemark] 一致，无需手动判 code）。
+  Future<void> setLockScreen(int terminalId, bool enabled) async {
+    await _client.post(
+      '/terminals/$terminalId/lockScreen',
+      data: {'enabled': enabled ? 1 : 0},
+    );
+  }
+
   /// 远程唤醒 (WOL) —— **保持 frp HTTP**，未走 WS。
   /// 历史路径：兼容旧入口 (`_remoteAction(seatId, 'wakeup')`) 不动。
   /// 新入口"终端管理 → 唤醒"使用 [awakenViaWs]（WS + 携带 mac）。

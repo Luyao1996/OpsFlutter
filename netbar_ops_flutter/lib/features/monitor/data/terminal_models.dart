@@ -28,6 +28,7 @@ class Terminal {
   final int? mode; // 中央 HTTP 字段：0=client, 1=server。旧 /seatlist 格式留 null
   final String? version; // 终端程序版本号（中央 HTTP 字段：version）。旧格式留 null
   final String? remark; // 终端备注（HTML 字符串，如 "<p>...</p>"）
+  final bool lockScreenEnabled; // 2FA 锁屏是否启用（中央 HTTP 字段 lock_screen_enabled）
 
   Terminal({
     required this.id,
@@ -55,6 +56,7 @@ class Terminal {
     this.mode,
     this.version,
     this.remark,
+    this.lockScreenEnabled = false,
   });
 
   /// 解析后端 seatlist 返回的在线状态
@@ -165,6 +167,9 @@ class Terminal {
       version: json['version']?.toString(),
       // remark：HTML 字符串
       remark: json['remark']?.toString(),
+      // 2FA 锁屏：中央 HTTP lock_screen_enabled（兼容 bool / 1）；缺失即关闭
+      lockScreenEnabled:
+          json['lock_screen_enabled'] == true || json['lock_screen_enabled'] == 1,
     );
   }
 
@@ -192,6 +197,7 @@ class Terminal {
         'mode': mode,
         'version': version,
         'remark': remark,
+        'lock_screen_enabled': lockScreenEnabled,
       };
 
   /// 获取状态字符串
