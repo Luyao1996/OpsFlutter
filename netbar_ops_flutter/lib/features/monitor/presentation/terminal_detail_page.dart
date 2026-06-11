@@ -34,6 +34,7 @@ import '../data/terminal_api.dart';
 import '../../desktop/data/desktop_api.dart';
 import '../../logs/data/operation_log_api.dart';
 import 'monitor_page.dart' show terminalsProvider;
+import '../providers/terminal_online_provider.dart';
 import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
@@ -396,6 +397,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
   @override
   Widget build(BuildContext context) {
     final terminalAsync = ref.watch(terminalDetailProvider(_detailKey));
+    // WS 上下机实时增量（按本页所属网吧隔离）；合并进 status 见 data 回调
+    final ownerNetbarId = _ownerNetbarId;
+    final onlineMap = ownerNetbarId == null
+        ? const <String, TerminalOnlineEvent>{}
+        : ref.watch(terminalOnlineMapProvider(ownerNetbarId));
     final isNarrow = context.isNarrow || context.isPhone;
 
     final bool showWindowBorder = isDesktopPlatform && widget.isStandaloneWindow && !_isMaximized;
@@ -425,6 +431,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
           onRetry: () => ref.invalidate(terminalDetailProvider(_detailKey)),
         ),
         data: (terminal) {
+          // HTTP 快照(或心跳覆盖) + WS 上下机增量 → 实时 status
+          final base = _liveTerminal ?? terminal;
+          final live = mergeTerminalStatus(base, onlineMap[base.seatId]);
           // 游戏管理 Tab 全屏：跳过 Header / 左侧栏 / TabBar，直接铺满
           if (_selectedTab == '游戏管理' && _gameManageFullscreen) {
             return SafeArea(bottom: false, child: _buildGameManageView());
@@ -433,7 +442,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
           bottom: false,
           child: Column(
             children: [
-              _buildHeader(_liveTerminal ?? terminal, isNarrow: isNarrow),
+              _buildHeader(live, isNarrow: isNarrow),
               Expanded(
                 child: Padding(
                   padding: EdgeInsets.all(isNarrow ? 12.0 : 16.0),
@@ -444,7 +453,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
                             const SizedBox(height: 12),
                             Expanded(
                               child: _buildRightContent(
-                                _liveTerminal ?? terminal,
+                                live,
                                 isNarrow: true,
                                 showOverviewCards: _selectedTab == '远程控制',
                               ),
@@ -460,11 +469,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
                               child: SingleChildScrollView(
                                 child: Column(
                                   children: [
-                                    _buildScreenPreviewCard(_liveTerminal ?? terminal),
+                                    _buildScreenPreviewCard(live),
                                     const SizedBox(height: 16),
-                                    _buildSystemStatusCard(_liveTerminal ?? terminal),
+                                    _buildSystemStatusCard(live),
                                     const SizedBox(height: 16),
-                                    _buildRemarkCard(_liveTerminal ?? terminal),
+                                    _buildRemarkCard(live),
                                   ],
                                 ),
                               ),
@@ -478,7 +487,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
                                   const SizedBox(height: 16),
                                   Expanded(
                                     child: _buildRightContent(
-                                      _liveTerminal ?? terminal,
+                                      live,
                                       isNarrow: false,
                                       showOverviewCards: false,
                                     ),

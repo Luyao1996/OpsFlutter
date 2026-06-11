@@ -23,6 +23,7 @@ import '../../../shared/utils/open_in_new_tab.dart';
 import 'package:file_picker/file_picker.dart';
 import '../data/terminal_api.dart';
 import '../data/router_api.dart';
+import '../providers/terminal_online_provider.dart';
 import '../../netbar/data/netbar_api.dart';
 import '../../netbar/data/netbar_list_provider.dart';
 import '../../netbar/presentation/widgets/totp_dialog.dart';
@@ -49,6 +50,21 @@ final terminalsProvider =
   if (netbar.id != netbarId) return const [];
   final api = ref.read(terminalApiProvider);
   return api.getAll(merchantId: netbarId);
+});
+
+/// 终端列表【实时视图】：HTTP 快照（[terminalsProvider]）+ WS 上下机增量合并。
+///
+/// - 快照=初值、推送=增量：WS 按 seatId 覆盖在线/离线，无推送的座位沿用快照
+/// - busy(2，远程中) 三态保留，WS 在线推送不降级
+/// - 所有 `ref.invalidate(terminalsProvider(...))` 刷新逻辑不变，HTTP 刷新与
+///   WS 实时分层互不干扰；本 provider 仅供 UI 消费
+final liveTerminalsProvider = Provider.autoDispose
+    .family<AsyncValue<List<Terminal>>, int?>((ref, netbarId) {
+  final base = ref.watch(terminalsProvider(netbarId));
+  if (netbarId == null) return base;
+  final onlineMap = ref.watch(terminalOnlineMapProvider(netbarId));
+  return base.whenData((list) =>
+      [for (final t in list) mergeTerminalStatus(t, onlineMap[t.seatId])]);
 });
 
 class MonitorPage extends ConsumerStatefulWidget {
@@ -498,7 +514,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
     });
 
     final netbarId = ref.watch(currentNetbarIdProvider);
-    final terminalsAsync = ref.watch(terminalsProvider(netbarId));
+    final terminalsAsync = ref.watch(liveTerminalsProvider(netbarId));
 
     return GestureDetector(
       onTap: _hideContextMenu,

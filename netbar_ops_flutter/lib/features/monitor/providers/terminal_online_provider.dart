@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/network/task_ws_provider.dart';
-import '../../../shared/providers/app_providers.dart';
+import '../data/terminal_models.dart';
 
 /// 终端上下机事件（解析自后端持续推送的 `subscribe.terminal` 帧 data）。
 ///
@@ -56,36 +56,37 @@ class TerminalOnlineEvent {
   }
 }
 
-/// 终端上下机【原始事件流】：按当前网吧 id 持续订阅后端推送。
+/// 终端上下机【原始事件流】：按网吧 id（family 参数）持续订阅后端推送。
 ///
-/// - 随当前网吧切换自动重建（watch [currentNetbarIdProvider]）。
+/// - family(merchantId)：主窗口传当前网吧 id、独立子窗口传自己的 netbarId，
+///   互不依赖全局"当前网吧"，各窗口独立订阅。
 /// - 无监听者时自动 dispose → 取消订阅（autoDispose）。
 /// - 底层 [TaskWs.subscribeHolding] 负责：1 分钟心跳保活 + 断线自动重订阅，
 ///   流不中断、对本 provider 透明。
-final terminalOnlineStreamProvider =
-    StreamProvider.autoDispose<TerminalOnlineEvent>((ref) {
-  final netbarId = ref.watch(currentNetbarIdProvider);
-  if (netbarId == null) return const Stream<TerminalOnlineEvent>.empty();
+final terminalOnlineStreamProvider = StreamProvider.autoDispose
+    .family<TerminalOnlineEvent, int>((ref, merchantId) {
   final ws = ref.watch(taskWsProvider);
   return ws
       .subscribeHolding(
         event: 'reg.subscribe',
-        merchantId: netbarId,
+        merchantId: merchantId,
         data: const {'type': 'terminal'},
         // cancelEvent: 'reg.unsubscribe', // 后端若需显式退订帧再放开
       )
       .map(TerminalOnlineEvent.fromFrame);
 });
 
-/// 终端在线状态【聚合视图】：`seat → 最新上下机事件`。
+/// 终端在线状态【聚合视图】：`seat → 最新上下机事件`，按网吧 id 隔离。
 ///
 /// 监听 [terminalOnlineStreamProvider] 增量更新。UI 直接 watch 本 provider
-/// 即可拿到全量座位在线快照；首屏 HTTP 全量可用 [TerminalOnlineNotifier.seed] 预填。
-final terminalOnlineMapProvider = StateNotifierProvider.autoDispose<
-    TerminalOnlineNotifier, Map<String, TerminalOnlineEvent>>((ref) {
+/// 拿到该网吧的座位在线增量；与 HTTP 快照的合并用 [mergeTerminalStatus]。
+final terminalOnlineMapProvider = StateNotifierProvider.autoDispose.family<
+    TerminalOnlineNotifier,
+    Map<String, TerminalOnlineEvent>,
+    int>((ref, merchantId) {
   final notifier = TerminalOnlineNotifier();
   final sub = ref.listen<AsyncValue<TerminalOnlineEvent>>(
-    terminalOnlineStreamProvider,
+    terminalOnlineStreamProvider(merchantId),
     (prev, next) => next.whenData(notifier.apply),
   );
   ref.onDispose(sub.close);
@@ -101,13 +102,17 @@ class TerminalOnlineNotifier
     if (e.seat.isEmpty) return;
     state = {...state, e.seat: e};
   }
+}
 
-  /// 用首屏 HTTP 快照预填全量在线状态（与推送增量合并）。
-  void seed(Iterable<TerminalOnlineEvent> events) {
-    final next = {...state};
-    for (final e in events) {
-      if (e.seat.isNotEmpty) next[e.seat] = e;
-    }
-    state = next;
-  }
+/// 把 WS 上下机增量合并进 HTTP 快照的 [Terminal.status]。
+///
+/// - [e] == null（该座位无推送）→ 原样，沿用 HTTP 快照状态，天然无需 seed
+/// - 推送离线 → status 置 0
+/// - 推送在线 → 保留 busy(2，远程中) 三态不降级；否则置 1
+/// 状态未变化时返回原实例，避免无谓重建。
+Terminal mergeTerminalStatus(Terminal t, TerminalOnlineEvent? e) {
+  if (e == null) return t;
+  if (!e.online) return t.status == 0 ? t : t.copyWith(status: 0);
+  if (t.status == 2) return t;
+  return t.status == 1 ? t : t.copyWith(status: 1);
 }
