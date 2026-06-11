@@ -68,6 +68,10 @@ class TerminalWindowBridge {
             return _wsStreamOpen(args, fromWindowId);
           case 'ws/streamCancel':
             return await _wsStreamCancel(args);
+          case 'ws/holdingOpen':
+            return _wsHoldingOpen(args, fromWindowId);
+          case 'ws/holdingCancel':
+            return await _wsStreamCancel(args);
           case 'ws/fireAndForget':
             return await _wsFireAndForget(args);
           case 'ws/getState':
@@ -174,6 +178,53 @@ class TerminalWindowBridge {
         onError: (Object e) {
           DesktopMultiWindow.invokeMethod(fromWindowId, 'ws/streamEnd',
               {'reqId': reqId, 'ok': false, 'msg': e.toString()})
+              .catchError((Object _) {});
+          _hostStreams.remove(reqId);
+        },
+        onDone: () {
+          DesktopMultiWindow.invokeMethod(fromWindowId, 'ws/streamEnd',
+              {'reqId': reqId, 'ok': true}).catchError((Object _) {});
+          _hostStreams.remove(reqId);
+        },
+      );
+      return {'ok': true};
+    } catch (e) {
+      return {'ok': false, 'msg': e.toString()};
+    }
+  }
+
+  /// 子窗口持续订阅（holding）：桥接到主窗 subscribeHolding。
+  /// 心跳定时器/重连重放由主窗口托管，回推复用 ws/streamChunk；
+  /// 取消复用 _wsStreamCancel（cancel 主窗流 → 触发 client._cancelHolding）。
+  static Map<String, dynamic> _wsHoldingOpen(
+      Map<String, dynamic> args, int fromWindowId) {
+    try {
+      final reqId = args['reqId'] as String;
+      final event = args['event'] as String;
+      final merchantId = args['merchantId'] as int;
+      final data = args['data'] is Map
+          ? Map<String, dynamic>.from(args['data'] as Map)
+          : <String, dynamic>{};
+      final kind = (args['kind'] as String?) ?? 'holdon';
+      final heartbeatMs = (args['heartbeatMs'] as int?) ?? 60000;
+      final cancelEvent = args['cancelEvent'] as String?;
+
+      final stream = TaskWsClient.instance.subscribeHolding(
+        event: event,
+        merchantId: merchantId,
+        data: data,
+        kind: kind,
+        heartbeat: Duration(milliseconds: heartbeatMs),
+        cancelEvent: cancelEvent,
+      );
+      _hostStreams[reqId] = stream.listen(
+        (chunk) {
+          DesktopMultiWindow.invokeMethod(fromWindowId, 'ws/streamChunk',
+              {'reqId': reqId, 'data': chunk}).catchError((Object _) {});
+        },
+        onError: (Object e) {
+          DesktopMultiWindow.invokeMethod(fromWindowId, 'ws/streamEnd',
+                  {'reqId': reqId, 'ok': false, 'msg': e.toString()})
               .catchError((Object _) {});
           _hostStreams.remove(reqId);
         },

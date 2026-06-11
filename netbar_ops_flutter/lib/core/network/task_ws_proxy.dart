@@ -191,6 +191,51 @@ class TaskWsProxy implements TaskWs {
   }
 
   @override
+  Stream<Map<String, dynamic>> subscribeHolding({
+    required String event,
+    required int merchantId,
+    Map<String, dynamic> data = const {},
+    String kind = 'holdon',
+    Duration heartbeat = const Duration(minutes: 1),
+    String? cancelEvent,
+  }) {
+    // 心跳 timer 与订阅注册表都在主窗口 TaskWsClient 托管；
+    // 子窗口仅本地建流接收回推（复用 streamChunk 通道），重连恢复对子窗口透明。
+    final reqId = _genReqId();
+    late StreamController<dynamic> ctrl;
+    ctrl = StreamController<dynamic>.broadcast(
+      onCancel: () async {
+        _streams.remove(reqId);
+        try {
+          await DesktopMultiWindow.invokeMethod(_mainWindowId,
+              'ws/holdingCancel', <String, dynamic>{'reqId': reqId});
+        } catch (_) {}
+      },
+    );
+    _streams[reqId] = ctrl;
+    DesktopMultiWindow.invokeMethod(
+      _mainWindowId,
+      'ws/holdingOpen',
+      <String, dynamic>{
+        'reqId': reqId,
+        'event': event,
+        'merchantId': merchantId,
+        'data': data,
+        'kind': kind,
+        'heartbeatMs': heartbeat.inMilliseconds,
+        if (cancelEvent != null) 'cancelEvent': cancelEvent,
+      },
+    ).catchError((Object e) {
+      final c = _streams.remove(reqId);
+      if (c != null && !c.isClosed) {
+        c.addError(e);
+        c.close();
+      }
+    });
+    return ctrl.stream.cast<Map<String, dynamic>>();
+  }
+
+  @override
   Future<void> fireAndForget({
     required String fun,
     required String seat,

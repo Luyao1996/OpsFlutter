@@ -101,4 +101,35 @@ abstract class TaskWs {
     required Map<String, dynamic> customFields,
     Duration timeout = const Duration(seconds: 15),
   });
+
+  /// 持续订阅 + 心跳保活：发一条裸 event 注册帧后，后端按 **同 id** 持续回推，
+  /// 客户端把每条回推都送到返回的流上（流永不结束，除非主动取消）。
+  ///
+  /// 与 [requestStream] 的区别：
+  ///   - 周期性重发注册帧保活（[heartbeat] 间隔，默认 60s，即"心跳/注册"）；
+  ///   - 断线后自动重注册并重启心跳，返回的流不中断；
+  ///   - 按 **完整消息 id** 路由（请求 id == 响应 id，响应 event 名可与请求不同）。
+  ///
+  /// 协议示例（网吧终端上下机）：
+  ///   发: {event:'reg.subscribe',      id:'holdon-flutter-..', merchant_id, data:{type:'terminal'}}
+  ///   收: {event:'subscribe.terminal', id:'holdon-flutter-..', data:{mac,seat,online,..}}（按同 id 持续推）
+  ///
+  /// [event] 注册事件名（如 'reg.subscribe'）。
+  /// [merchantId] 该订阅所属网吧 id，写入帧顶层 merchant_id。
+  /// [data] 注册参数（如 {'type':'terminal'}）。
+  /// [kind] 消息 id 类型前缀，默认 'holdon'，生成形如 `holdon-flutter-<ts>-<seq>`，
+  ///        用于在日志/抓包中一眼识别"持续型"消息。
+  /// [heartbeat] 心跳（重发注册帧）的周期，默认 1 分钟。
+  /// [cancelEvent] 取消订阅时发送的 event 名；为空则仅本地移除、不发取消帧。
+  ///
+  /// 返回流元素为完整响应帧 `{event, id, data}`，调用方按 event 区分语义，
+  /// 并可在监听回调中用 [fireAndForget] 回送响应/ack（"收到即响应"由业务层决定）。
+  Stream<Map<String, dynamic>> subscribeHolding({
+    required String event,
+    required int merchantId,
+    Map<String, dynamic> data = const {},
+    String kind = 'holdon',
+    Duration heartbeat = const Duration(minutes: 1),
+    String? cancelEvent,
+  });
 }

@@ -29,6 +29,11 @@ class TaskWsClient implements TaskWs {
   /// id → _Pending（单次或流式）
   final Map<String, _Pending> _pending = {};
 
+  /// id → _Holding（持续订阅 + 心跳保活）。
+  /// 与 [_pending] 分离：断线时 _pending 整体 fail，但 _holding 保留，
+  /// 重连（peer.ready）后自动重发注册帧并重启心跳。
+  final Map<String, _Holding> _holding = {};
+
   Completer<void>? _readyWaiter;
   Timer? _reconnectTimer;
   Duration _retryDelay = const Duration(seconds: 1);
@@ -217,12 +222,53 @@ class TaskWsClient implements TaskWs {
   }
 
   @override
+  Stream<Map<String, dynamic>> subscribeHolding({
+    required String event,
+    required int merchantId,
+    Map<String, dynamic> data = const {},
+    String kind = 'holdon',
+    Duration heartbeat = const Duration(minutes: 1),
+    String? cancelEvent,
+  }) {
+    final id = _genId(kind: kind);
+    final ctrl = StreamController<Map<String, dynamic>>.broadcast();
+    final holding = _Holding(
+      ctrl: ctrl,
+      event: event,
+      merchantId: merchantId,
+      data: data,
+      cancelEvent: cancelEvent,
+      heartbeat: heartbeat,
+      startMs: DateTime.now().millisecondsSinceEpoch,
+    );
+    // broadcast 流：最后一个监听取消时触发 onCancel → 注销订阅
+    ctrl.onCancel = () => _cancelHolding(id);
+    _holding[id] = holding;
+    _logFrame('INFO', 'holding-open', id, {
+      'event': event,
+      'merchant_id': merchantId,
+      'data': data,
+      'heartbeat_ms': heartbeat.inMilliseconds,
+    });
+    ensureConnected().then((_) => _startHolding(id)).catchError((Object e) {
+      // 仅首次连接失败（如 authFailed）才报错并终止；普通断线由重连重放兜底
+      if (!ctrl.isClosed) ctrl.addError(e);
+      _cancelHolding(id);
+    });
+    return ctrl.stream;
+  }
+
+  @override
   String generateSessionId() => _genId();
 
   // ---------- 内部 ----------
 
-  String _genId() =>
-      'flutter-${DateTime.now().millisecondsSinceEpoch}-${++_seq}';
+  /// 生成消息 id。[kind] 非空时前置类型段（如 'holdon'），用于标识"持续型"消息，
+  /// 便于日志/抓包识别：`holdon-flutter-<ts>-<seq>`。
+  String _genId({String? kind}) {
+    final base = 'flutter-${DateTime.now().millisecondsSinceEpoch}-${++_seq}';
+    return (kind == null || kind.isEmpty) ? base : '$kind-$base';
+  }
 
   Map<String, dynamic> _buildFrame(
     String id,
@@ -237,6 +283,92 @@ class TaskWsClient implements TaskWs {
         'merchant_id': merchantId,
         'data': {'fun': fun, 'seat': seat, 'data': data},
       };
+
+  // ---------- 持续订阅（holding）内部实现 ----------
+
+  /// 裸 event 注册帧：{event, id, merchant_id, data}
+  Map<String, dynamic> _buildHoldingFrame(String id, _Holding h) => {
+        'event': h.event,
+        'id': id,
+        'merchant_id': h.merchantId,
+        'data': h.data,
+      };
+
+  /// 首发注册帧并启动心跳定时器；重连时再次调用 = 重发+重启（幂等）。
+  void _startHolding(String id) {
+    final h = _holding[id];
+    if (h == null) return;
+    _sendHolding(id);
+    h.timer?.cancel();
+    h.timer = Timer.periodic(h.heartbeat, (_) {
+      if (_state == TaskWsState.ready) {
+        try {
+          _sendHolding(id);
+        } catch (e) {
+          _log('WARN', 'holding-hb', id, 'send_failed: $e');
+        }
+      }
+    });
+  }
+
+  void _sendHolding(String id) {
+    final h = _holding[id];
+    if (h == null) return;
+    _logFrame('INFO', 'holding-send', id, {
+      'event': h.event,
+      'merchant_id': h.merchantId,
+    });
+    _send(_buildHoldingFrame(id, h));
+  }
+
+  /// 取消单条订阅：停心跳 +（可选）发取消帧 + 关流移除。
+  void _cancelHolding(String id) {
+    final h = _holding.remove(id);
+    if (h == null) return;
+    h.timer?.cancel();
+    _logFrame('INFO', 'holding-cancel', id, {'event': h.event});
+    final cancelEvent = h.cancelEvent;
+    if (cancelEvent != null && _state == TaskWsState.ready) {
+      try {
+        _send({'event': cancelEvent, 'id': id, 'merchant_id': h.merchantId});
+      } catch (_) {}
+    }
+    if (!h.ctrl.isClosed) h.ctrl.close();
+  }
+
+  /// 重连成功（peer.ready）后重放所有订阅：重发注册帧并重启心跳。
+  void _replayHoldings() {
+    if (_holding.isEmpty) return;
+    _log('INFO', 'holding-replay', '-', 'count=${_holding.length}');
+    for (final id in _holding.keys.toList()) {
+      try {
+        _startHolding(id);
+      } catch (e) {
+        _log('WARN', 'holding-replay', id, 'failed: $e');
+      }
+    }
+  }
+
+  /// 断线（非鉴权失败）时暂停所有订阅的心跳，保留注册表等重连重放。
+  void _pauseHoldingsHeartbeat() {
+    for (final h in _holding.values) {
+      h.timer?.cancel();
+    }
+  }
+
+  /// 鉴权失败（不再重连）时彻底终止所有订阅。
+  void _failAllHoldings(String reason) {
+    if (_holding.isEmpty) return;
+    final entries = List.of(_holding.values);
+    _holding.clear();
+    for (final h in entries) {
+      h.timer?.cancel();
+      if (!h.ctrl.isClosed) {
+        h.ctrl.addError(StateError(reason));
+        h.ctrl.close();
+      }
+    }
+  }
 
   String _buildUrl() {
     final token = TokenStore.getToken() ?? '';
@@ -345,6 +477,7 @@ class TaskWsClient implements TaskWs {
       _readyWaiter = null;
       if (waiter != null && !waiter.isCompleted) waiter.complete();
       _log('INFO', 'ready', '-', 'peer.ready received');
+      _replayHoldings();
       return;
     }
 
@@ -357,6 +490,7 @@ class TaskWsClient implements TaskWs {
       _log('ERROR', 'auth', '-', 'auth_failed: $reason');
       _setState(TaskWsState.authFailed);
       _failAllPending('auth failed: $reason');
+      _failAllHoldings('auth failed: $reason');
       _closeChannel();
       try {
         onAuthFailed?.call();
@@ -371,6 +505,17 @@ class TaskWsClient implements TaskWs {
     }
     final id = (payload['id'] ?? msg['id'])?.toString();
     if (id == null) return;
+    // 持续订阅（holding）优先：按完整 id 命中则把整帧推到流上，不移除（持续接收）
+    final holding = _holding[id];
+    if (holding != null) {
+      if (!holding.ctrl.isClosed) holding.ctrl.add(msg);
+      _logFrame('INFO', 'recv-hold', id, {
+        'event': event,
+        'merchant_id': holding.merchantId,
+        'data': msg['data'],
+      });
+      return;
+    }
     final entry = _pending[id];
     if (entry == null) {
       // 找不到对应 pending：可能是重连漂帧、协议异常或服务端按 cmdlogin 主流推回的子帧
@@ -467,6 +612,7 @@ class TaskWsClient implements TaskWs {
   void _onClose(String reason) {
     _log('WARN', 'close', '-', 'reason=$reason');
     _closeChannel();
+    _pauseHoldingsHeartbeat();
     if (_state == TaskWsState.authFailed) {
       // auth.failed 已处理，不重连
       return;
@@ -608,4 +754,27 @@ class _Pending {
   }) : completer = null;
 
   bool get isStream => streamCtrl != null;
+}
+
+/// 持续订阅条目：保存注册帧参数 + 对外 broadcast 流 + 心跳定时器。
+/// 与 [_Pending] 不同，断线时不被清理，重连后重发注册帧恢复。
+class _Holding {
+  final StreamController<Map<String, dynamic>> ctrl;
+  final String event;
+  final int merchantId;
+  final Map<String, dynamic> data;
+  final String? cancelEvent;
+  final Duration heartbeat;
+  final int startMs;
+  Timer? timer;
+
+  _Holding({
+    required this.ctrl,
+    required this.event,
+    required this.merchantId,
+    required this.data,
+    required this.cancelEvent,
+    required this.heartbeat,
+    required this.startMs,
+  });
 }
