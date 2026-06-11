@@ -183,8 +183,9 @@ flutter_launcher_icons:
   remove_alpha_ios: true          # App Store 要求图标无 alpha 通道
   background_color_ios: "#001339" # 透明圆角四角铺图标同款深蓝底（边缘采样色）
   windows:
-    generate: true
-    icon_size: 256
+    # 工具只能生成单尺寸条目ICO,小图标(16/32/48)由系统缩放锯齿严重;
+    # 改用 tools/make_multisize_ico.ps1 生成多尺寸ICO,勿改回 true 以免覆盖
+    generate: false
   web:
     generate: true
   macos:
