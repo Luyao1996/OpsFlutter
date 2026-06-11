@@ -6,6 +6,9 @@ class Terminal {
   final int id;
   final String seatId; // 座位ID（后端 seatlist 中的 id，可能是字符串）
   final String name;
+  // 纯别名（后端 name 字段原值，可为空）。[name] 在别名为空时回退机号，
+  // 「编辑名称」必须回显此字段，否则会把机号误当别名提交（对标 EditNameDialog.vue 只回显 alias）
+  final String alias;
   final String code;
   final int netbarId;
   final int? areaId;
@@ -34,6 +37,7 @@ class Terminal {
     required this.id,
     this.seatId = '',
     required this.name,
+    this.alias = '',
     required this.code,
     required this.netbarId,
     this.areaId,
@@ -140,6 +144,9 @@ class Terminal {
       id: parsedId,
       seatId: parsedSeatId,
       name: rawName.isNotEmpty ? rawName : parsedSeatId,
+      // 后端响应无 alias 字段 → 取 rawName（纯别名）；
+      // toJson 快照回灌（子窗口/dock 恢复）时 json['name'] 已是合成显示名，只能信 json['alias']
+      alias: json['alias']?.toString() ?? rawName,
       code: json['code'] ?? parsedSeatId,
       // merchant_id（新）/ netbar_id（旧）兼容
       netbarId: (json['merchant_id'] ?? json['netbar_id'] ?? 0) as int,
@@ -176,6 +183,7 @@ class Terminal {
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
+        'alias': alias,
         'code': code,
         'netbar_id': netbarId,
         'area_id': areaId,

@@ -253,7 +253,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
     final stats = _realtimeCache[t.seatId];
     if (stats == null || stats.isEmpty) return t;
     return Terminal(
-      id: t.id, seatId: t.seatId, name: t.name, code: t.code,
+      id: t.id, seatId: t.seatId, name: t.name, alias: t.alias, code: t.code,
       netbarId: t.netbarId, areaId: t.areaId, ip: t.ip, mac: t.mac,
       os: t.os, type: t.type, status: t.status,
       cpuUsage: stats['cpu'] ?? t.cpuUsage,

@@ -734,6 +734,16 @@ class TerminalApi {
     );
   }
 
+  /// 保存终端名称（别名）—— 中央 HTTP `POST /terminals/{id}/name` body `{"name": "..."}`
+  /// 对标 toolboxPage RemoteWakePage.saveSeatName：只改别名，机号前缀不可改。
+  /// 错误由 ApiClient 拦截器统一抛出（与 [saveRemark] 一致，无需手动判 code）。
+  Future<void> saveName(int terminalId, String name) async {
+    await _client.post(
+      '/terminals/$terminalId/name',
+      data: {'name': name},
+    );
+  }
+
   /// 切换终端 2FA 锁屏 —— 中央 HTTP `POST /terminals/{id}/lockScreen` body `{enabled: 1|0}`
   /// 对标 toolboxPage ServerWindowsPasswordDialog 的「启用锁屏」开关。
   /// 错误由 ApiClient 拦截器统一抛出（与 [saveRemark] 一致，无需手动判 code）。

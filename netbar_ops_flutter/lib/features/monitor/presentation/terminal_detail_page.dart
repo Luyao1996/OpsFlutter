@@ -47,6 +47,7 @@ import '../../../../shared/utils/platform_utils.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../netbar/data/netbar_api.dart' as netbar_api;
 
+import 'widgets/edit_name_modal.dart';
 import 'widgets/file_manager_tab.dart';
 import 'widgets/process_manager_tab.dart';
 import 'widgets/console_manager_tab.dart';
@@ -502,6 +503,27 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
 
   // --- Header ---
 
+  /// 打开「编辑名称」弹窗（标题区联系人按钮右侧入口，对标 toolboxPage 编辑名称）。
+  /// 保存成功后先等列表 provider 重载完成再刷详情 —— terminalDetailProvider
+  /// 优先读 terminalsProvider 缓存，顺序反了会读回旧名称。
+  Future<void> _showEditNameModal(Terminal terminal) async {
+    final api = ref.read(terminalApiProvider);
+    final saved = await showAdaptive<bool>(
+      context,
+      (_) => EditNameModal(terminal: terminal, api: api),
+      routeName: '/dialog/terminal-edit-name',
+    );
+    if (saved != true || !mounted) return;
+    ref.invalidate(terminalsProvider(_ownerNetbarId));
+    try {
+      await ref.read(terminalsProvider(_ownerNetbarId).future);
+    } catch (_) {
+      // 列表重载失败不阻断详情刷新；详情 provider 缓存未命中时会自行回源 /terminals
+    }
+    if (!mounted) return;
+    ref.invalidate(terminalDetailProvider(_detailKey));
+  }
+
   Widget _buildHeader(Terminal terminal, {required bool isNarrow}) {
     if (!isNarrow) {
       return Container(
@@ -549,6 +571,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
               netbarName: _netbarName,
               merchantId: ref.watch(currentNetbarProvider).id,
             ),
+            const SizedBox(width: 4),
+            // 编辑名称（常驻按钮，非 hover 显隐 —— 手机/触屏可直接点击）
+            _EditNameButton(onTap: () => _showEditNameModal(terminal)),
             const SizedBox(width: 16),
             Expanded(
               child: MouseRegion(
@@ -690,6 +715,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
                 netbarName: _netbarName,
                 merchantId: ref.watch(currentNetbarProvider).id,
               ),
+              const SizedBox(width: 4),
+              // 编辑名称（常驻按钮，非 hover 显隐 —— 手机/触屏可直接点击）
+              _EditNameButton(onTap: () => _showEditNameModal(terminal)),
               IconButton(
                 onPressed: _refreshing ? null : () => _refreshHeartbeat(terminal.id),
                 tooltip: '刷新状态',
@@ -3282,6 +3310,39 @@ class _RemarkEditDialogState extends State<_RemarkEditDialog> {
 /// 鼠标进入按钮 → 加载并显示 Overlay 气泡；首次加载后 State 内缓存（按钮生命周期内不再重复请求）。
 /// 鼠标在 按钮 ↔ 气泡 之间切换不会消失（200ms 延迟 + 气泡内 MouseRegion 标记）；
 /// 鼠标完全离开 200ms 后关闭气泡。
+/// 标题区「编辑名称」常驻小方块按钮（样式对齐 [_PersonnelHoverButton] 的按钮本体）。
+/// 常驻显示（非 hover 显隐），手机/触屏可直接点击。
+class _EditNameButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _EditNameButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: '编辑名称',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          width: 28,
+          height: 28,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: const Color(0xFFEFF6FF), // 浅蓝底
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: const Color(0xFFBFDBFE)),
+          ),
+          child: const Icon(
+            LucideIcons.edit3,
+            size: 14,
+            color: Color(0xFF2563EB),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PersonnelHoverButton extends ConsumerStatefulWidget {
   final String netbarName;
   final int? merchantId;
