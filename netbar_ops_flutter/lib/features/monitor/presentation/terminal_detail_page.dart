@@ -31,6 +31,7 @@ import '../../../../core/network/task_ws_provider.dart';
 import '../../../../core/network/ws_binary.dart';
 import '../../../../core/storage/token_store.dart';
 import '../data/terminal_api.dart';
+import '../../application/presentation/app_center_dialog.dart';
 import '../../desktop/data/desktop_api.dart';
 import '../../logs/data/operation_log_api.dart';
 import 'monitor_page.dart' show terminalsProvider;
@@ -1613,6 +1614,17 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
         type: '__2fa_manage__',
         icon: LucideIcons.shieldCheck,
       ),
+      // 策略管理：打开应用中心弹窗（对齐 toolboxPage AppCenterDialog）。
+      // 可见性 = 应用添加(22) 或 配置应用(23) 任一细分权限；
+      // 弹窗内部再分别用 22 控制添加/取消、23 控制策略配置按钮。
+      if (perm.hasDetailPermissionById(kPermNetbarAppAdd) ||
+          perm.hasDetailPermissionById(kPermNetbarAppConfig))
+        const _ServiceItem(
+          label: '策略管理',
+          name: '策略管理',
+          type: '__app_policy__',
+          icon: LucideIcons.layoutGrid,
+        ),
     ];
     Widget card(_ServiceItem it, {bool compact = false}) {
       return _buildPowerCard(
@@ -1671,6 +1683,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
       _open2FAManageDialog(terminal);
       return;
     }
+    // 策略管理：打开应用中心弹窗（添加应用 + 策略配置），不走二次确认
+    if (item.type == '__app_policy__') {
+      _openAppPolicyDialog();
+      return;
+    }
     showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1695,6 +1712,26 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
         _restartService(terminal, item.type, item.name);
       }
     });
+  }
+
+  /// 打开应用中心弹窗（服务管理 → 策略管理）。
+  /// 内容对齐 toolboxPage AppCenterDialog：浏览/添加应用 + 已添加应用「策略配置」；
+  /// group_id 由弹窗内部经 currentGroupIdProvider 解析（独立子窗口会自拉 /merchant）。
+  void _openAppPolicyDialog() {
+    final netbar = ref.read(currentNetbarProvider);
+    final merchantId = netbar.id;
+    if (merchantId == null) {
+      showTopNotice(context, '当前网吧 id 为空', level: NoticeLevel.error);
+      return;
+    }
+    showAdaptive<void>(
+      context,
+      (_) => AppCenterDialog(
+        merchantId: merchantId,
+        merchantName: netbar.name ?? '',
+      ),
+      routeName: '/dialog/app-center',
+    );
   }
 
   Future<void> _restartService(Terminal terminal, String type, String name) async {

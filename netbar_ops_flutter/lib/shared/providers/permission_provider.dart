@@ -2,6 +2,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app_providers.dart';
 import '../../features/auth/data/auth_api.dart' show Role;
 
+// ===== 后端细分权限 id 常量 =====
+// 对齐 toolboxPage src/constants/permissions.js PERMISSION_IDS：
+// 按 id 判断，后端改权限文案时不会失效。
+
+/// 应用添加（应用中心：添加/取消添加到分组）
+const int kPermNetbarAppAdd = 22;
+
+/// 配置应用（应用策略配置）
+const int kPermNetbarAppConfig = 23;
+
 /// 统一权限判断，与后端 toolbox 保持一致
 class PermissionService {
   final int? groupId;
@@ -37,6 +47,14 @@ class PermissionService {
   bool hasDetailPermission(String permName) {
     if (isTopManager) return true;
     return permissions.any((p) => p.name == permName);
+  }
+
+  /// 按权限 id 检查细分权限（推荐，对齐 Web 端 hasDetailPermission 传
+  /// PERMISSION_IDS 数字 id 的形态；后端改文案不影响判断）。
+  /// 总部管理员拥有所有权限。
+  bool hasDetailPermissionById(int permId) {
+    if (isTopManager) return true;
+    return permissions.any((p) => p.id == permId);
   }
 
   /// zone: PUBLIC/HEADQUARTERS/BRANCH
