@@ -61,6 +61,9 @@ class _PolicyConfigDialogState extends ConsumerState<PolicyConfigDialog> {
 
   bool _submitting = false;
 
+  /// 宽屏 Dialog 全屏切换（窄屏本就是全屏页，不显示切换按钮）
+  bool _fullscreen = false;
+
   static const _systemOptions = ['win7', 'win10', 'win11'];
 
   @override
@@ -371,10 +374,26 @@ class _PolicyConfigDialogState extends ConsumerState<PolicyConfigDialog> {
   @override
   Widget build(BuildContext context) {
     final isNarrow = context.isNarrow;
+    final screen = MediaQuery.sizeOf(context);
     return ResponsiveDialogScaffold(
       title: '${widget.applicationName} 策略配置',
-      maxWidth: 980,
+      // 全屏：尺寸给到屏幕大小（保持有界约束）+ 去掉 Dialog 屏幕边距
+      maxWidth: _fullscreen ? screen.width : 980,
+      maxHeight: _fullscreen ? screen.height : null,
+      insetPadding: _fullscreen ? EdgeInsets.zero : null,
       scrollableBody: false,
+      appBarActions: isNarrow
+          ? null
+          : [
+              IconButton(
+                icon: Icon(
+                  _fullscreen ? LucideIcons.minimize2 : LucideIcons.maximize2,
+                  size: 18,
+                ),
+                tooltip: _fullscreen ? '还原' : '全屏',
+                onPressed: () => setState(() => _fullscreen = !_fullscreen),
+              ),
+            ],
       body: _loading
           ? const Center(
               child: Padding(

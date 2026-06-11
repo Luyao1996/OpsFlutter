@@ -40,6 +40,11 @@ class ResponsiveDialogScaffold extends StatelessWidget {
   /// body 区域的内边距（默认 EdgeInsets.all(20)）
   final EdgeInsetsGeometry bodyPadding;
 
+  /// 仅宽屏：Dialog 与屏幕边缘的间距。
+  /// null = Flutter Dialog 默认（horizontal 40 / vertical 24）；
+  /// 传 EdgeInsets.zero 配合 maxWidth/maxHeight 设为屏幕尺寸可实现全屏弹窗。
+  final EdgeInsets? insetPadding;
+
   const ResponsiveDialogScaffold({
     super.key,
     required this.title,
@@ -51,6 +56,7 @@ class ResponsiveDialogScaffold extends StatelessWidget {
     this.maxHeightCap = 820,
     this.scrollableBody = true,
     this.bodyPadding = const EdgeInsets.all(20),
+    this.insetPadding,
   });
 
   @override
@@ -111,6 +117,9 @@ class ResponsiveDialogScaffold extends StatelessWidget {
 
     return Dialog(
       backgroundColor: Colors.white,
+      // 显式给出 Flutter Dialog 默认边距作 fallback，保证未传时行为不变
+      insetPadding: insetPadding ??
+          const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ConstrainedBox(
         constraints: BoxConstraints(

@@ -20,7 +20,7 @@ import 'policy_config_dialog.dart';
 ///
 /// 权限（对齐 web 调用方传入 PERMISSION_IDS）：
 ///   添加/取消添加 = 应用添加(22)；策略配置按钮 = 配置应用(23)。
-class AppCenterDialog extends ConsumerWidget {
+class AppCenterDialog extends ConsumerStatefulWidget {
   final int merchantId;
   final String merchantName;
 
@@ -31,12 +31,39 @@ class AppCenterDialog extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AppCenterDialog> createState() => _AppCenterDialogState();
+}
+
+class _AppCenterDialogState extends ConsumerState<AppCenterDialog> {
+  /// 宽屏 Dialog 全屏切换（窄屏本就是全屏页，不显示切换按钮）
+  bool _fullscreen = false;
+
+  @override
+  Widget build(BuildContext context) {
     final groupIdAsync = ref.watch(currentGroupIdProvider);
+    final isNarrow = context.isNarrow;
+    final screen = MediaQuery.sizeOf(context);
     return ResponsiveDialogScaffold(
-      title: merchantName.isNotEmpty ? '应用中心 - $merchantName' : '应用中心',
-      maxWidth: 1100,
+      title: widget.merchantName.isNotEmpty
+          ? '应用中心 - ${widget.merchantName}'
+          : '应用中心',
+      // 全屏：尺寸给到屏幕大小（保持有界约束）+ 去掉 Dialog 屏幕边距
+      maxWidth: _fullscreen ? screen.width : 1100,
+      maxHeight: _fullscreen ? screen.height : null,
+      insetPadding: _fullscreen ? EdgeInsets.zero : null,
       scrollableBody: false,
+      appBarActions: isNarrow
+          ? null
+          : [
+              IconButton(
+                icon: Icon(
+                  _fullscreen ? LucideIcons.minimize2 : LucideIcons.maximize2,
+                  size: 18,
+                ),
+                tooltip: _fullscreen ? '还原' : '全屏',
+                onPressed: () => setState(() => _fullscreen = !_fullscreen),
+              ),
+            ],
       body: groupIdAsync.when(
         loading: () => const Center(
           child: Padding(
@@ -49,8 +76,8 @@ class AppCenterDialog extends ConsumerWidget {
             ? const _CenteredTip('未获取到本网吧所属分组，无法使用应用中心')
             : _AppCenterBody(
                 groupId: groupId,
-                merchantId: merchantId,
-                merchantName: merchantName,
+                merchantId: widget.merchantId,
+                merchantName: widget.merchantName,
               ),
       ),
     );
@@ -458,11 +485,14 @@ class _AppCenterBodyState extends ConsumerState<_AppCenterBody> {
         ),
       );
     }
+    // 手机窄屏：280 上限会切成 2 列（每列约 165pt，应用名几乎显示不下），
+    // 放宽到 600 让其落成单列，卡片信息完整可读
+    final isNarrow = context.isNarrow;
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 280,
-        mainAxisExtent: 168,
+      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: isNarrow ? 600 : 280,
+        mainAxisExtent: isNarrow ? 152 : 168,
         crossAxisSpacing: 12,
         mainAxisSpacing: 12,
       ),
@@ -645,6 +675,9 @@ class _AppCenterBodyState extends ConsumerState<_AppCenterBody> {
 
   Widget _buildPager() {
     final maxPage = _total <= 0 ? 1 : ((_total + _size - 1) ~/ _size);
+    // 手机窄屏：去掉「条/页」下拉防止一行溢出（每页固定当前 _size），
+    // 保留 总数 + 翻页，触控目标不变
+    final isNarrow = context.isNarrow;
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
       decoration: const BoxDecoration(
@@ -657,27 +690,29 @@ class _AppCenterBodyState extends ConsumerState<_AppCenterBody> {
             style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
           ),
           const Spacer(),
-          DropdownButton<int>(
-            value: _size,
-            isDense: true,
-            underline: const SizedBox.shrink(),
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-            items: const [
-              DropdownMenuItem(value: 10, child: Text('10 条/页')),
-              DropdownMenuItem(value: 20, child: Text('20 条/页')),
-              DropdownMenuItem(value: 50, child: Text('50 条/页')),
-              DropdownMenuItem(value: 100, child: Text('100 条/页')),
-            ],
-            onChanged: (v) {
-              if (v == null || v == _size) return;
-              setState(() {
-                _size = v;
-                _page = 1;
-              });
-              _loadApps();
-            },
-          ),
-          const SizedBox(width: 8),
+          if (!isNarrow) ...[
+            DropdownButton<int>(
+              value: _size,
+              isDense: true,
+              underline: const SizedBox.shrink(),
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              items: const [
+                DropdownMenuItem(value: 10, child: Text('10 条/页')),
+                DropdownMenuItem(value: 20, child: Text('20 条/页')),
+                DropdownMenuItem(value: 50, child: Text('50 条/页')),
+                DropdownMenuItem(value: 100, child: Text('100 条/页')),
+              ],
+              onChanged: (v) {
+                if (v == null || v == _size) return;
+                setState(() {
+                  _size = v;
+                  _page = 1;
+                });
+                _loadApps();
+              },
+            ),
+            const SizedBox(width: 8),
+          ],
           IconButton(
             onPressed: _page > 1
                 ? () {
