@@ -323,6 +323,8 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
   List<String> _availableDriveLetters(GameLibraryState state) {
     final set = <String>{};
     for (final g in state.games) {
+      // icafe8 平台 gid==1 / gid==2 不参与下载盘符识别
+      if (g.platform == kPlatformIcafe8 && (g.gid == 1 || g.gid == 2)) continue;
       final p = g.localPath;
       if (p == null || p.length < 2 || p[1] != ':') continue;
       final c = p[0].toUpperCase();
