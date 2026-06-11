@@ -6,6 +6,9 @@ import '../../features/monitor/data/terminal_api.dart';
 import '../providers/terminal_dock_provider.dart';
 
 class TerminalWindowBridge {
+  /// 与 desktop 版 API 对齐；非桌面平台无多窗口，永不被触发
+  static void Function(int netbarId)? onTerminalsRefreshRequested;
+
   static void initMainWindowHandler(ProviderContainer container) {}
 
   static Future<int?> openTerminalWindow({

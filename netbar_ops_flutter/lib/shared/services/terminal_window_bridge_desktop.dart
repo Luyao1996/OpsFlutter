@@ -25,6 +25,11 @@ class TerminalWindowBridge {
   /// reqId（形如 `w<fromWindowId>-...`）→ 主窗 TaskWsClient stream 订阅
   static final Map<String, StreamSubscription<dynamic>> _hostStreams = {};
 
+  /// 子窗口请求主窗口刷新终端列表（'terminals_refresh'）时的回调。
+  /// 由主窗口侧（main_layout）注册为 invalidate(terminalsProvider(netbarId))；
+  /// 不直接 import monitor_page 取 provider —— monitor_page 反向依赖本 bridge，会循环。
+  static void Function(int netbarId)? onTerminalsRefreshRequested;
+
   static void initMainWindowHandler(ProviderContainer container) {
     if (!isDesktopPlatform || _initializedMainHandler) return;
     _initializedMainHandler = true;
@@ -58,6 +63,13 @@ class TerminalWindowBridge {
             final tab = args['lastTab'] as String?;
             if (id != null && tab != null) {
               notifier.setLastTab('${netbarId}_$id', tab);
+            }
+            break;
+          case 'terminals_refresh':
+            // 子窗口改名等操作后请求主窗口刷新终端列表（关键设备+终端列表共用 provider）
+            final refreshNetbarId = args['netbarId'] as int?;
+            if (refreshNetbarId != null) {
+              onTerminalsRefreshRequested?.call(refreshNetbarId);
             }
             break;
           case 'ws/ensureConnected':

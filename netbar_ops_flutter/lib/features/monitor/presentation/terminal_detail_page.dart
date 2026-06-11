@@ -513,8 +513,14 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
   // --- Header ---
 
   /// 打开「编辑名称」弹窗（标题区联系人按钮右侧入口，对标 toolboxPage 编辑名称）。
-  /// 保存成功后先等列表 provider 重载完成再刷详情 —— terminalDetailProvider
-  /// 优先读 terminalsProvider 缓存，顺序反了会读回旧名称。
+  /// 保存成功后主动触发三处刷新（等效各自的"刷新"按钮）：
+  ///   1) 关键设备列表 + 终端列表：invalidate terminalsProvider（两个列表共用此 provider）
+  ///   2) 详情 provider 缓存：先等列表重载完成再 invalidate —— terminalDetailProvider
+  ///      优先读 terminalsProvider 缓存，顺序反了会读回旧名称
+  ///   3) 详情页 Header：_refreshHeartbeat 更新 _liveTerminal（Header 渲染优先用它，
+  ///      只 invalidate provider 标题不会变）
+  /// 独立子窗口与主窗口是两个 ProviderContainer，本容器 invalidate 影响不到主窗口，
+  /// 需经 bridge 通知主窗口刷新列表。
   Future<void> _showEditNameModal(Terminal terminal) async {
     final api = ref.read(terminalApiProvider);
     final saved = await showAdaptive<bool>(
@@ -531,6 +537,13 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     }
     if (!mounted) return;
     ref.invalidate(terminalDetailProvider(_detailKey));
+    await _refreshHeartbeat(widget.terminalId, silent: true);
+    if (widget.isStandaloneWindow && _ownerNetbarId != null) {
+      await TerminalWindowBridge.sendToMain(
+        'terminals_refresh',
+        {'netbarId': _ownerNetbarId},
+      );
+    }
   }
 
   Widget _buildHeader(Terminal terminal, {required bool isNarrow}) {
@@ -1491,7 +1504,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
           if (mounted) {
             setState(() {
               _liveTerminal = Terminal(
-                id: hb.id, seatId: hb.seatId, name: hb.name, code: hb.code,
+                id: hb.id, seatId: hb.seatId, name: hb.name,
+                alias: hb.alias, // 透传纯别名，否则「编辑名称」弹窗回显为空
+                code: hb.code,
                 netbarId: hb.netbarId, areaId: hb.areaId, ip: hb.ip, mac: hb.mac,
                 os: hb.os, type: hb.type, status: hb.status,
                 cpuUsage: cpu, ramUsage: ram, gpuUsage: gpu, diskUsage: disk,

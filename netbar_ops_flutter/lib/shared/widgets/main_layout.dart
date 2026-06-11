@@ -27,6 +27,7 @@ import '../providers/terminal_dock_provider.dart';
 import '../../core/network/api_client.dart';
 import '../../core/responsive/responsive.dart';
 import '../../features/channel/presentation/platform_helper.dart';
+import '../../features/monitor/presentation/monitor_page.dart' show terminalsProvider;
 
 /// 主布局 - 对应 Vue 的 ClientMainLayout
 class MainLayout extends ConsumerStatefulWidget {
@@ -51,6 +52,10 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final container = ProviderScope.containerOf(context, listen: false);
       TerminalWindowBridge.initMainWindowHandler(container);
+      // 子窗口「编辑名称」等操作后请求刷新终端列表（监控页关键设备+终端列表共用 provider）。
+      // 在此注册而非 bridge 内直接 invalidate：monitor_page 依赖 bridge，反向 import 会循环
+      TerminalWindowBridge.onTerminalsRefreshRequested =
+          (netbarId) => container.invalidate(terminalsProvider(netbarId));
       TokenStore.onBeforeClearAuth = () async {
         await TerminalDockActions.closeAllMinimized(container);
         await TerminalWindowBridge.closeAllSubWindows();
