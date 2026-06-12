@@ -3799,11 +3799,6 @@ class _PersonnelHoverButtonState extends ConsumerState<_PersonnelHoverButton> {
   }
 }
 
-/// 服务端 Windows 密码对话框（mode∈{1,2} 主/副服务器可用）。
-/// 参考 toolboxPage `ServerWindowsPasswordDialog.vue` 设计：
-///   - step='set'：初始密码（≥8 位）→ update.windows_pass
-///   - step='reset'：忘记密码后强口令重置（≥8+大写+小写+数字）→ update.reset_windows_pass
-///   - 清除：弹二次确认 → update.clear_windows_pass
 /// 「2FA 管理」对话框：复制 2FA 按钮 + 2FA 锁屏开关。
 /// - 复制 2FA：调用父页传入的 [onCopy]（即 _handleCopy2FA），功能与原"复制2FA"按钮一致。
 /// - 2FA 锁屏：开关切换调 [TerminalApi.setLockScreen]，逻辑对标 toolboxPage「启用锁屏」开关
@@ -3918,11 +3913,14 @@ class _TwoFactorManageDialogState
   }
 }
 
+/// 服务端 Windows 密码对话框（mode∈{1,2} 主/副服务器可用）。
+/// 对标 toolboxPage `ServerWindowsPasswordDialog.vue` 新版（jgweb 45c1ad50d3）：
+/// 单步表单（非空 + ≥8 位），统一走 `POST /merchant/setPwd/{id}` 重置路径（reset:1），
+/// 按内层（客户端）返回的 {code, msg} 提示成败。
 class _WindowsPasswordDialog extends ConsumerStatefulWidget {
   final String terminalName;
   final int merchantId;
-  /// set step 输入框的初始值（一般是后端 server_pwd 当前密码）。
-  /// reset step 切换时不沿用此值（强口令场景必须用户重新输入）。
+  /// 输入框初始值（一般是后端 server_pwd 当前密码，用于回填）。
   final String initialPassword;
   const _WindowsPasswordDialog({
     required this.terminalName,
@@ -3937,8 +3935,6 @@ class _WindowsPasswordDialog extends ConsumerStatefulWidget {
 
 class _WindowsPasswordDialogState
     extends ConsumerState<_WindowsPasswordDialog> {
-  // step：'set' 设置初始密码 / 'reset' 重置（强口令）
-  String _step = 'set';
   final TextEditingController _pwdCtrl = TextEditingController();
   String? _errorText;
   bool _submitting = false;
@@ -3946,7 +3942,7 @@ class _WindowsPasswordDialogState
   @override
   void initState() {
     super.initState();
-    // 回填当前已设置的密码（仅 set step 默认显示；reset 切换时清空）
+    // 回填当前已设置的密码
     _pwdCtrl.text = widget.initialPassword;
   }
 
@@ -3956,27 +3952,17 @@ class _WindowsPasswordDialogState
     super.dispose();
   }
 
-  /// 设置场景校验：≥8 位
-  String? _validateSet(String v) {
+  /// 校验：非空 + ≥8 位（与 toolboxPage 新版一致，不再要求大小写+数字）
+  String? _validate(String v) {
     if (v.isEmpty) return '请输入密码';
     if (v.length < 8) return '密码至少 8 位';
-    return null;
-  }
-
-  /// 重置场景校验：≥8 + 大写 + 小写 + 数字（与 toolboxPage 一致）
-  String? _validateReset(String v) {
-    if (v.isEmpty) return '请输入密码';
-    if (v.length < 8) return '密码至少 8 位';
-    if (!RegExp(r'[A-Z]').hasMatch(v)) return '密码必须包含大写字母';
-    if (!RegExp(r'[a-z]').hasMatch(v)) return '密码必须包含小写字母';
-    if (!RegExp(r'[0-9]').hasMatch(v)) return '密码必须包含数字';
     return null;
   }
 
   Future<void> _handleSubmit() async {
     if (_submitting) return;
     final pwd = _pwdCtrl.text;
-    final err = _step == 'set' ? _validateSet(pwd) : _validateReset(pwd);
+    final err = _validate(pwd);
     if (err != null) {
       setState(() => _errorText = err);
       return;
@@ -3986,82 +3972,37 @@ class _WindowsPasswordDialogState
       _submitting = true;
     });
     try {
-      // HTTP：POST /merchant/setPwd/{id}
-      // - 保存（set）：body {password}
-      // - 重置（reset）：body {password, reset:1}
-      await netbar_api.NetbarApi().setPassword(
+      // HTTP：POST /merchant/setPwd/{id} body {password, reset:1}
+      // 外层（云端）成功后返回内层（客户端）执行结果 {code, msg}：
+      // 内层成功 → 提示 msg 并关弹窗；内层失败 → 提示 msg 且不关弹窗
+      final data = await netbar_api.NetbarApi().setPassword(
         widget.merchantId,
         password: pwd,
-        reset: _step == 'reset',
       );
-      ref.read(operationLogApiProvider).add(
-            event: _step == 'set' ? 'win.pwd.set' : 'win.pwd.reset',
-            description:
-                '${_step == "set" ? "保存" : "重置"} Windows 密码: ${widget.terminalName}',
-          );
       if (!mounted) return;
-      showTopNotice(context,
-          _step == 'set' ? 'Windows 密码已保存' : 'Windows 密码已重置',
-          level: NoticeLevel.success);
-      Navigator.of(context).pop();
+      final detail = (data['msg'] as String? ?? '').trim();
+      if (data['code'] == 0) {
+        ref.read(operationLogApiProvider).add(
+              event: 'win.pwd.reset',
+              description: '重置 Windows 密码: ${widget.terminalName}',
+            );
+        showTopNotice(context, detail.isNotEmpty ? detail : '重置成功',
+            level: NoticeLevel.success);
+        Navigator.of(context).pop();
+      } else {
+        showTopNotice(context, detail.isNotEmpty ? detail : '密码修改未生效',
+            level: NoticeLevel.error);
+      }
     } catch (e) {
       if (!mounted) return;
-      showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
+      showTopNotice(context, '$e', level: NoticeLevel.error);
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
-  }
-
-  Future<void> _handleClear() async {
-    if (_submitting) return;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('清除 Windows 密码'),
-        content: const Text('确定要清除当前服务端 Windows 密码吗？'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('取消')),
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('确认')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    setState(() => _submitting = true);
-    try {
-      // HTTP：POST /merchant/clearAllPwd FormData merchant_ids[]={id}
-      await netbar_api.NetbarApi()
-          .clearAllPasswords(merchantIds: [widget.merchantId]);
-      ref.read(operationLogApiProvider).add(
-            event: 'win.pwd.clear',
-            description: '清除 Windows 密码: ${widget.terminalName}',
-          );
-      if (!mounted) return;
-      showTopNotice(context, 'Windows 密码已清除',
-          level: NoticeLevel.success);
-      Navigator.of(context).pop();
-    } catch (e) {
-      if (!mounted) return;
-      showTopNotice(context, '操作失败: $e', level: NoticeLevel.error);
-    } finally {
-      if (mounted) setState(() => _submitting = false);
-    }
-  }
-
-  void _switchStep(String newStep) {
-    setState(() {
-      _step = newStep;
-      _pwdCtrl.clear();
-      _errorText = null;
-    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final isReset = _step == 'reset';
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ConstrainedBox(
@@ -4075,10 +4016,10 @@ class _WindowsPasswordDialogState
               padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
               child: Row(
                 children: [
-                  Expanded(
+                  const Expanded(
                     child: Text(
-                      isReset ? '重置服务端windows密码' : '服务端windows密码',
-                      style: const TextStyle(
+                      '服务端windows密码',
+                      style: TextStyle(
                           fontSize: 16, fontWeight: FontWeight.w600),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -4094,25 +4035,23 @@ class _WindowsPasswordDialogState
               ),
             ),
             const Divider(height: 1),
-            // 描述（仅 set step 显示）
-            if (!isReset)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-                child: Text(
-                  '设置安装服务端电脑 windows 密码，用于同步登录',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                ),
+            // 描述
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+              child: Text(
+                '设置安装服务端电脑windows密码，用于同步登录',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
               ),
+            ),
             // 输入框
             Padding(
-              padding: EdgeInsets.fromLTRB(20, isReset ? 16 : 8, 20, 8),
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
               child: TextField(
                 controller: _pwdCtrl,
                 obscureText: false, // 与 toolboxPage 一致：明文显示便于复制
                 enabled: !_submitting,
                 decoration: InputDecoration(
-                  labelText: isReset ? '新密码' : null,
-                  hintText: isReset ? '请输入新密码' : '请输入密码',
+                  hintText: '请输入密码',
                   errorText: _errorText,
                   border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(6)),
@@ -4127,61 +4066,12 @@ class _WindowsPasswordDialogState
                 onSubmitted: (_) => _handleSubmit(),
               ),
             ),
-            // 强口令提示（reset step）
-            if (isReset)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
-                child: Text(
-                  '密码必须大于等于 8 位（大写 + 小写 + 数字）',
-                  style: TextStyle(
-                      fontSize: 11, color: Colors.red.shade600),
-                ),
-              ),
-            // 链接区
+            // 提示：对标 toolboxPage hint-text（12px #9ca3af）
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
-              child: Row(
-                children: [
-                  if (!isReset)
-                    InkWell(
-                      onTap: _submitting ? null : () => _switchStep('reset'),
-                      child: Text(
-                        '忘记密码？重置 windows 密码',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: _submitting
-                              ? Colors.grey.shade400
-                              : const Color(0xFF409EFF),
-                        ),
-                      ),
-                    )
-                  else
-                    InkWell(
-                      onTap: _submitting ? null : () => _switchStep('set'),
-                      child: Text(
-                        '返回设置密码',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: _submitting
-                              ? Colors.grey.shade400
-                              : const Color(0xFF409EFF),
-                        ),
-                      ),
-                    ),
-                  const Spacer(),
-                  InkWell(
-                    onTap: _submitting ? null : _handleClear,
-                    child: Text(
-                      '清除密码',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: _submitting
-                            ? Colors.grey.shade400
-                            : Colors.red.shade600,
-                      ),
-                    ),
-                  ),
-                ],
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Text(
+                '设置后会同时修改本地Windows的密码',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
               ),
             ),
             const Divider(height: 1),
@@ -4207,7 +4097,7 @@ class _WindowsPasswordDialogState
                             height: 16,
                             child: CircularProgressIndicator(
                                 strokeWidth: 2, color: Colors.white))
-                        : const Text('保存'),
+                        : const Text('确定'),
                   ),
                 ],
               ),

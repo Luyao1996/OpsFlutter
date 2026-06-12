@@ -362,14 +362,18 @@ class NetbarApi {
     await _client.delete('/merchant/$id');
   }
 
-  /// 设置/重置商户 Windows 密码 —— `POST /merchant/setPwd/{id}`
-  /// - reset=false（保存）：body 仅 `{password}`
-  /// - reset=true（重置）：body `{password, reset: 1}`（数字 1，与 toolboxPage / 接口示例对齐）
-  Future<void> setPassword(int id, {required String password, bool reset = false}) async {
-    await _client.post('/merchant/setPwd/$id', data: {
+  /// 设置商户 Windows 密码 —— `POST /merchant/setPwd/{id}`
+  /// 与 toolboxPage 新版一致：统一走重置路径，body 固定 `{password, reset: 1}`。
+  /// 外层 code==0 时 ApiClient 已把 response.data 解包为内层结果
+  /// `{code, msg}`（云端转发客户端的执行结果），原样返回给调用方判断内层成败。
+  Future<Map<String, dynamic>> setPassword(int id, {required String password}) async {
+    final response = await _client.post('/merchant/setPwd/$id', data: {
       'password': password,
-      if (reset) 'reset': 1,
+      'reset': 1,
     });
+    return response.data is Map<String, dynamic>
+        ? response.data as Map<String, dynamic>
+        : <String, dynamic>{};
   }
 
   /// 批量清除商户Windows登录密码（FormData 格式，与 Vue 端对齐）
