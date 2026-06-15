@@ -3975,6 +3975,48 @@ class _WindowsPasswordDialogState
     return null;
   }
 
+  /// 点「确定」后的二次提示：先校验密码，校验通过再弹「操作须知」AlertDialog，
+  /// 用户点「确定修改」才真正提交（[_handleSubmit]）；点「取消」则不提交。
+  Future<void> _confirmSubmitWithNotice() async {
+    if (_submitting) return;
+    // 先校验，避免无效输入（空 / <8 位）也弹提示窗
+    final err = _validate(_pwdCtrl.text);
+    if (err != null) {
+      setState(() => _errorText = err);
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('修改前请确认以下事项'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: const [
+            Text('1. 修改密码前卸载杀毒软件，关闭防火墙'),
+            SizedBox(height: 10),
+            Text('2. 修改密码成功后，远程进入一次桌面，确保自启动软件正常运行'),
+            SizedBox(height: 10),
+            Text('3. 修改密码后，进行一次上锁和解锁的操作'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('确定修改'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await _handleSubmit();
+    }
+  }
+
   Future<void> _handleSubmit() async {
     if (_submitting) return;
     final pwd = _pwdCtrl.text;
@@ -4106,7 +4148,7 @@ class _WindowsPasswordDialogState
                   ),
                   const SizedBox(width: 8),
                   ElevatedButton(
-                    onPressed: _submitting ? null : _handleSubmit,
+                    onPressed: _submitting ? null : _confirmSubmitWithNotice,
                     child: _submitting
                         ? const SizedBox(
                             width: 16,
