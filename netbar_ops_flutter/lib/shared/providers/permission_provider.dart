@@ -6,6 +6,9 @@ import '../../features/auth/data/auth_api.dart' show Role;
 // 对齐 toolboxPage src/constants/permissions.js PERMISSION_IDS：
 // 按 id 判断，后端改权限文案时不会失效。
 
+/// 启禁用锁屏（终端详情「2FA管理」弹窗内的锁屏开关，对齐 toolboxPage LOCK_SCREEN=16）
+const int kPermLockScreen = 16;
+
 /// 应用添加（应用中心：添加/取消添加到分组）
 const int kPermNetbarAppAdd = 22;
 

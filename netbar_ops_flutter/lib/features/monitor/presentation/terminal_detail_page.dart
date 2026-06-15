@@ -1504,19 +1504,14 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
           debugPrint('[TerminalDetail] realtime: cpu=$cpu, gpu=$gpu, ram=$ram, disk=$disk');
           if (mounted) {
             setState(() {
-              _liveTerminal = Terminal(
-                id: hb.id, seatId: hb.seatId, name: hb.name,
-                alias: hb.alias, // 透传纯别名，否则「编辑名称」弹窗回显为空
-                code: hb.code,
-                netbarId: hb.netbarId, areaId: hb.areaId, ip: hb.ip, mac: hb.mac,
-                os: hb.os, type: hb.type, status: hb.status,
-                cpuUsage: cpu, ramUsage: ram, gpuUsage: gpu, diskUsage: disk,
-                uptime: hb.uptime, screenshotUrl: hb.screenshotUrl,
-                lastOnline: hb.lastOnline, lastHeartbeat: hb.lastHeartbeat,
-                createdAt: hb.createdAt, updatedAt: hb.updatedAt, remote: hb.remote,
-                mode: hb.mode, // 透传 mode，否则刷新心跳后服务管理按钮会消失
-                version: hb.version, // 透传 version，否则刷新心跳后卡片版本号会丢失
-                remark: hb.remark, // 信任后端 remark 最新值；本地保存后已在 _openRemarkEditor 内立即 setState 更新
+              // 基于 hb 用 copyWith 仅覆盖实时硬件占用，其余字段（mode/version/remark/
+              // alias/lockScreenEnabled 等）自动保留，避免逐字段透传时漏字段
+              // （历史 bug：曾漏 lockScreenEnabled，导致「2FA锁屏」开关被冲为关闭）。
+              _liveTerminal = hb.copyWith(
+                cpuUsage: cpu,
+                ramUsage: ram,
+                gpuUsage: gpu,
+                diskUsage: disk,
               );
             });
           }
@@ -1960,6 +1955,17 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
       (_) => _TwoFactorManageDialog(
         terminal: terminal,
         onCopy: _handleCopy2FA,
+        onLockChanged: (val) {
+          if (!mounted) return;
+          // 切换成功后回写父页实时态 + 失效列表/详情缓存，避免重开弹窗或返回列表读到旧值
+          // （对标 toolboxPage 的 emit('lock-screen-change')）。
+          setState(() {
+            _liveTerminal =
+                (_liveTerminal ?? terminal).copyWith(lockScreenEnabled: val);
+          });
+          ref.invalidate(terminalsProvider(_ownerNetbarId));
+          ref.invalidate(terminalDetailProvider(_detailKey));
+        },
       ),
       routeName: '/dialog/2fa-manage',
     );
@@ -3806,9 +3812,12 @@ class _PersonnelHoverButtonState extends ConsumerState<_PersonnelHoverButton> {
 class _TwoFactorManageDialog extends ConsumerStatefulWidget {
   final Terminal terminal;
   final Future<void> Function() onCopy;
+  /// 锁屏切换成功后回调，父页据此回写实时态 + 失效缓存（对标 toolboxPage lock-screen-change）
+  final ValueChanged<bool>? onLockChanged;
   const _TwoFactorManageDialog({
     required this.terminal,
     required this.onCopy,
+    this.onLockChanged,
   });
 
   @override
@@ -3845,6 +3854,7 @@ class _TwoFactorManageDialogState
           );
       if (!mounted) return;
       setState(() => _lockEnabled = val);
+      widget.onLockChanged?.call(val); // 回写父页实时态 + 失效列表/详情缓存
       showTopNotice(context, val ? '已启用锁屏' : '已禁用锁屏',
           level: NoticeLevel.success);
     } catch (e) {
@@ -3858,6 +3868,9 @@ class _TwoFactorManageDialogState
 
   @override
   Widget build(BuildContext context) {
+    // 「启禁用锁屏」权限（16）：无权限则不显示锁屏开关行（对标 toolboxPage canLockScreen）
+    final canLockScreen =
+        ref.watch(permissionProvider).hasDetailPermissionById(kPermLockScreen);
     return ResponsiveDialogScaffold(
       title: '2FA管理',
       maxWidth: 420,
@@ -3874,39 +3887,42 @@ class _TwoFactorManageDialogState
               label: Text(_copying ? '复制中…' : '复制2FA'),
             ),
           ),
-          const SizedBox(height: 20),
-          // 2FA 锁屏开关行（对标 toolboxPage「启用锁屏」）
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey.shade200),
-            ),
-            child: Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    '2FA锁屏',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-                  ),
-                ),
-                if (_lockLoading)
-                  const Padding(
-                    padding: EdgeInsets.only(right: 8),
-                    child: SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+          // 2FA 锁屏开关行（对标 toolboxPage「启用锁屏」，需「启禁用锁屏」权限 16）
+          if (canLockScreen) ...[
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      '2FA锁屏',
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
                     ),
                   ),
-                Switch(
-                  value: _lockEnabled,
-                  onChanged: _lockLoading ? null : _toggleLock,
-                ),
-              ],
+                  if (_lockLoading)
+                    const Padding(
+                      padding: EdgeInsets.only(right: 8),
+                      child: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  Switch(
+                    value: _lockEnabled,
+                    onChanged: _lockLoading ? null : _toggleLock,
+                  ),
+                ],
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
