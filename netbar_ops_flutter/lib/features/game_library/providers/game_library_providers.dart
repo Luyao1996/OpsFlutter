@@ -149,6 +149,10 @@ class GameLibraryNotifier extends StateNotifier<GameLibraryState> {
   Timer? _pollTimer;
   bool _disposed = false;
 
+  /// 下载速率采样：rowKey -> 上次已下字节/采样时刻/平滑速度(EMA)。
+  /// 用于在后端不报速度(如 icafe8)时按轮询差分自算剩余时间；不改 speed 显示。
+  Map<String, _RateSample> _rateSamples = {};
+
   /// 全量刷新（列表 + 下载并发）
   Future<void> refresh({String? platform}) async {
     if (_disposed) return;
@@ -168,7 +172,7 @@ class GameLibraryNotifier extends StateNotifier<GameLibraryState> {
 
     state = state.copyWith(
       games: listsResult.games ?? state.games,
-      downloads: dlResult.tasks ?? state.downloads,
+      downloads: _enrichEta(dlResult.tasks) ?? state.downloads,
       snapshots: mergedSnapshots.isEmpty ? state.snapshots : mergedSnapshots,
       loading: false,
       listError: listsResult.error,
@@ -187,7 +191,7 @@ class GameLibraryNotifier extends StateNotifier<GameLibraryState> {
     // 保留 disk：downloading 快照不带 disk，沿用上一轮 lists 下发的盘符
     final merged = _mergeSnapshots(state.snapshots, dlResult.snapshots);
     state = state.copyWith(
-      downloads: dlResult.tasks ?? state.downloads,
+      downloads: _enrichEta(dlResult.tasks) ?? state.downloads,
       snapshots: merged,
       downloadError: dlResult.error,
     );
@@ -225,6 +229,36 @@ class GameLibraryNotifier extends StateNotifier<GameLibraryState> {
     final info = await _api.getDiskInfo(letter: sorted.join(','));
     if (_disposed) return;
     state = state.copyWith(diskInfo: info);
+  }
+
+  /// 用相邻两次轮询的 downloaded_bytes 差分自算下载速度(EMA 平滑)，再补算剩余时间 eta_ms。
+  /// 仅当后端 eta_ms<=0(如 icafe8 不报)时补算；后端给了有效值则尊重。不改 speed 字段。
+  List<DownloadTask>? _enrichEta(List<DownloadTask>? tasks) {
+    if (tasks == null) return null;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final next = <String, _RateSample>{};
+    final out = <DownloadTask>[];
+    for (final t in tasks) {
+      final key = t.rowKey;
+      final prev = _rateSamples[key];
+      var ema = prev?.speedEma ?? 0.0;
+      if (prev != null) {
+        final dBytes = t.downloadedBytes - prev.bytes;
+        final dtMs = nowMs - prev.atMs;
+        if (dtMs > 0 && dBytes > 0) {
+          final inst = dBytes * 1000 / dtMs; // bytes/s
+          ema = ema > 0 ? ema * 0.6 + inst * 0.4 : inst; // EMA 平滑
+        }
+      }
+      next[key] = _RateSample(bytes: t.downloadedBytes, atMs: nowMs, speedEma: ema);
+      var eta = t.etaMs;
+      if (eta <= 0 && ema > 0 && t.totalBytes > t.downloadedBytes) {
+        eta = ((t.totalBytes - t.downloadedBytes) * 1000 / ema).round();
+      }
+      out.add(eta == t.etaMs ? t : t.withEta(eta));
+    }
+    _rateSamples = next; // 重建：已消失/完成的任务自动清理
+    return out;
   }
 
   /// 启动 2s 轮询（仅 downloads）
@@ -514,4 +548,12 @@ class _DownloadingFetch {
   final Map<String, PlatformSnapshot> snapshots;
   final String? error;
   _DownloadingFetch({this.tasks, required this.snapshots, this.error});
+}
+
+/// 下载速率采样点（用于差分自算剩余时间）
+class _RateSample {
+  final int bytes;
+  final int atMs;
+  final double speedEma; // 平滑后的速度 bytes/s（仅内部用于算 eta，不对外显示）
+  _RateSample({required this.bytes, required this.atMs, required this.speedEma});
 }

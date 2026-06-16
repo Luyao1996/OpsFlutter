@@ -129,6 +129,20 @@ class GameLibraryApi {
         'gid': gid,
       });
 
+  /// POST /game_library/pause_download?seat=&platform=&gid=
+  /// 暂停下载（任务保留可续，区别于 cancle_download 的真删除）。
+  /// owner 校验同 cancle；story 平台返 not_supported_by_platform。
+  Future<GameOpResult> pauseDownload({
+    required String seat,
+    required String platform,
+    required int gid,
+  }) =>
+      _opWrite('/game_library/pause_download', {
+        'seat': seat,
+        'platform': platform,
+        'gid': gid,
+      });
+
   /// POST /game_library/top_download?seat=&platform=&gid=
   /// story 平台不支持，调用方需自行拦截
   Future<GameOpResult> topDownload({

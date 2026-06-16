@@ -132,6 +132,21 @@ class DownloadTask {
 
   String get rowKey => '$platform:$gid';
 
+  /// 仅覆盖 etaMs（前端按轮询差分自算剩余时间用；speed 等其它字段保持后端原值）
+  DownloadTask withEta(int newEtaMs) => DownloadTask(
+        gid: gid,
+        platform: platform,
+        status: status,
+        name: name,
+        seat: seat,
+        statusRaw: statusRaw,
+        downloadedBytes: downloadedBytes,
+        totalBytes: totalBytes,
+        speed: speed,
+        etaMs: newEtaMs,
+        percent: percent,
+      );
+
   factory DownloadTask.fromJson(Map<String, dynamic> json, String platform) {
     return DownloadTask(
       gid: _toInt(json['gid']),

@@ -528,6 +528,92 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
     }
   }
 
+  /// 暂停下载（任务保留可续）。story 平台不支持。
+  Future<void> _onPause(DownloadTask row) async {
+    if (row.platform == kPlatformStory) {
+      _toast('蘑菇平台不支持暂停');
+      return;
+    }
+    _setActionLoadingDL(row, 'pause', true);
+    try {
+      final api = ref.read(gameLibraryApiProvider(widget.subdomainFull));
+      final res = await api.pauseDownload(
+        seat: row.seat ?? '',
+        platform: row.platform,
+        gid: row.gid,
+      );
+      if (!mounted) return;
+      if (!res.ok) {
+        // 405/404：该网吧 game_library 版本未实现 pause_download → 友好降级提示
+        if (res.status == 405 || res.status == 404) {
+          _toastWarn('该网吧服务端暂不支持暂停下载（需升级 game_library 后端）');
+        } else {
+          _toastError('暂停失败：${httpErrorMessage(res.status, res.error)}');
+        }
+        return;
+      }
+      final result = res.results[row.gid];
+      if (result == 'ok') {
+        _toast('已暂停：${row.name ?? row.gid}');
+        _notifier.refreshDownloading();
+      } else if (result == 'rejected: not owner') {
+        _toastWarn('该任务由其他终端发起，当前账号无权暂停');
+      } else if (result == 'not_in_progress') {
+        _toast('任务当前不在下载中');
+        _notifier.refreshDownloading();
+      } else if (result == 'not_supported_by_platform') {
+        _toastWarn('该平台不支持暂停');
+      } else {
+        _toastWarn('暂停失败：${formatOpResultMessage(result)}');
+      }
+    } catch (e) {
+      if (mounted) _toastError('暂停请求异常：$e');
+    } finally {
+      if (mounted) _setActionLoadingDL(row, 'pause', false);
+    }
+  }
+
+  /// 继续已暂停(status=6)的任务。API 无独立 resume 接口，靠重发 do_download 恢复：
+  /// 必须带 from=wwls 旁路 seat 占用检测、直达 worker 透传 DoDownload（否则默认路径会因
+  /// 「该 seat 当前占用任务就是本 gid」短路返回 ok 但不调平台，等于没续）；seat 用原发起人
+  /// row.seat，否则 worker owner 校验 → already_downloading 被拒。外部任务(seat 空)用工具箱身份兜底。
+  Future<void> _onResume(DownloadTask row) async {
+    final seat = (row.seat != null && row.seat!.isNotEmpty)
+        ? row.seat!
+        : kToolboxSeat;
+    _setActionLoadingDL(row, 'resume', true);
+    try {
+      final api = ref.read(gameLibraryApiProvider(widget.subdomainFull));
+      final res = await api.doDownload(
+        seat: seat,
+        platform: row.platform,
+        gid: row.gid,
+        from: 'wwls',
+      );
+      if (!mounted) return;
+      if (!res.ok) {
+        _toastError('继续失败：${httpErrorMessage(res.status, res.error)}');
+        return;
+      }
+      final result = res.results[row.gid];
+      if (result == 'ok') {
+        _toast('已继续下载：${row.name ?? row.gid}');
+        _notifier.refreshDownloading();
+      } else if (result == 'already_downloading') {
+        _toastWarn('该任务由其他终端发起，当前账号无法继续');
+      } else if (result == 'not_in_progress') {
+        _toast('任务当前不在下载中');
+        _notifier.refreshDownloading();
+      } else {
+        _toastWarn('继续失败：${formatOpResultMessage(result)}');
+      }
+    } catch (e) {
+      if (mounted) _toastError('继续请求异常：$e');
+    } finally {
+      if (mounted) _setActionLoadingDL(row, 'resume', false);
+    }
+  }
+
   void _toast(String msg) => _showSnack(msg, Colors.black87);
   void _toastWarn(String msg) => _showSnack(msg, const Color(0xFFB45309));
   void _toastError(String msg) => _showSnack(msg, AppColors.red);
@@ -1380,6 +1466,9 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
     final accentSoft = platformAccentSoft(row.platform);
     final loadingTop = _isActionLoading(row.platform, row.gid, 'top');
     final loadingCancel = _isActionLoading(row.platform, row.gid, 'cancel');
+    final loadingPause = _isActionLoading(row.platform, row.gid, 'pause');
+    final loadingResume = _isActionLoading(row.platform, row.gid, 'resume');
+    final isPaused = row.status == GameStatus.paused;
     final percent = row.percent.clamp(0, 100).toDouble();
 
     return Container(
@@ -1405,6 +1494,43 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
               ),
               _dlStateChip(row, accent, accentSoft),
               const SizedBox(width: 6),
+              // 暂停 / 继续 二选一：已暂停(status=6)显示「继续」，否则显示「暂停」
+              if (isPaused)
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(0, 30),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    foregroundColor: const Color(0xFF059669),
+                  ),
+                  onPressed: loadingResume ? null : () => _onResume(row),
+                  icon: loadingResume
+                      ? const SizedBox(
+                          width: 12, height: 12,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(LucideIcons.play, size: 13),
+                  label: const Text('继续', style: TextStyle(fontSize: 12)),
+                )
+              else
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(0, 30),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    foregroundColor: row.platform == kPlatformStory
+                        ? Colors.grey
+                        : const Color(0xFFB45309),
+                  ),
+                  onPressed: (row.platform == kPlatformStory || loadingPause)
+                      ? null
+                      : () => _onPause(row),
+                  icon: loadingPause
+                      ? const SizedBox(
+                          width: 12, height: 12,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(LucideIcons.pause, size: 13),
+                  label: const Text('暂停', style: TextStyle(fontSize: 12)),
+                ),
               TextButton.icon(
                 style: TextButton.styleFrom(
                   minimumSize: const Size(0, 30),
@@ -1470,7 +1596,9 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
                     color: AppColors.iosBlue),
               if (row.status == GameStatus.downloading)
                 Text(
-                  '剩余 ${formatEta(row.etaMs)}',
+                  // 后端 eta_ms=0(如 icafe8 不报) 时由前端按轮询差分自算；
+                  // 首个轮询窗口还算不出 → 显示「计算中…」
+                  row.etaMs > 0 ? '剩余 ${formatEta(row.etaMs)}' : '剩余 计算中…',
                   style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF)),
                 ),
             ],
