@@ -8,13 +8,18 @@ import '../../../monitor/data/terminal_api.dart';
 import '../../../../shared/providers/app_providers.dart';
 import '../../data/game_constants.dart';
 import '../../data/game_models.dart';
+import '../../providers/game_library_providers.dart';
+import '../../utils/formatter.dart';
 
 /// 选机号子对话框：用户点"下载"后弹出
 class SeatPickerDialog extends ConsumerStatefulWidget {
   final int merchantId;
+
+  /// 网吧 subdomain_full，用于查询 disk_info 盘符容量
+  final String subdomainFull;
   final GameItem row;
 
-  /// 可选安装盘符候选（来自已下载游戏 local_path，已去重/排序/排除 C）
+  /// 可选安装盘符候选（来自 /lists 下发的 disk 或已下载游戏 local_path，已去重/排序/排除 C）
   final List<String> driveLetters;
 
   /// 该平台是否支持指定盘符（story 不支持，传 letter 会被后端拒绝）
@@ -23,6 +28,7 @@ class SeatPickerDialog extends ConsumerStatefulWidget {
   const SeatPickerDialog({
     super.key,
     required this.merchantId,
+    required this.subdomainFull,
     required this.row,
     this.driveLetters = const [],
     this.supportsLetter = false,
@@ -32,6 +38,7 @@ class SeatPickerDialog extends ConsumerStatefulWidget {
   static Future<({String seat, String? letter})?> show(
     BuildContext context, {
     required int merchantId,
+    required String subdomainFull,
     required GameItem row,
     List<String> driveLetters = const [],
     bool supportsLetter = false,
@@ -41,6 +48,7 @@ class SeatPickerDialog extends ConsumerStatefulWidget {
       barrierDismissible: false,
       builder: (_) => SeatPickerDialog(
         merchantId: merchantId,
+        subdomainFull: subdomainFull,
         row: row,
         driveLetters: driveLetters,
         supportsLetter: supportsLetter,
@@ -64,6 +72,9 @@ class _SeatPickerDialogState extends ConsumerState<SeatPickerDialog> {
   bool _useManual = false;
   // 选中的安装盘符；null = 自动（服务器选盘）
   String? _selectedLetter;
+  // disk_info 容量（盘符首字母大写 -> DiskInfo）；弹窗打开时按 driveLetters 查询
+  Map<String, DiskInfo> _diskInfo = const {};
+  bool _diskLoading = false;
 
   String get _prefsKey => '$_prefsKeyPrefix${widget.merchantId}';
   String get _prefsKeyLetter => '$_prefsKeyLetterPrefix${widget.merchantId}';
@@ -72,7 +83,10 @@ class _SeatPickerDialogState extends ConsumerState<SeatPickerDialog> {
   void initState() {
     super.initState();
     _loadLastSeat();
-    if (widget.supportsLetter) _loadLastLetter();
+    if (widget.supportsLetter) {
+      _loadLastLetter();
+      if (widget.driveLetters.isNotEmpty) _loadDiskInfo();
+    }
     _fetchSeats();
   }
 
@@ -121,6 +135,28 @@ class _SeatPickerDialogState extends ConsumerState<SeatPickerDialog> {
       final sp = await SharedPreferences.getInstance();
       await sp.setString(_prefsKeyLetter, letter);
     } catch (_) {}
+  }
+
+  /// 查询候选盘符容量（disk_info）；失败静默（盘符仍可选，只是不显示容量）。
+  Future<void> _loadDiskInfo() async {
+    setState(() => _diskLoading = true);
+    try {
+      final api = ref.read(gameLibraryApiProvider(widget.subdomainFull));
+      final info = await api.getDiskInfo(letter: widget.driveLetters.join(','));
+      if (!mounted) return;
+      setState(() {
+        _diskInfo = info;
+        _diskLoading = false;
+        // 选中的盘若查出不可用，回退「自动」
+        final sel = _selectedLetter;
+        if (sel != null) {
+          final d = info[sel];
+          if (d == null || !d.usable) _selectedLetter = null;
+        }
+      });
+    } catch (_) {
+      if (mounted) setState(() => _diskLoading = false);
+    }
   }
 
   Future<void> _fetchSeats() async {
@@ -332,47 +368,125 @@ class _SeatPickerDialogState extends ConsumerState<SeatPickerDialog> {
     );
   }
 
-  /// 安装盘符选择区：「自动」+ 已下载游戏出现过的盘符
+  /// 安装盘符选择区：「自动」+ 候选盘符（带剩余容量 / 可用%）
   Widget _buildLetterSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          '安装盘符',
-          style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+        Row(
+          children: [
+            const Text(
+              '安装盘符',
+              style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+            ),
+            if (_diskLoading) ...[
+              const SizedBox(width: 8),
+              const SizedBox(
+                width: 11,
+                height: 11,
+                child: CircularProgressIndicator(strokeWidth: 1.5),
+              ),
+            ],
+          ],
         ),
         const SizedBox(height: 6),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
-            _letterChip(null, '自动'),
-            for (final l in widget.driveLetters) _letterChip(l, '$l 盘'),
+            _letterCard(null, '自动', sub: '由服务器选盘', usable: true),
+            for (final l in widget.driveLetters) _letterCardForDrive(l),
           ],
         ),
       ],
     );
   }
 
-  Widget _letterChip(String? value, String label) {
+  /// 单个候选盘符卡片：按 disk_info 结果渲染剩余容量 / 可用% / 不可用
+  Widget _letterCardForDrive(String letter) {
+    final loaded = !_diskLoading;
+    final d = _diskInfo[letter];
+    String sub;
+    bool usable;
+    if (!loaded) {
+      sub = '查询中…';
+      usable = true; // 加载完成前暂允许选择
+    } else if (d == null) {
+      sub = '无法读取';
+      usable = true; // 查询失败不阻断：仍可选，交后端校验
+    } else if (!d.usable) {
+      sub = '不可用';
+      usable = false;
+    } else {
+      final freePct = (d.freeRatio * 100).round();
+      sub = '剩 ${formatBytes(d.availableBytes)} · $freePct%';
+      usable = true;
+    }
+    return _letterCard(letter, '$letter 盘', sub: sub, usable: usable);
+  }
+
+  Widget _letterCard(
+    String? value,
+    String title, {
+    required String sub,
+    required bool usable,
+  }) {
     final selected = _selectedLetter == value;
-    return ChoiceChip(
-      label: Text(
-        label,
-        style: TextStyle(
-          fontSize: 12,
-          color: selected ? Colors.white : Colors.black87,
+    return InkWell(
+      onTap: usable ? () => setState(() => _selectedLetter = value) : null,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: 138,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected
+              ? const Color(0xFFEFF6FF)
+              : (usable ? Colors.white : const Color(0xFFF3F4F6)),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected ? AppColors.iosBlue : const Color(0xFFE5E7EB),
+            width: selected ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              selected ? LucideIcons.checkCircle2 : LucideIcons.circle,
+              size: 14,
+              color: selected
+                  ? AppColors.iosBlue
+                  : (usable ? Colors.grey.shade400 : Colors.grey.shade300),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: usable ? Colors.black87 : Colors.grey.shade400,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    sub,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: usable
+                          ? const Color(0xFF6B7280)
+                          : Colors.grey.shade400,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
-      selected: selected,
-      onSelected: (_) => setState(() => _selectedLetter = value),
-      selectedColor: AppColors.iosBlue,
-      backgroundColor: const Color(0xFFF3F4F6),
-      visualDensity: VisualDensity.compact,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      showCheckmark: false,
-      side: BorderSide.none,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
     );
   }
 

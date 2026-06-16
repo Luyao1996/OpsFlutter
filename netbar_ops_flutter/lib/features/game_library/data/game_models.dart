@@ -162,6 +162,11 @@ class PlatformSnapshot {
   final String? stoppedAt;
   final int? ts;
 
+  /// 该平台游戏盘盘符（来自 platforms.<p>.disk）。
+  /// 后端形如 {"R":"R","T":"T"}；解析为去重大写的单字母列表，如 ['R','T']。
+  /// 仅 /lists 接口下发；/downloading 不带此字段（合并快照时用 withDisk 保留）。
+  final List<String> disk;
+
   PlatformSnapshot({
     required this.platform,
     required this.available,
@@ -169,7 +174,20 @@ class PlatformSnapshot {
     this.staleSince,
     this.stoppedAt,
     this.ts,
+    this.disk = const [],
   });
+
+  /// 仅替换 disk 字段：合并 lists/downloading 快照时，保留 lists 的 disk 用
+  /// （downloading 响应无 disk，直接覆盖会把盘符冲没）。
+  PlatformSnapshot withDisk(List<String> d) => PlatformSnapshot(
+        platform: platform,
+        available: available,
+        unhealthy: unhealthy,
+        staleSince: staleSince,
+        stoppedAt: stoppedAt,
+        ts: ts,
+        disk: d,
+      );
 
   factory PlatformSnapshot.fromJson(Map<String, dynamic> json, String platform) {
     return PlatformSnapshot(
@@ -179,8 +197,85 @@ class PlatformSnapshot {
       staleSince: json['stale_since']?.toString(),
       stoppedAt: json['stopped_at']?.toString(),
       ts: json['ts'] is num ? (json['ts'] as num).toInt() : null,
+      disk: _parseDiskLetters(json['disk']),
     );
   }
+}
+
+/// 磁盘容量信息（来自 GET /game_library/disk_info）。
+/// 接口响应以带冒号的盘符为 key（"R:"），顶层另有 ts；此模型对应单个盘符的 value。
+class DiskInfo {
+  /// 盘符首字母大写，如 "R"
+  final String letter;
+  final int availableBytes;
+  final int totalBytes;
+  final String volumeLabel;
+  final bool isSsd;
+
+  /// 非空表示该盘不可用（如 "3, The system cannot find the path specified."）
+  final String err;
+
+  const DiskInfo({
+    required this.letter,
+    this.availableBytes = 0,
+    this.totalBytes = 0,
+    this.volumeLabel = '',
+    this.isSsd = false,
+    this.err = '',
+  });
+
+  /// 是否可用：无错误且总量为正
+  bool get usable => err.isEmpty && totalBytes > 0;
+
+  /// 已用比例 0..1（不可用时为 0）
+  double get usedRatio {
+    if (!usable) return 0;
+    final r = 1 - availableBytes / totalBytes;
+    if (r < 0) return 0;
+    if (r > 1) return 1;
+    return r;
+  }
+
+  /// 可用（剩余）比例 0..1
+  double get freeRatio => usable ? (1 - usedRatio) : 0;
+
+  factory DiskInfo.fromJson(String letter, Map<String, dynamic> json) {
+    return DiskInfo(
+      letter: letter,
+      availableBytes: _toInt(json['available_bytes']),
+      totalBytes: _toInt(json['total_bytes']),
+      volumeLabel: json['volume_label']?.toString() ?? '',
+      isSsd: json['is_ssd'] == true,
+      err: json['err']?.toString() ?? '',
+    );
+  }
+}
+
+/// 解析 platforms.<p>.disk 为去重大写单字母盘符列表。
+/// 兼容三种后端形态：map {"R":"R"} 取 key / 数组 ["R"] / 逗号字符串 "R,T"。
+List<String> _parseDiskLetters(dynamic raw) {
+  final set = <String>{};
+  void add(dynamic v) {
+    final s = v?.toString().trim();
+    if (s == null || s.isEmpty) return;
+    final c = s[0].toUpperCase();
+    final code = c.codeUnitAt(0);
+    if (code >= 0x41 && code <= 0x5A) set.add(c); // 仅 A-Z
+  }
+
+  if (raw is Map) {
+    raw.forEach((k, _) => add(k)); // key 即盘符
+  } else if (raw is List) {
+    for (final v in raw) {
+      add(v);
+    }
+  } else if (raw is String) {
+    for (final part in raw.split(',')) {
+      add(part);
+    }
+  }
+  final list = set.toList()..sort();
+  return list;
 }
 
 /// /lists 解析结果聚合

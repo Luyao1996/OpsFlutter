@@ -261,12 +261,14 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
     final state = ref.read(gameLibraryNotifierProvider(widget.subdomainFull));
     // story 平台不支持指定盘符（传 letter 会被后端拒绝）
     final supportsLetter = row.platform != kPlatformStory;
-    final driveLetters =
-        supportsLetter ? _availableDriveLetters(state) : const <String>[];
+    final driveLetters = supportsLetter
+        ? _availableDriveLetters(state, row.platform)
+        : const <String>[];
 
     final picked = await SeatPickerDialog.show(
       context,
       merchantId: widget.merchantId,
+      subdomainFull: widget.subdomainFull,
       row: row,
       driveLetters: driveLetters,
       supportsLetter: supportsLetter,
@@ -319,10 +321,18 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
     }
   }
 
-  /// 从已下载游戏的 local_path 提取可选安装盘符：去重、大写、排序、排除 C。
-  List<String> _availableDriveLetters(GameLibraryState state) {
+  /// 该平台可选安装盘符：优先用 /lists 下发的 snapshot.disk；
+  /// 为空时回退到该平台已下载游戏的 local_path 提取。均去重/大写/排序/排除 C。
+  List<String> _availableDriveLetters(GameLibraryState state, String platform) {
+    // 1) 优先 lists 下发的 disk 字段（新逻辑）
+    final fromSnap = state.snapshots[platform]?.disk ?? const <String>[];
+    final snapList = fromSnap.where((c) => c != 'C').toList()..sort();
+    if (snapList.isNotEmpty) return snapList;
+
+    // 2) 回退：该平台已下载游戏的 local_path 首字母（旧逻辑兜底）
     final set = <String>{};
     for (final g in state.games) {
+      if (g.platform != platform) continue;
       // icafe8 平台 gid==1 / gid==2 不参与下载盘符识别
       if (g.platform == kPlatformIcafe8 && (g.gid == 1 || g.gid == 2)) continue;
       final p = g.localPath;
@@ -568,6 +578,7 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
                     snapshots: state.snapshots,
                   ),
                   _buildToolbar(state, isNarrow: isNarrow),
+                  _buildDiskBar(state),
                   const SizedBox(height: 10),
                   Expanded(child: _buildList(state)),
                   if (_activeTab == _Tab.idle) _buildBulkBar(state),
@@ -670,6 +681,66 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
         size: 16,
       ),
       color: AppColors.iosBlue,
+    );
+  }
+
+  /// 磁盘容量条：展示 state.diskInfo（当前平台筛选 / 全部平台并集）的剩余可用 + 可用%。
+  /// 数据按当前 _filterPlatform 过滤随 refresh 加载；为空（未下发 disk / 查询失败）时不渲染。
+  Widget _buildDiskBar(GameLibraryState state) {
+    final disks = state.diskInfo.values.toList()
+      ..sort((a, b) => a.letter.compareTo(b.letter));
+    if (disks.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [for (final d in disks) _diskPill(d)],
+        ),
+      ),
+    );
+  }
+
+  Widget _diskPill(DiskInfo d) {
+    Color fg;
+    Color bg;
+    String text;
+    if (!d.usable) {
+      fg = const Color(0xFF9CA3AF);
+      bg = const Color(0xFFF3F4F6);
+      text = '${d.letter}盘 · 不可用';
+    } else {
+      // 着色按可用率（剩余/可用口径）：<15% 红 / <30% 黄 / 否则绿
+      final freeRatio = d.freeRatio;
+      if (freeRatio < 0.15) {
+        fg = const Color(0xFFDC2626);
+        bg = const Color(0xFFFEF2F2);
+      } else if (freeRatio < 0.30) {
+        fg = const Color(0xFFD97706);
+        bg = const Color(0xFFFFFBEB);
+      } else {
+        fg = const Color(0xFF059669);
+        bg = const Color(0xFFECFDF5);
+      }
+      final freePct = (freeRatio * 100).round();
+      text = '${d.letter}盘 · 剩 ${formatBytes(d.availableBytes)} · $freePct%';
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(LucideIcons.hardDrive, size: 12, color: fg),
+          const SizedBox(width: 4),
+          Text(
+            text,
+            style: TextStyle(fontSize: 11, color: fg, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
     );
   }
 

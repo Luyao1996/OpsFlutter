@@ -72,6 +72,34 @@ class GameLibraryApi {
     return _parseDownloading(data.cast<String, dynamic>());
   }
 
+  /// GET /game_library/disk_info?letter=R,T
+  /// 查询指定盘符的容量。letter 逗号分隔、大小写不敏感（与 Web 端一致）。
+  /// 响应：{ "R:": {err, available_bytes, total_bytes, volume_label, is_ssd, ...}, ..., "ts": ... }
+  /// 返回以盘符首字母大写为 key 的 map；letter 为空或请求失败返回空 map（不抛、不阻断下载）。
+  Future<Map<String, DiskInfo>> getDiskInfo({required String letter}) async {
+    if (letter.isEmpty) return const {};
+    final url = _buildUrl('/game_library/disk_info', {'letter': letter});
+    try {
+      final resp = await _dio.get<dynamic>(url);
+      final data = resp.data;
+      if (data is! Map) return const {};
+      final out = <String, DiskInfo>{};
+      data.forEach((k, v) {
+        final key = k.toString();
+        // 仅盘符键形如 "R:"；排除顶层 ts 等非盘符字段
+        if (!RegExp(r'^[A-Za-z]:$').hasMatch(key)) return;
+        if (v is! Map) return;
+        final lt = key[0].toUpperCase();
+        out[lt] = DiskInfo.fromJson(lt, v.cast<String, dynamic>());
+      });
+      return out;
+    } on DioException {
+      return const {};
+    } catch (_) {
+      return const {};
+    }
+  }
+
   /// POST /game_library/do_download?seat=&platform=&gid=
   Future<GameOpResult> doDownload({
     required String seat,

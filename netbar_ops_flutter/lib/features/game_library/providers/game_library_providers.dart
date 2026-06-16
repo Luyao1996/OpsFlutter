@@ -17,6 +17,9 @@ class GameLibraryState {
   final List<GameItem> games;
   final List<DownloadTask> downloads;
   final Map<String, PlatformSnapshot> snapshots;
+
+  /// disk_info 容量（盘符首字母大写 -> DiskInfo），用于主页磁盘条展示
+  final Map<String, DiskInfo> diskInfo;
   final bool loading;
   final String? listError;
   final String? downloadError;
@@ -31,6 +34,7 @@ class GameLibraryState {
     this.games = const [],
     this.downloads = const [],
     this.snapshots = const {},
+    this.diskInfo = const {},
     this.loading = false,
     this.listError,
     this.downloadError,
@@ -44,6 +48,7 @@ class GameLibraryState {
     List<GameItem>? games,
     List<DownloadTask>? downloads,
     Map<String, PlatformSnapshot>? snapshots,
+    Map<String, DiskInfo>? diskInfo,
     bool? loading,
     Object? listError = _sentinel,
     Object? downloadError = _sentinel,
@@ -56,6 +61,7 @@ class GameLibraryState {
       games: games ?? this.games,
       downloads: downloads ?? this.downloads,
       snapshots: snapshots ?? this.snapshots,
+      diskInfo: diskInfo ?? this.diskInfo,
       loading: loading ?? this.loading,
       listError: identical(listError, _sentinel)
           ? this.listError
@@ -155,11 +161,10 @@ class GameLibraryNotifier extends StateNotifier<GameLibraryState> {
     final listsResult = results[0] as _ListsFetch;
     final dlResult = results[1] as _DownloadingFetch;
 
-    // 合并 snapshots（lists 与 downloading 都会带回平台健康字段）
-    final mergedSnapshots = <String, PlatformSnapshot>{
-      ...listsResult.snapshots,
-      ...dlResult.snapshots,
-    };
+    // 合并 snapshots（lists 与 downloading 都会带回平台健康字段）。
+    // downloading 优先（轮询更新更勤），但 disk 仅 /lists 下发 → 用 _mergeSnapshots 保留。
+    final mergedSnapshots =
+        _mergeSnapshots(listsResult.snapshots, dlResult.snapshots);
 
     state = state.copyWith(
       games: listsResult.games ?? state.games,
@@ -169,6 +174,9 @@ class GameLibraryNotifier extends StateNotifier<GameLibraryState> {
       listError: listsResult.error,
       downloadError: dlResult.error,
     );
+
+    // 磁盘容量：基于本次 lists 下发的 disk 盘符并集异步查询（失败留空，不阻断列表）
+    unawaited(_loadDiskInfo(mergedSnapshots));
   }
 
   /// 仅刷新 downloads（用于 2s 轮询）
@@ -176,12 +184,47 @@ class GameLibraryNotifier extends StateNotifier<GameLibraryState> {
     if (_disposed) return;
     final dlResult = await _fetchDownloading(platform);
     if (_disposed) return;
-    final merged = {...state.snapshots, ...dlResult.snapshots};
+    // 保留 disk：downloading 快照不带 disk，沿用上一轮 lists 下发的盘符
+    final merged = _mergeSnapshots(state.snapshots, dlResult.snapshots);
     state = state.copyWith(
       downloads: dlResult.tasks ?? state.downloads,
       snapshots: merged,
       downloadError: dlResult.error,
     );
+  }
+
+  /// 合并平台快照：next 覆盖 base（健康字段以 next 为准），但 next 无 disk 时保留 base 的 disk。
+  /// （/downloading 响应不带 disk，直接覆盖会把 /lists 下发的盘符冲没。）
+  Map<String, PlatformSnapshot> _mergeSnapshots(
+    Map<String, PlatformSnapshot> base,
+    Map<String, PlatformSnapshot> next,
+  ) {
+    final out = <String, PlatformSnapshot>{...base};
+    next.forEach((p, snap) {
+      final prev = out[p];
+      out[p] = (snap.disk.isEmpty && prev != null && prev.disk.isNotEmpty)
+          ? snap.withDisk(prev.disk)
+          : snap;
+    });
+    return out;
+  }
+
+  /// 基于快照里的 disk 盘符并集查询 disk_info，写入 state.diskInfo。
+  /// 失败或无盘符时清空，不影响列表主流程。
+  Future<void> _loadDiskInfo(Map<String, PlatformSnapshot> snapshots) async {
+    if (_disposed) return;
+    final letters = <String>{};
+    for (final s in snapshots.values) {
+      letters.addAll(s.disk);
+    }
+    if (letters.isEmpty) {
+      if (state.diskInfo.isNotEmpty) state = state.copyWith(diskInfo: const {});
+      return;
+    }
+    final sorted = letters.toList()..sort();
+    final info = await _api.getDiskInfo(letter: sorted.join(','));
+    if (_disposed) return;
+    state = state.copyWith(diskInfo: info);
   }
 
   /// 启动 2s 轮询（仅 downloads）
