@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../monitor/data/terminal_api.dart';
 import '../../../../shared/providers/app_providers.dart';
+import '../../../../shared/utils/adaptive_show.dart';
+import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/game_constants.dart';
 import '../../data/game_models.dart';
 import '../../providers/game_library_providers.dart';
@@ -43,16 +45,16 @@ class SeatPickerDialog extends ConsumerStatefulWidget {
     List<String> driveLetters = const [],
     bool supportsLetter = false,
   }) {
-    return showDialog<({String seat, String? letter})>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => SeatPickerDialog(
+    return showAdaptive<({String seat, String? letter})>(
+      context,
+      (_) => SeatPickerDialog(
         merchantId: merchantId,
         subdomainFull: subdomainFull,
         row: row,
         driveLetters: driveLetters,
         supportsLetter: supportsLetter,
       ),
+      barrierDismissible: false,
     );
   }
 
@@ -202,168 +204,131 @@ class _SeatPickerDialogState extends ConsumerState<SeatPickerDialog> {
   @override
   Widget build(BuildContext context) {
     final row = widget.row;
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 440),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 8, 8),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      '选择目标机号',
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(LucideIcons.x, size: 18, color: Colors.grey),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                  ),
-                ],
+    return ResponsiveDialogScaffold(
+      title: '选择目标机号',
+      maxWidth: 440,
+      bodyPadding: const EdgeInsets.all(16),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            '选一个机号发起下载；该机号若在下别的游戏会自动切换。',
+            style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Text('游戏：', style: TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+              Expanded(
+                child: Text(
+                  row.name ?? row.gid.toString(),
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-            ),
-            const Divider(height: 1, color: Color(0xFFF3F4F6)),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    '选一个机号发起下载；该机号若在下别的游戏会自动切换。',
-                    style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: platformAccentSoft(row.platform),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  kPlatformLabel[row.platform] ?? row.platform,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: platformAccent(row.platform),
+                    fontWeight: FontWeight.w600,
                   ),
-                  const SizedBox(height: 10),
-                  Row(
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (widget.supportsLetter) ...[
+            _buildLetterSection(),
+            const SizedBox(height: 12),
+          ],
+          if (_useManual)
+            TextField(
+              controller: _manualController,
+              decoration: const InputDecoration(
+                hintText: '手动输入机号',
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                border: OutlineInputBorder(),
+              ),
+            )
+          else
+            _buildSeatList(),
+          const SizedBox(height: 6),
+          TextButton.icon(
+            style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero),
+            onPressed: () => setState(() => _useManual = !_useManual),
+            icon: Icon(
+              _useManual ? LucideIcons.list : LucideIcons.edit2,
+              size: 12,
+            ),
+            label: Text(
+              _useManual ? '从列表选择' : '手动输入机号',
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+          if (_lastSeatHint != null && _lastSeatHint!.isNotEmpty && !_useManual)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: InkWell(
+                onTap: () {
+                  setState(() {
+                    _selectedSeatId = _lastSeatHint;
+                  });
+                },
+                borderRadius: BorderRadius.circular(4),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF6FF),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Text('游戏：', style: TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
-                      Expanded(
-                        child: Text(
-                          row.name ?? row.gid.toString(),
-                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                      const Icon(
+                        LucideIcons.history,
+                        size: 13,
+                        color: AppColors.iosBlue,
                       ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: platformAccentSoft(row.platform),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          kPlatformLabel[row.platform] ?? row.platform,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: platformAccent(row.platform),
-                            fontWeight: FontWeight.w600,
-                          ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '上次使用：$_lastSeatHint',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppColors.iosBlue,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  if (widget.supportsLetter) ...[
-                    _buildLetterSection(),
-                    const SizedBox(height: 12),
-                  ],
-                  if (_useManual)
-                    TextField(
-                      controller: _manualController,
-                      decoration: const InputDecoration(
-                        hintText: '手动输入机号',
-                        isDense: true,
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                        border: OutlineInputBorder(),
-                      ),
-                    )
-                  else
-                    _buildSeatList(),
-                  const SizedBox(height: 6),
-                  TextButton.icon(
-                    style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero),
-                    onPressed: () => setState(() => _useManual = !_useManual),
-                    icon: Icon(
-                      _useManual ? LucideIcons.list : LucideIcons.edit2,
-                      size: 12,
-                    ),
-                    label: Text(
-                      _useManual ? '从列表选择' : '手动输入机号',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                  if (_lastSeatHint != null && _lastSeatHint!.isNotEmpty && !_useManual)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: InkWell(
-                        onTap: () {
-                          setState(() {
-                            _selectedSeatId = _lastSeatHint;
-                          });
-                        },
-                        borderRadius: BorderRadius.circular(4),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFEFF6FF),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                LucideIcons.history,
-                                size: 13,
-                                color: AppColors.iosBlue,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                '上次使用：$_lastSeatHint',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: AppColors.iosBlue,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
+                ),
               ),
             ),
-            Container(
-              decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: Color(0xFFE5E7EB))),
-              ),
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('取消'),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: _canConfirm() ? _confirm : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.iosBlue,
-                      foregroundColor: Colors.white,
-                    ),
-                    child: const Text('确定下载'),
-                  ),
-                ],
-              ),
+        ],
+      ),
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton(
+            onPressed: _canConfirm() ? _confirm : null,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.iosBlue,
+              foregroundColor: Colors.white,
             ),
-          ],
-        ),
+            child: const Text('确定下载'),
+          ),
+        ],
       ),
     );
   }

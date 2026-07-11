@@ -12,6 +12,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:webrtc_remote/webrtc_remote.dart' as webrtc;
+import 'package:webrtc_remote_v3/webrtc_remote.dart' as webrtc3;
+// SfuLocator 不在 webrtc_remote.dart 的导出列表里，需直接指到包内文件
+import 'package:webrtc_remote_v3/services/sfu_locator.dart' as webrtc3_sfu;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:dio/dio.dart' show CancelToken, DioException;
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -2122,6 +2125,18 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
           Expanded(
             flex: 2,
             child: _buildBigActionButton(
+              'webrtc远程【V3】',
+              'SFU 新架构',
+              LucideIcons.zap,
+              const Color(0xFF8B5CF6),  // 紫色
+              Colors.white,
+              () => _handleWebRTCV3ButtonTap(terminal),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            flex: 2,
+            child: _buildBigActionButton(
               'VNC 远程桌面',
               '极速连接，低延迟',
               LucideIcons.monitor,
@@ -2143,6 +2158,15 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
           const Color(0xFF10B981),  // 绿色
           Colors.white,
           () => _handleWebRTCButtonTap(terminal),
+        ),
+        const SizedBox(height: 12),
+        _buildBigActionButton(
+          'webrtc远程【V3】',
+          'SFU 新架构',
+          LucideIcons.zap,
+          const Color(0xFF8B5CF6),  // 紫色
+          Colors.white,
+          () => _handleWebRTCV3ButtonTap(terminal),
         ),
         const SizedBox(height: 12),
         _buildBigActionButton(
@@ -2169,6 +2193,13 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     final readOnly = await _showRemoteReadOnlyDialog(title: '笨鸟远程');
     if (readOnly == null) return; // 用户取消
     await _openWebRTCRemote(terminal, viewOnly: readOnly);
+  }
+
+  /// 点击"webrtc远程【V3】"按钮：先弹出"是否以只读方式打开"的选择框，再根据结果打开
+  Future<void> _handleWebRTCV3ButtonTap(Terminal terminal) async {
+    final readOnly = await _showRemoteReadOnlyDialog(title: 'webrtc远程【V3】');
+    if (readOnly == null) return; // 用户取消
+    await _openWebRTCRemoteV3(terminal, viewOnly: readOnly);
   }
 
   /// 询问用户是否以只读方式打开远程。
@@ -2415,6 +2446,301 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
       );
       // 关闭 loading
       if (mounted) Navigator.pop(context);
+      if (mounted) {
+        showTopNotice(
+          context,
+          isExpected ? e.toString() : '远程连接失败: $e',
+          level: NoticeLevel.error,
+        );
+      }
+    }
+  }
+
+  /// 打开 WebRTC 远程桌面 V3（webrtc_remote_v3 包，SFU 架构）。
+  /// 与 [_openWebRTCRemote] 的差异：
+  /// 1. 后台命令 type='webrtc3'（Host 走 SFU ingest 建房，非老 relay 信令）；
+  /// 2. 不再固定 delay 1500ms，改用 SfuLocator.locateRoomWaiting 轮询候选 SFU
+  ///    的 /locate 直到 host 上线——V3 包首连直连传入的 wsUrl 不做定位，
+  ///    连错台即 INITIAL CONNECTION ERROR，且轮询天然消化 Host 启动时延；
+  /// 3. wsUrl = '{命中节点 signalUrl}?Peer={peerId}'（节点形如 ws://rtc.03kan.com:18443/ws，
+  ///    不再是老版固定的 wss://webrtc.03kan.com:443）；
+  /// 4. RemoteScreen 新增 terminalId（包内按 String(t.id) 到 admin 接口定位本机，
+  ///    拉座位/备注名/IP 随 SFU identity 上报；不传仅少这些信息，不影响连接）。
+  Future<void> _openWebRTCRemoteV3(Terminal terminal, {bool viewOnly = false}) async {
+    if (!_ensureSameNetbar('openWebRTCRemoteV3')) return;
+    final netbar = ref.read(currentNetbarProvider);
+    final domain = netbar.subdomainFull;
+    final ctxId =
+        'netbar_${netbar.id ?? 'null'}_seat_${terminal.seatId.isEmpty ? 'empty' : terminal.seatId}';
+    if (domain == null || domain.isEmpty) {
+      WebRtcCrashLogger.I.log(
+        'WARN',
+        'webrtc',
+        'open_remote_v3',
+        ctxId,
+        'abort domainMissing netbarId=${netbar.id} netbarName=${netbar.name} subdomainFull=$domain',
+      );
+      showTopNotice(context, '网吧域名缺失，无法远程', level: NoticeLevel.error);
+      return;
+    }
+
+    final authState = ref.read(authNotifierProvider);
+    final user = authState.user;
+    WebRtcCrashLogger.I.log(
+      'INFO',
+      'webrtc',
+      'open_remote_v3',
+      ctxId,
+      "entry netbarId=${netbar.id} netbarName='${netbar.name}' groupName='${netbar.groupName}' "
+          "terminalId=${terminal.id} seatId='${terminal.seatId}' seatIdLen=${terminal.seatId.length} "
+          "terminalName='${terminal.name}' domain='$domain' userNickname='${user?.nickname}' userName='${user?.name}' "
+          "viewOnly=$viewOnly",
+    );
+
+    // 等待弹窗：locate 阶段可能持续较久（轮询直到 host 上线），必须给"取消"出口，
+    // 并用 PopScope 禁掉系统返回键——否则返回键关掉弹窗后，主流程的 closeLoading()
+    // 会误 pop 掉详情页本身。
+    var locateCancelled = false;
+    var dialogOpen = true;
+    final locateAttempt = ValueNotifier<int>(0);
+    void closeLoading() {
+      if (dialogOpen && mounted) {
+        dialogOpen = false;
+        Navigator.pop(context);
+      }
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: ValueListenableBuilder<int>(
+                  valueListenable: locateAttempt,
+                  builder: (_, n, __) => Text(
+                    n == 0 ? '正在启动远程服务...' : '等待主机上线（第 $n 次探测）...',
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                locateCancelled = true;
+                dialogOpen = false;
+                Navigator.of(dctx).pop();
+              },
+              child: const Text('取消'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      // 发送 task 命令（走 WebSocket 任务通道），type=webrtc3
+      final api = ref.read(terminalApiProvider);
+      final result = await api.remote(
+        terminal.seatId,
+        'webrtc3',
+        merchantId: netbar.id!,
+        user: {
+          'name': user?.nickname ?? user?.name ?? 'unknown',
+          'seat': terminal.name,
+          'mchName': netbar.name ?? '',
+        },
+      );
+
+      final mark = result['mark'];
+      WebRtcCrashLogger.I.log(
+        'INFO',
+        'webrtc',
+        'open_remote_v3',
+        ctxId,
+        'api_return mark=${mark} markType=${mark?.runtimeType} '
+            'resultKeys=${result.keys.toList()} '
+            'resultJson=${WebRtcCrashLogger.I.jsonOrString(result)}',
+      );
+      if (mark == null || mark.toString().isEmpty) {
+        WebRtcCrashLogger.I.log(
+          'WARN',
+          'webrtc',
+          'open_remote_v3',
+          ctxId,
+          'abort invalid_mark mark=$mark',
+        );
+        closeLoading();
+        if (mounted) {
+          showTopNotice(context, '远程连接失败：未返回有效标识', level: NoticeLevel.error);
+        }
+        return;
+      }
+      if (!mounted) return;
+
+      // 上报操作日志（fire-and-forget）
+      ref.read(operationLogApiProvider).add(
+            event: 'remote.connect',
+            description: '远程连接 ${terminal.name}（V3）',
+          );
+
+      // room/peerId 沿用老版 '{seatId}-{子域名}' 格式（host 身份同一套）
+      final subdomain = domain.split('.')[0];
+      final peerId = '${terminal.seatId}-$subdomain';
+
+      // 轮询候选 SFU 的 /locate 直到 host 建房上线；60s 软超时兜底，
+      // 避免 Host 端拉起失败时无限转圈（包内该方法无硬超时，取消是唯一出口）。
+      final sw = Stopwatch()..start();
+      final located = await webrtc3_sfu.SfuLocator.locateRoomWaiting(
+        peerId,
+        onAttempt: (n, reached, total, phase) {
+          locateAttempt.value = n;
+          if (n == 1 || n % 5 == 0 || phase != null) {
+            WebRtcCrashLogger.I.log(
+              'INFO',
+              'webrtc',
+              'open_remote_v3',
+              ctxId,
+              'locating attempt=$n reached=$reached total=$total phase=$phase '
+                  'elapsedMs=${sw.elapsedMilliseconds}',
+            );
+          }
+        },
+        shouldCancel: () =>
+            locateCancelled || !mounted || sw.elapsedMilliseconds > 60000,
+      );
+      if (located == null) {
+        final timedOut = !locateCancelled && sw.elapsedMilliseconds > 60000;
+        WebRtcCrashLogger.I.log(
+          'WARN',
+          'webrtc',
+          'open_remote_v3',
+          ctxId,
+          'locate_end result=null cancelled=$locateCancelled timedOut=$timedOut '
+              'elapsedMs=${sw.elapsedMilliseconds}',
+        );
+        closeLoading();
+        if (mounted && timedOut) {
+          showTopNotice(context, '等待主机上线超时（60秒），请稍后重试',
+              level: NoticeLevel.error);
+        }
+        return;
+      }
+      closeLoading();
+      if (!mounted) return;
+
+      // located 形如 ws://rtc.03kan.com:18443/ws，拼上房间号即为连接地址
+      final sep = located.contains('?') ? '&' : '?';
+      final wsUrl = '$located${sep}Peer=$peerId';
+      final u = Uri.tryParse(located);
+      WebRtcCrashLogger.I.log(
+        'INFO',
+        'webrtc',
+        'open_remote_v3',
+        ctxId,
+        "built_url subdomain='$subdomain' peerId='$peerId' located='$located' "
+            "wsUrl='$wsUrl' locateMs=${sw.elapsedMilliseconds}",
+      );
+
+      _isWebRTCActive = true;
+      // 进入 WebRTC 时暂停截图和心跳（远程桌面已有实时画面，无需后台刷新）
+      _stopScreenshotTimer();
+      _heartbeatTimer?.cancel();
+      WebRtcCrashLogger.I.log(
+        'INFO',
+        'webrtc',
+        'open_remote_v3',
+        ctxId,
+        "pushing_screen serverId='webrtc3_${terminal.id}' serverName='WebRTC3 ${terminal.name}' "
+            "host='${u?.host}' port=${u?.port} windowId=${widget.windowId} isStandaloneWindow=${widget.isStandaloneWindow}",
+      );
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          // builder 内必须使用形参 ctx，不能闭包捕获外层 State.context。
+          // 详情页关闭后 State 已 dispose，MaterialPageRoute 仍可能 rebuild，
+          // 此时访问 State.context (framework.dart `_element!`) 会触发
+          // "Null check operator used on a null value" 崩溃。
+          builder: (ctx) => Theme(
+            data: Theme.of(ctx).copyWith(
+              textTheme: Theme.of(ctx).textTheme.apply(fontFamily: 'Segoe UI'),
+            ),
+            child: _WebRTCWindowWrapper(
+              title: '$_netbarName - $_groupName - ${terminal.name}',
+              windowId: widget.windowId ?? 0,
+              isStandaloneWindow: widget.isStandaloneWindow,
+              windowState: _windowState,
+              onMinimize: widget.isStandaloneWindow
+                  ? () => _handleMinimize(terminal)
+                  : null,
+              childBuilder: (toggleFullscreen, isFullscreen) => webrtc3.RemoteScreen(
+                server: webrtc3.ServerConfig(
+                  id: 'webrtc3_${terminal.id}',
+                  name: 'WebRTC3 ${terminal.name}',
+                  host: (u != null && u.host.isNotEmpty) ? u.host : 'rtc.03kan.com',
+                  port: (u != null && u.hasPort)
+                      ? u.port
+                      : ((u?.scheme == 'wss') ? 443 : 80),
+                  wsUrl: wsUrl,
+                ),
+                // RemoteScreen 默认 viewOnly=true（只读），必须显式透传用户选择
+                viewOnly: viewOnly,
+                // 锁定/解锁鉴权参数。任一为 null 时锁定按钮无效，不影响连接/画面/键鼠。
+                // 包内部会自动给 token 加 "Bearer " 前缀，此处传原始字符串。
+                accessToken: TokenStore.getToken(),
+                merchantId: _ownerNetbarId?.toString(),
+                // V3 新增：包内按 String(t.id) 在 admin /terminals 里定位本机
+                terminalId: terminal.id.toString(),
+                // 全屏控制交给宿主 wrapper（win32 操作 desktop_multi_window 子窗）
+                onToggleFullscreen: toggleFullscreen,
+                isFullscreen: isFullscreen,
+                onDisconnect: () => Navigator.pop(ctx),
+              ),
+            ),
+          ),
+        ),
+      );
+      // 远控屏关闭后 State 可能已 dispose（独立子窗被关、详情页被 pop）。
+      // 必须先短路再访问任何 ref/setState/Timer 注册（见 _openWebRTCRemote 同位置注释）。
+      if (!mounted) return;
+      _isWebRTCActive = false;
+      WebRtcCrashLogger.I.log(
+        'INFO',
+        'webrtc',
+        'open_remote_v3',
+        ctxId,
+        'exited_screen resume_heartbeat',
+      );
+      // 退出 WebRTC，恢复心跳定时器；回调里再加一层 mounted 兜底自取消。
+      _heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+        if (!mounted) {
+          _heartbeatTimer?.cancel();
+          _heartbeatTimer = null;
+          return;
+        }
+        _refreshHeartbeat(widget.terminalId, silent: true);
+      });
+    } catch (e, s) {
+      // 区分"业务可预期失败"（机器未开机、域名无效等 ApiError）和"真正异常"
+      final isExpected = e is ApiError;
+      WebRtcCrashLogger.I.log(
+        isExpected ? 'WARN' : 'ERROR',
+        'webrtc',
+        'open_remote_v3',
+        ctxId,
+        'exception e=$e stack=${s.toString().split('\n').take(10).join(' | ')}',
+      );
+      closeLoading();
       if (mounted) {
         showTopNotice(
           context,
@@ -2950,12 +3276,20 @@ class _WebRTCWindowWrapper extends StatefulWidget {
 }
 
 class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
-  // 最大化(=沉浸全屏)状态不再本地缓存：唯一来源是 widget.windowState。
+  // 窗口最大化状态不本地缓存：唯一来源是 widget.windowState（native 推送驱动）。
   // 下面这个 timer 仅用于「最小化恢复后强制重绘」防黑屏，与最大化状态无关。
   Timer? _minimizedRepaintTimer;
 
-  /// 当前是否最大化（即沉浸全屏）：唯一来源是 windowState，由 native 推送驱动。
-  bool get _isFullscreen => widget.windowState?.isMaximized ?? false;
+  /// 沉浸模式 = 隐藏应用内标题栏。与「窗口化最大化」解耦：
+  /// 只由包内全屏按钮（_handleFullscreen）切换；标题栏显隐、注入给
+  /// RemoteScreen 的 isFullscreen 都读它，不再读 isMaximized。
+  bool _immersive = false;
+
+  /// 进入沉浸模式前窗口是否已最大化——退出沉浸时据此决定是否还原窗口。
+  bool _wasMaximizedBeforeImmersive = false;
+
+  /// 当前窗口是否最大化（窗口化最大化）：唯一来源 windowState。
+  bool get _isMaximized => widget.windowState?.isMaximized ?? false;
 
   int _hwnd = 0;
 
@@ -2983,7 +3317,13 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
   }
 
   void _onWindowStateChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    // 沉浸模式下窗口被外部还原（如 Win+↓）→ 自动退出沉浸，
+    // 否则标题栏永久隐藏、只能靠包内全屏按钮找回。
+    if (_immersive && !_isMaximized) {
+      _immersive = false;
+    }
+    setState(() {});
   }
 
   /// 隐藏 Windows 原生标题栏（进入远程桌面时）
@@ -3065,12 +3405,30 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
     }
   }
 
-  /// 全屏切换 = 最大化切换，统一走 windowState（native ToggleMaximize）。
-  /// 注入给 webrtc_remote 包状态栏全屏按钮 / F11。切换后 native WM_SIZE 回推，
-  /// windowState 更新 → 重建标题栏与子组件 isFullscreen；再补一次重绘防黑屏。
-  Future<void> _handleFullscreen() async {
+  /// 窗口化最大化/还原（标题栏按钮）：只切换 native 最大化（SW_MAXIMIZE/
+  /// SW_RESTORE），标题栏保持可见，不进入沉浸模式。
+  Future<void> _handleMaximizeRestore() async {
     if (!isDesktopPlatform || widget.windowState == null) return;
     await widget.windowState!.toggleMaximize();
+    _forceRepaint();
+  }
+
+  /// 沉浸全屏切换（注入给 webrtc_remote 包状态栏全屏按钮 / F11）：
+  /// 进入 = 隐藏标题栏 + 确保最大化；退出 = 恢复标题栏，且仅当进入前
+  /// 未最大化才还原窗口（进入前就是最大化的，退出后保持最大化）。
+  Future<void> _handleFullscreen() async {
+    if (!isDesktopPlatform || widget.windowState == null) return;
+    final ws = widget.windowState!;
+    if (!_immersive) {
+      _wasMaximizedBeforeImmersive = ws.isMaximized;
+      setState(() => _immersive = true);
+      if (!ws.isMaximized) await ws.toggleMaximize();
+    } else {
+      setState(() => _immersive = false);
+      if (!_wasMaximizedBeforeImmersive && ws.isMaximized) {
+        await ws.toggleMaximize();
+      }
+    }
     _forceRepaint();
   }
 
@@ -3084,14 +3442,15 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    if (!isDesktopPlatform) return widget.childBuilder(_handleFullscreen, _isFullscreen);
+    if (!isDesktopPlatform) return widget.childBuilder(_handleFullscreen, _immersive);
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0C),
       body: Column(
         children: [
-          // 标题栏：仅非全屏时显示。全屏后由 webrtc_remote 内置按钮（toggleFullscreen 回调）退出
-          if (!_isFullscreen)
+          // 标题栏：仅非沉浸模式显示（窗口化最大化不隐藏标题栏）。
+          // 沉浸后由 webrtc_remote 内置按钮（toggleFullscreen 回调）退出。
+          if (!_immersive)
             Container(
               height: 40,
               padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -3131,6 +3490,17 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
                       tooltip: '最小化到 Dock',
                       onPressed: widget.onMinimize!,
                     ),
+                  // Maximize/Restore button：窗口化最大化，标题栏保持可见，
+                  // 与包内全屏按钮的沉浸模式互相独立。
+                  // windowState 为 null（非独立子窗）时是空操作，隐藏避免死按钮。
+                  if (widget.windowState != null)
+                    _windowButton(
+                      icon: _isMaximized
+                          ? LucideIcons.minimize2
+                          : LucideIcons.maximize2,
+                      tooltip: _isMaximized ? '还原' : '最大化',
+                      onPressed: _handleMaximizeRestore,
+                    ),
                   // Close button
                   _windowButton(
                     icon: LucideIcons.x,
@@ -3141,9 +3511,9 @@ class _WebRTCWindowWrapperState extends State<_WebRTCWindowWrapper> {
                 ],
               ),
             ),
-          // 视频内容：填充剩余空间（全屏时占满整个 Scaffold）
+          // 视频内容：填充剩余空间（沉浸模式时占满整个 Scaffold）
           Expanded(
-            child: widget.childBuilder(_handleFullscreen, _isFullscreen),
+            child: widget.childBuilder(_handleFullscreen, _immersive),
           ),
         ],
       ),
