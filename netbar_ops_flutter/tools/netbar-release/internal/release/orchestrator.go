@@ -12,7 +12,6 @@ import (
 	"netbar-release/internal/hash"
 	"netbar-release/internal/manifest"
 	"netbar-release/internal/signature"
-	"netbar-release/internal/uploader"
 )
 
 // Inputs 是 release 命令收集到的所有用户输入。
@@ -26,16 +25,17 @@ type Inputs struct {
 	Changelog         string // 多行字符串
 }
 
-// Orchestrator 串联：编译 → 打包 → 计算 MD5 → 上传 → 更新 manifest。
+// Orchestrator 串联：编译 → 打包 → 计算 MD5 → 双源上传 → 更新 manifest。
 type Orchestrator struct {
-	cfg   *config.Config
-	sig   *signature.Client
-	store *manifest.Store
-	fb    *builder.FlutterBuilder
-	inno  *builder.InnoSetupBuilder
+	cfg     *config.Config
+	primary signature.Signer // 新源（RustFS）
+	legacy  signature.Signer // 老源（阿里 OSS 签名服务）
+	store   *manifest.Store
+	fb      *builder.FlutterBuilder
+	inno    *builder.InnoSetupBuilder
 }
 
-func NewOrchestrator(cfg *config.Config, sig *signature.Client, store *manifest.Store) *Orchestrator {
+func NewOrchestrator(cfg *config.Config, primary, legacy signature.Signer, store *manifest.Store) *Orchestrator {
 	fb := builder.NewFlutterBuilder(
 		cfg.Flutter.Command,
 		cfg.ResolvePath(cfg.Flutter.ProjectDir),
@@ -48,7 +48,7 @@ func NewOrchestrator(cfg *config.Config, sig *signature.Client, store *manifest.
 			cfg.ResolvePath(cfg.InnoSetup.OutputDir),
 		)
 	}
-	return &Orchestrator{cfg: cfg, sig: sig, store: store, fb: fb, inno: inno}
+	return &Orchestrator{cfg: cfg, primary: primary, legacy: legacy, store: store, fb: fb, inno: inno}
 }
 
 // ExpandPlatforms 把 "both" 展开成具体平台列表，单平台原样返回。
@@ -152,14 +152,7 @@ func (o *Orchestrator) uploadAndRecord(
 	ossKey := o.BuildOSSKey(platform, version, build)
 	fmt.Printf("▸ ossKey   : %s\n", ossKey)
 
-	fmt.Println("▸ 申请签名 URL ...")
-	signedURL, err := o.sig.Sign(ossKey)
-	if err != nil {
-		return fmt.Errorf("sign: %w", err)
-	}
-
-	fmt.Println("▸ 上传 ...")
-	if err := uploader.UploadFile(signedURL, artifact); err != nil {
+	if err := DualUploadFile(o.primary, o.legacy, ossKey, artifact); err != nil {
 		return fmt.Errorf("upload: %w", err)
 	}
 

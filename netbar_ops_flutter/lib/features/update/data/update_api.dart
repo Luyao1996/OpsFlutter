@@ -7,13 +7,24 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/logging/webrtc_crash_logger.dart';
 import '../domain/models/version_manifest.dart';
 
-/// version.json 拉取 + 多域名测速。
+/// version.json 拉取 + 多域名择优。
+///
+/// 双源策略：新源（RustFS，上传下载同一接口）优先；
+/// 新源不可达或对应文件不存在（404）时回退老源（阿里 OSS）竞速。
 class UpdateApi {
-  static const List<String> hosts = [
+  /// 新源（RustFS）。发布工具双写的主源。
+  static const String primaryHost =
+      'http://server.guanliyuangong.com:9000/ops-package';
+
+  /// 老源（阿里 OSS）。仅作回退；/StartChannel 等历史内容只存在于老源。
+  static const List<String> legacyHosts = [
     'http://xemaly.wangkaguanli.com:8866',
     'https://xemoss.wangkaguanli.com',
     'http://xem.oss-cn-hangzhou.aliyuncs.com',
   ];
+
+  /// 全部候选（新优先），供下载回退按序遍历。
+  static const List<String> hosts = [primaryHost, ...legacyHosts];
 
   static const String manifestPath = '/netbaropsflutter/version.json';
 
@@ -30,15 +41,30 @@ class UpdateApi {
               receiveTimeout: const Duration(seconds: 10),
             ));
 
-  /// 选出最快的域名。1 小时内有缓存则直接复用。全部失败返回 null。
+  /// 选出可用域名：新源可达就用新源；否则老源竞速。全部失败返回 null。
+  ///
+  /// 缓存语义：缓存命中且是新源 → 直接复用；缓存是老源也要先探一次新源，
+  /// 保证新源恢复后立刻切回（否则最长 1 小时都读老源的旧 version.json）。
   Future<String?> pickFastestHost() async {
     final cached = await _loadCachedHost();
+    if (cached == primaryHost) return cached;
+
+    try {
+      await _probe(primaryHost).timeout(const Duration(seconds: 3));
+      await _cacheHost(primaryHost);
+      _log('INFO', 'pickFastestHost', 'host=$primaryHost (primary)');
+      return primaryHost;
+    } catch (e) {
+      _log('WARN', 'pickFastestHost', 'primary unreachable: $e');
+    }
+
     if (cached != null) return cached;
 
     try {
-      final winner = await _race(hosts).timeout(const Duration(seconds: 3));
+      final winner =
+          await _race(legacyHosts).timeout(const Duration(seconds: 3));
       await _cacheHost(winner);
-      _log('INFO', 'pickFastestHost', 'host=$winner');
+      _log('INFO', 'pickFastestHost', 'host=$winner (legacy)');
       return winner;
     } catch (e) {
       _log('WARN', 'pickFastestHost', 'all hosts failed: $e');
@@ -46,15 +72,15 @@ class UpdateApi {
     }
   }
 
-  Future<String> _race(List<String> hosts) {
+  Future<String> _race(List<String> hostList) {
     final completer = Completer<String>();
     var failed = 0;
-    for (final h in hosts) {
+    for (final h in hostList) {
       _probe(h).then((_) {
         if (!completer.isCompleted) completer.complete(h);
       }).catchError((Object e) {
         failed++;
-        if (failed >= hosts.length && !completer.isCompleted) {
+        if (failed >= hostList.length && !completer.isCompleted) {
           completer.completeError(e);
         }
       });
@@ -76,15 +102,58 @@ class UpdateApi {
     }
   }
 
-  /// 并发竞速拉取指定 manifest 路径。
+  /// 拉取指定 manifest 路径：新源优先，失败/404 回退老源竞速。
   ///
-  /// 三个 host 同时 GET，第一个返回 200 的获胜，其余请求被取消。
-  /// 一次请求既挑选了最快的 host，又拿到了 manifest 内容，避免了
-  /// "测速路径 vs 实际路径" 不一致导致的 404（例如 /netbaropsflutter/...
-  /// 跟 /StartChannel/release/... 在不同 host 上的可用性不同）。
+  /// 新源命中（200）直接返回；新源没有该文件（如 /StartChannel/... 只在老源上）
+  /// 或不可达时，落回老源三域名并发竞速（原有行为）。
   ///
   /// 返回 (host, body)。所有 host 都失败时抛 [DioException] 或封装异常。
   Future<({String host, List<int> body})> raceFetchManifest(
+    String path, {
+    CancelToken? cancelToken,
+    Duration timeout = const Duration(seconds: 15),
+    void Function(String msg)? onLog,
+  }) async {
+    // 新源单独尝试，最多 8 秒，避免占满整个 timeout 预算
+    final primaryBudget = timeout < const Duration(seconds: 8)
+        ? timeout
+        : const Duration(seconds: 8);
+    onLog?.call('→ 优先尝试新源: $primaryHost$path');
+    try {
+      final resp = await _dio
+          .getUri<List<int>>(
+            Uri.parse('$primaryHost$path'),
+            options: Options(
+              responseType: ResponseType.bytes,
+              receiveTimeout: const Duration(seconds: 10),
+              validateStatus: (code) => code != null && code < 400,
+            ),
+            cancelToken: cancelToken,
+          )
+          .timeout(primaryBudget);
+      if (resp.statusCode == 200 && resp.data != null) {
+        onLog?.call('  ✓ 新源命中 (length=${resp.data!.length})');
+        _log('INFO', 'raceFetchManifest', 'win=$primaryHost path=$path');
+        return (host: primaryHost, body: resp.data!);
+      }
+      onLog?.call('  ✗ 新源 HTTP ${resp.statusCode}，回退老源');
+    } catch (e) {
+      if (e is DioException && e.type == DioExceptionType.cancel) rethrow;
+      onLog?.call('  ✗ 新源失败: $e，回退老源');
+      _log('WARN', 'raceFetchManifest', 'primary failed: $e, fallback');
+    }
+    return _raceFetchFromHosts(
+      legacyHosts,
+      path,
+      cancelToken: cancelToken,
+      timeout: timeout,
+      onLog: onLog,
+    );
+  }
+
+  /// 在给定 host 列表上并发竞速 GET [path]，第一个返回 200 的获胜，其余被取消。
+  Future<({String host, List<int> body})> _raceFetchFromHosts(
+    List<String> hostList,
     String path, {
     CancelToken? cancelToken,
     Duration timeout = const Duration(seconds: 15),
@@ -112,8 +181,8 @@ class UpdateApi {
       completer.completeError(StateError('cancelled'));
     });
 
-    onLog?.call('hosts 列表 = $hosts');
-    for (final h in hosts) {
+    onLog?.call('hosts 列表 = $hostList');
+    for (final h in hostList) {
       final url = '$h$path';
       final token = CancelToken();
       tokens.add(token);
@@ -138,7 +207,7 @@ class UpdateApi {
           failed++;
           lastError = 'HTTP ${resp.statusCode}';
           onLog?.call('  ✗ $h HTTP ${resp.statusCode}');
-          if (failed >= hosts.length && !completer.isCompleted) {
+          if (failed >= hostList.length && !completer.isCompleted) {
             completer.completeError(
               StateError('所有下载源都不可用: $lastError'),
             );
@@ -153,7 +222,7 @@ class UpdateApi {
         failed++;
         lastError = e;
         onLog?.call('  ✗ $h 失败: $e');
-        if (failed >= hosts.length && !completer.isCompleted) {
+        if (failed >= hostList.length && !completer.isCompleted) {
           completer.completeError(
             StateError('所有下载源都不可用: $lastError'),
           );

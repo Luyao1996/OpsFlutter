@@ -91,34 +91,49 @@ class ApkDownloader implements FileDownloader {
     _stdoutLog('版本 $version (build $build), size=$size, md5=$expectedMd5');
     _stdoutLog('文件名: $_fileName');
 
-    // 3. 下载 APK
-    final apkUrl = '$host$relativePath';
+    // 3. 下载 APK（选中源失败/文件不存在时按 新→老 优先级回退其余源）
     final saveDir = await _downloadDir();
     final savePath = '${saveDir.path}${Platform.pathSeparator}$_fileName';
     final saveFile = File(savePath);
     if (saveFile.existsSync()) {
       await saveFile.delete();
     }
-    _stdoutLog('→ 下载: $apkUrl');
-    _stdoutLog('  保存到: $savePath');
-    _log('INFO', 'downloadApk', 'url=$apkUrl save=$savePath');
 
-    try {
-      await _dio.download(
-        apkUrl,
-        savePath,
-        onReceiveProgress: onProgress,
-        cancelToken: cancelToken,
-        options: Options(
-          followRedirects: true,
-          validateStatus: (code) => code != null && code < 400,
-        ),
-      );
-    } catch (e) {
-      if (saveFile.existsSync()) {
-        try { await saveFile.delete(); } catch (_) {}
+    final candidates = <String>[
+      host,
+      ...UpdateApi.hosts.where((h) => h != host),
+    ];
+    Object? lastError;
+    var downloaded = false;
+    for (final h in candidates) {
+      final apkUrl = '$h$relativePath';
+      _stdoutLog('→ 下载: $apkUrl');
+      _stdoutLog('  保存到: $savePath');
+      _log('INFO', 'downloadApk', 'url=$apkUrl save=$savePath');
+      try {
+        await _dio.download(
+          apkUrl,
+          savePath,
+          onReceiveProgress: onProgress,
+          cancelToken: cancelToken,
+          options: Options(
+            followRedirects: true,
+            validateStatus: (code) => code != null && code < 400,
+          ),
+        );
+        downloaded = true;
+        break;
+      } catch (e) {
+        if (saveFile.existsSync()) {
+          try { await saveFile.delete(); } catch (_) {}
+        }
+        if (e is DioException && e.type == DioExceptionType.cancel) rethrow;
+        lastError = e;
+        _stdoutLog('  ✗ 该源失败: $e，尝试下一个源');
       }
-      throw FileDownloadException('下载失败：$e');
+    }
+    if (!downloaded) {
+      throw FileDownloadException('下载失败：$lastError');
     }
 
     // 4. MD5 校验

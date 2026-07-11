@@ -13,6 +13,16 @@ type Config struct {
 		Path    string `mapstructure:"path"`
 	} `mapstructure:"signature"`
 
+	// S3 新源（RustFS，S3 兼容）：上传下载同一接口。
+	// 字段留空时使用内置默认值（密钥为永不过期的固定 key，经确认直接内置）。
+	S3 struct {
+		Endpoint  string `mapstructure:"endpoint"`
+		Bucket    string `mapstructure:"bucket"`
+		Region    string `mapstructure:"region"`
+		AccessKey string `mapstructure:"access_key"`
+		SecretKey string `mapstructure:"secret_key"`
+	} `mapstructure:"s3"`
+
 	Manifest struct {
 		Key          string `mapstructure:"key"`
 		BackupPrefix string `mapstructure:"backup_prefix"`
@@ -86,6 +96,21 @@ func Load(path string) (*Config, error) {
 
 	if c.Signature.BaseURL == "" || c.Signature.Path == "" {
 		return nil, fmt.Errorf("signature.base_url / signature.path required")
+	}
+	if c.S3.Endpoint == "" {
+		c.S3.Endpoint = "http://server.guanliyuangong.com:9000"
+	}
+	if c.S3.Bucket == "" {
+		c.S3.Bucket = "ops-package"
+	}
+	if c.S3.Region == "" {
+		c.S3.Region = "us-east-1"
+	}
+	if c.S3.AccessKey == "" {
+		c.S3.AccessKey = "ctGJ7vBMUzFTUujsmdNs"
+	}
+	if c.S3.SecretKey == "" {
+		c.S3.SecretKey = "jJgCesmkXIHrvSrYpF2d5P55hDmWQj5RuJfJhJeH"
 	}
 	if c.Manifest.Key == "" {
 		return nil, fmt.Errorf("manifest.key required")

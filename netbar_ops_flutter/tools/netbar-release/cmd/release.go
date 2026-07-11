@@ -10,7 +10,6 @@ import (
 
 	"netbar-release/internal/manifest"
 	"netbar-release/internal/release"
-	"netbar-release/internal/signature"
 	"netbar-release/internal/ui"
 )
 
@@ -37,7 +36,7 @@ func releaseCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sig := signature.New(cfg.Signature.BaseURL, cfg.Signature.Path)
+			primary, legacy := newSigners(cfg)
 
 			fmt.Println("╔══════════════════════════════════╗")
 			fmt.Println("║  NetBar-Ops 一键发布预览版        ║")
@@ -212,7 +211,7 @@ func releaseCmd() *cobra.Command {
 			}
 
 			// 7. 执行
-			orch := release.NewOrchestrator(cfg, sig, store)
+			orch := release.NewOrchestrator(cfg, primary, legacy, store)
 			if err := orch.Run(inputs, cur); err != nil {
 				return err
 			}

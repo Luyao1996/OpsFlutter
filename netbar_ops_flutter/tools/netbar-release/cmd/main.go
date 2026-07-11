@@ -12,9 +12,9 @@ import (
 	"netbar-release/internal/config"
 	"netbar-release/internal/hash"
 	"netbar-release/internal/manifest"
+	"netbar-release/internal/release"
 	"netbar-release/internal/signature"
 	"netbar-release/internal/ui"
-	"netbar-release/internal/uploader"
 )
 
 var (
@@ -47,9 +47,17 @@ func loadStore() (*config.Config, *manifest.Store, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	sig := signature.New(cfg.Signature.BaseURL, cfg.Signature.Path)
-	store := manifest.NewStore(sig, cfg.Manifest.Key, cfg.Manifest.BackupPrefix, cfg.PublicURLs)
+	primary, legacy := newSigners(cfg)
+	store := manifest.NewStore(primary, legacy, cfg.Manifest.Key, cfg.Manifest.BackupPrefix, cfg.PublicURLs)
 	return cfg, store, nil
+}
+
+// newSigners 构造新老双源签名器：
+// primary = 新源（RustFS，本地 SigV4 预签名）；legacy = 老源（PHP 签名服务）。
+func newSigners(cfg *config.Config) (signature.Signer, signature.Signer) {
+	primary := signature.NewS3(cfg.S3.Endpoint, cfg.S3.Bucket, cfg.S3.Region, cfg.S3.AccessKey, cfg.S3.SecretKey)
+	legacy := signature.New(cfg.Signature.BaseURL, cfg.Signature.Path)
+	return primary, legacy
 }
 
 // ---------------- publish ----------------
@@ -69,7 +77,7 @@ func runPublish() error {
 	if err != nil {
 		return err
 	}
-	sig := signature.New(cfg.Signature.BaseURL, cfg.Signature.Path)
+	primary, legacy := newSigners(cfg)
 
 	fmt.Println("╔══════════════════════════════════╗")
 	fmt.Println("║  NetBar-Ops 发布工具             ║")
@@ -200,23 +208,16 @@ func runPublish() error {
 		fmt.Printf("   ✓ 备份: %s\n", backupKey)
 	}
 
-	// [7] 上传安装包
+	// [7] 上传安装包（新老双源）
 	fmt.Println()
-	fmt.Printf("→ 申请上传 URL (key=%s) ...\n", ossKey)
-	signedURL, err := sig.Sign(ossKey)
-	if err != nil {
-		return fmt.Errorf("申请签名失败: %w", err)
-	}
-	fmt.Println("   ✓ 已获取上传 URL")
-
-	fmt.Println("→ 上传安装包 ...")
-	if err := uploader.UploadFile(signedURL, pkgPath); err != nil {
+	fmt.Printf("→ 上传安装包 (key=%s) ...\n", ossKey)
+	if err := release.DualUploadFile(primary, legacy, ossKey, pkgPath); err != nil {
 		return fmt.Errorf("上传失败: %w", err)
 	}
 	fmt.Println("   ✓ 安装包上传完成")
 
 	// [8] 更新 manifest
-	release := manifest.Release{
+	rel := manifest.Release{
 		Version:     version,
 		BuildNumber: build,
 		Path:        ossKey,
@@ -227,7 +228,7 @@ func runPublish() error {
 		Changelog:   changelog,
 		UploadTime:  time.Now(),
 	}
-	if err := curManifest.AddRelease(plat, release, cfg.MaxReleases); err != nil {
+	if err := curManifest.AddRelease(plat, rel, cfg.MaxReleases); err != nil {
 		return fmt.Errorf("更新 manifest 失败: %w", err)
 	}
 	if err := curManifest.SetMinSupportedBuild(plat, newMin); err != nil {

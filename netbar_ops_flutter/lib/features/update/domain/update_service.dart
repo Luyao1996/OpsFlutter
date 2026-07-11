@@ -303,6 +303,10 @@ class UpdateService {
 
   /// 仅下载并校验，返回下载完成的最终文件。不会触发安装。
   ///
+  /// 多源回退：先用调用方选中的 [host]，失败（新源没有该文件 404、网络错、
+  /// 校验失败等）时按 新→老 优先级尝试其余源；用户主动取消不回退直接抛出。
+  /// 断点续传的 .tmp 跨源续用，最终以 MD5 校验兜底。
+  ///
   /// [onPhase] 让 UI 感知 preparing/downloading/verifying 阶段切换；
   /// [onProgress] 用于下载阶段的字节级进度回调。
   Future<File> downloadOnly(
@@ -312,23 +316,37 @@ class UpdateService {
     PhaseCallback? onPhase,
     CancelToken? cancelToken,
   }) async {
-    final url = '$host${release.path}';
     final saveDir = await _downloadDir();
     final fileName = release.path.split('/').last;
     final savePath = '${saveDir.path}${Platform.pathSeparator}$fileName';
 
-    _log('INFO', 'downloadOnly',
-        'url=$url save=$savePath size=${release.size}');
+    final candidates = <String>[
+      host,
+      ...UpdateApi.hosts.where((h) => h != host),
+    ];
 
-    return _downloader.download(
-      url: url,
-      savePath: savePath,
-      expectedMd5: release.md5,
-      expectedSize: release.size,
-      onProgress: onProgress,
-      cancelToken: cancelToken,
-      onPhase: onPhase,
-    );
+    Object? lastError;
+    for (final h in candidates) {
+      final url = '$h${release.path}';
+      _log('INFO', 'downloadOnly',
+          'url=$url save=$savePath size=${release.size}');
+      try {
+        return await _downloader.download(
+          url: url,
+          savePath: savePath,
+          expectedMd5: release.md5,
+          expectedSize: release.size,
+          onProgress: onProgress,
+          cancelToken: cancelToken,
+          onPhase: onPhase,
+        );
+      } catch (e) {
+        if (e is DioException && e.type == DioExceptionType.cancel) rethrow;
+        lastError = e;
+        _log('WARN', 'downloadOnly', 'host=$h failed: $e, try next');
+      }
+    }
+    throw lastError ?? UpdateDownloadException('没有可用的下载源');
   }
 
   /// 触发安装。Windows 启动 setup.exe 后主程序会 exit(0)；
