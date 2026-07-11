@@ -3,13 +3,16 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../core/network/api_client.dart';
 import '../../../core/storage/token_store.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
@@ -76,6 +79,10 @@ class _LoginPageState extends ConsumerState<LoginPage>
   // 是否为移动端
   bool _isMobile = false;
 
+  // iOS(iPhone/iPad) 默认账号密码登录: App Store 审核要求第三方登录不得是唯一/强制入口
+  // (Guideline 4.8/4.2.3(i)), 微信登录与扫码登录保留为次要入口
+  bool get _isIOS => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLoggingIn = false;
@@ -96,6 +103,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
   Timer? _qrRefreshTimer; // 二维码刷新定时器
   int _qrCountdown = 30; // 二维码刷新倒计时（秒）
   static const int _qrRefreshInterval = 60; // 二维码刷新间隔（秒）
+  int _qrCreateAttempts = 0; // 二维码创建连续失败计数（≥5 次转为 error 展示真实错误）
 
   List<SavedUser> _savedUsers = [];
 
@@ -138,7 +146,13 @@ class _LoginPageState extends ConsumerState<LoginPage>
     // 基于物理平台判断，而非屏幕宽度，确保折叠屏展开后仍能跳转微信
     _isMobile = platformHelper.isMobile;
 
-    if (_isMobile) {
+    if (_isIOS) {
+      // iOS 默认账号密码登录, 微信/扫码通过界面入口切换
+      setState(() {
+        _viewState = 'manual';
+        _qrStatus = 'idle';
+      });
+    } else if (_isMobile) {
       // 移动端：显示微信登录按钮（初始状态为 idle，显示按钮）
       setState(() {
         _viewState = 'wechat_mobile';
@@ -324,6 +338,8 @@ class _LoginPageState extends ConsumerState<LoginPage>
     _qrRefreshTimer?.cancel();
     _qrPollTimer?.cancel();
 
+    _qrCreateAttempts++;
+
     setState(() {
       _qrStatus = 'loading';
       _qrError = null;
@@ -343,6 +359,8 @@ class _LoginPageState extends ConsumerState<LoginPage>
       }
       final imageBytes = base64Decode(base64Data);
 
+      _qrCreateAttempts = 0;
+
       setState(() {
         _qrSessionId = response.pwd; // pwd 作为会话ID
         _qrData = response.qrCode; // base64 二维码图片
@@ -353,15 +371,37 @@ class _LoginPageState extends ConsumerState<LoginPage>
       _startQRPolling();
       _startQRRefreshCountdown();
     } catch (e) {
-      // 创建失败时自动重试（常见于 token 过期跳回登录页时旧 token 未清理完）
-      if (mounted) {
-        Future.delayed(const Duration(seconds: 1), () {
-          if (mounted && _qrStatus == 'loading') {
-            _createQRSession();
-          }
+      if (!mounted) return;
+      // 连续失败 ≥5 次：停止无限转圈，把真实错误亮到界面
+      // （error 分支自带"重试"按钮；重试后重新计数）
+      if (_qrCreateAttempts >= 5) {
+        setState(() {
+          _qrStatus = 'error';
+          _qrError = _describeQRError(e);
         });
+        _qrCreateAttempts = 0;
+        return;
+      }
+      // 创建失败时自动重试（常见于 token 过期跳回登录页时旧 token 未清理完）
+      Future.delayed(const Duration(seconds: 1), () {
+        if (mounted && _qrStatus == 'loading') {
+          _createQRSession();
+        }
+      });
+    }
+  }
+
+  /// 把二维码创建失败的异常转成现场可读文案：
+  /// 业务文案 + 底层网络异常（HandshakeException/SocketException 等），截断防撑爆 UI
+  String _describeQRError(Object e) {
+    var s = e.toString();
+    if (e is ApiError) {
+      final raw = e.raw;
+      if (raw is DioException && raw.error != null) {
+        s = '$s\n${raw.error}';
       }
     }
+    return s.length > 200 ? '${s.substring(0, 200)}…' : s;
   }
 
   /// 启动二维码刷新倒计时
@@ -1219,16 +1259,16 @@ class _LoginPageState extends ConsumerState<LoginPage>
           ),
         ),
         const SizedBox(height: 24),
-        // 返回微信/扫码登录（始终显示，避免卡在账号密码界面回不去）
+        // 微信/扫码登录入口（始终显示；iOS 上账密是默认视图, 该入口即微信登录的次要入口）
         TextButton.icon(
           onPressed: _backToWeChatLogin,
           icon: Icon(
-            LucideIcons.chevronLeft,
+            _isIOS ? LucideIcons.messageCircle : LucideIcons.chevronLeft,
             size: 16,
             color: Colors.white.withValues(alpha: 0.5),
           ),
           label: Text(
-            '返回微信登录',
+            _isIOS ? '使用微信登录' : '返回微信登录',
             style: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
           ),
         ),
@@ -1435,9 +1475,9 @@ class _LoginPageState extends ConsumerState<LoginPage>
             Flexible(
               child: Text(
                 _qrError ?? '创建失败',
-                style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                style: const TextStyle(color: Colors.redAccent, fontSize: 12),
                 textAlign: TextAlign.center,
-                maxLines: 4,
+                maxLines: 7,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
