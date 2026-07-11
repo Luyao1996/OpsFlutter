@@ -729,9 +729,11 @@ run_altool() {
       --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" --output-format normal 2>&1
 }
 
-# altool 会打印 ERROR 却仍返回退出码 0(实测: 403 协议未签被误报"上传成功"), 不能只信退出码
-# 成功输出("No errors validating archive"/"UPLOAD SUCCEEDED")不含 "ERROR: ", 不会误伤
+# altool 会打印 ERROR 却仍返回退出码 0(实测: 403 协议未签被误报"上传成功"), 不能只信退出码;
+# 但分片上传遇网络抖动也会打 "ERROR: ... WILL RETRY PART N" 后自动重试成功(实测), 故以最终成功标记为准:
+# 有成功标记 -> 成功(无视中途重试 ERROR); 无成功标记且含 ERROR: -> 失败
 altool_out_failed() {
+  printf '%s' "$1" | grep -qE 'UPLOAD SUCCEEDED|No errors (uploading|validating) archive' && return 1
   printf '%s' "$1" | grep -qE '(^|[[:space:]])ERROR: '
 }
 
