@@ -714,6 +714,10 @@ diagnose_itms() {
   if printf '%s' "$out" | grep -qiE 'ITMS-90161|ITMS-90034|invalid signature|provisioning'; then
     echo " * 签名/描述文件问题(ITMS-90161/90034): 回阶段 C3 用自动签名重新生成 Distribution 证书与 profile。"
   fi
+  if printf '%s' "$out" | grep -qiE 'required agreement is missing or has expired'; then
+    echo " * 协议未签/过期(403): 用 Account Holder 登录 https://appstoreconnect.apple.com -> 协议、税务和银行, 接受待签协议;"
+    echo "   developer.apple.com/account 首页若有新版许可协议(PLA)横幅也要接受。刚签完可能需等 15-30 分钟生效, 之后重跑 --from E。"
+  fi
   echo "${C_YEL}----------------------${C_RST}"
   return $retryable
 }
@@ -723,6 +727,12 @@ run_altool() {
   local sub="$1"
   xcrun altool --"$sub" -f "$IPA_PATH" -t ios \
       --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" --output-format normal 2>&1
+}
+
+# altool 会打印 ERROR 却仍返回退出码 0(实测: 403 协议未签被误报"上传成功"), 不能只信退出码
+# 成功输出("No errors validating archive"/"UPLOAD SUCCEEDED")不含 "ERROR: ", 不会误伤
+altool_out_failed() {
+  printf '%s' "$1" | grep -qE '(^|[[:space:]])ERROR: '
 }
 
 phase_e_upload() {
@@ -760,6 +770,7 @@ phase_e_upload() {
   log_info "上传前预校验 (altool --validate-app) ..." "upload"
   local vout vrc
   vout="$(run_altool validate-app)"; vrc=$?
+  if [ "$vrc" -eq 0 ] && altool_out_failed "$vout"; then vrc=1; fi
   printf '%s\n' "$vout" >> "$LOG_FILE"
   if [ "$vrc" -ne 0 ]; then
     printf '%s\n' "$vout" | sed 's/^/    /'
@@ -773,6 +784,7 @@ phase_e_upload() {
   log_info "正式上传 (altool --upload-app) ... 大包可能要几分钟到十几分钟" "upload"
   local uout urc dret rebuild_rc
   uout="$(run_altool upload-app)"; urc=$?
+  if [ "$urc" -eq 0 ] && altool_out_failed "$uout"; then urc=1; fi
   printf '%s\n' "$uout" >> "$LOG_FILE"
   printf '%s\n' "$uout" | sed 's/^/    /'
 
@@ -795,6 +807,7 @@ phase_e_upload() {
       ipa_build="$BUILD_NUMBER"
       # 重试也先校验再上传, 与正常流程一致
       vout="$(run_altool validate-app)"; vrc=$?
+      if [ "$vrc" -eq 0 ] && altool_out_failed "$vout"; then vrc=1; fi
       printf '%s\n' "$vout" >> "$LOG_FILE"
       if [ "$vrc" -ne 0 ]; then
         printf '%s\n' "$vout" | sed 's/^/    /'
@@ -802,6 +815,7 @@ phase_e_upload() {
         die "重试预校验未通过" "请按上面诊断修复后重跑 --from D。完整日志: $LOG_FILE"
       fi
       uout="$(run_altool upload-app)"; urc=$?
+      if [ "$urc" -eq 0 ] && altool_out_failed "$uout"; then urc=1; fi
       printf '%s\n' "$uout" >> "$LOG_FILE"
       printf '%s\n' "$uout" | sed 's/^/    /'
     fi
