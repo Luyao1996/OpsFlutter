@@ -1,7 +1,9 @@
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import '../config/app_config.dart';
 import '../storage/token_store.dart';
 import 'http_log_interceptor.dart';
+import 'trusted_roots.dart';
 
 /// API 错误
 class ApiError implements Exception {
@@ -31,6 +33,12 @@ class ApiClient {
         receiveTimeout: Duration(milliseconds: AppConfig.receiveTimeout),
         headers: {'Content-Type': 'application/json'},
       ),
+    );
+
+    // 内置 ISRG Root X1 信任锚点：客户机证书库缺根（老镜像+禁更新的网吧机）
+    // 时 HTTPS 业务接口仍可校验通过；系统库正常时行为不变。见 trusted_roots.dart
+    _dio.httpClientAdapter = IOHttpClientAdapter(
+      createHttpClient: createHttpClientWithBundledRoots,
     );
 
     // 请求拦截器 - 添加 token
