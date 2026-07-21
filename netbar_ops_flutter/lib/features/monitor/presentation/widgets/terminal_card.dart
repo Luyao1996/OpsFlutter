@@ -4,7 +4,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../data/terminal_api.dart';
 
 /// 终端卡片组件 - 对应 Vue 的 TerminalCard.vue
-/// 深色主题卡片，显示桌面截图、运行时间、CPU/MEM/GPU 统计
+/// 深色主题卡片，显示桌面截图与终端状态
 class TerminalCard extends StatefulWidget {
   final Terminal terminal;
   final VoidCallback? onTap;
@@ -12,7 +12,7 @@ class TerminalCard extends StatefulWidget {
   final Uint8List? screenshotBytes; // 实时截图数据
   final String? netbarName; // 网吧名称（顶部信息栏）
   final String? groupName; // 网吧分组（顶部信息栏）
-  final VoidCallback? onHoverStart; // 鼠标进入：父级启动 500ms 硬件+截图轮询
+  final VoidCallback? onHoverStart; // 鼠标进入：父级启动截图轮询
   final VoidCallback? onHoverEnd; // 鼠标离开：父级停止轮询
 
   const TerminalCard({
@@ -208,58 +208,6 @@ class _TerminalCardState extends State<TerminalCard> {
               ),
             ),
           ),
-        // 底部覆盖层: CPU/MEM/GPU 统计 —— 默认隐藏，仅 hover 在线机器时展示实时占用
-        if (_isHovered && !_isOffline)
-          Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.6),
-              border: Border(
-                top: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _buildStatItem('CPU', t.cpuUsage.round()),
-                _buildDivider(),
-                _buildStatItem('MEM', t.ramUsage.round()),
-                _buildDivider(),
-                _buildStatItem('GPU', t.gpuUsage.round()),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// 统计项
-  Widget _buildStatItem(String label, int value) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 8,
-            color: Colors.white.withValues(alpha: 0.5),
-            fontFamily: 'monospace',
-          ),
-        ),
-        Text(
-          '$value%',
-          style: TextStyle(
-            fontSize: 10,
-            color: Colors.white.withValues(alpha: 0.9),
-            fontFamily: 'monospace',
-            fontWeight: FontWeight.w500,
-          ),
-        ),
       ],
     );
   }
@@ -275,15 +223,6 @@ class _TerminalCardState extends State<TerminalCard> {
           color: Colors.grey.shade600,
         ),
       ),
-    );
-  }
-
-  /// 分隔线
-  Widget _buildDivider() {
-    return Container(
-      width: 1,
-      height: 20,
-      color: Colors.white.withValues(alpha: 0.2),
     );
   }
 

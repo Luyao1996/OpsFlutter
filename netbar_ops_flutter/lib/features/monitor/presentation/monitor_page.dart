@@ -113,18 +113,9 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
   static const int _maxRetryCount = 10; // 最大重试次数
   static const Duration _retryBaseDelay = Duration(seconds: 3); // 基础重试延迟
 
-  // Realtime hwinfo cache: seatId -> {cpu, gpu, ram, disk}
-  final Map<String, Map<String, double>> _realtimeCache = {};
-  bool _realtimeLoading = false;
-
-  // hover 轮询：seatId -> 500ms 定时器。鼠标悬停卡片时每 500ms 拉一次该终端的
-  // CPU/内存/GPU + 截图；离开即取消。同一时刻通常只有 1~2 个在跑。
+  // hover 轮询：seatId -> 1s 定时器。鼠标悬停卡片时周期拉该终端的截图；
+  // 离开即取消。同一时刻通常只有 1~2 个在跑。
   final Map<String, Timer> _hoverTimers = {};
-
-  /// realtime 是否已经"尝试加载过"一次（不论成功失败）。
-  /// 用于阻断"全部失败 → cache 仍空 → build 又触发 → 又全失败"的死循环；
-  /// 只有切网吧 / 点刷新按钮才会重置为 false，再次允许首帧自动拉取。
-  bool _realtimeAttempted = false;
 
   // Router traffic polling visibility control
   bool _appActive = true;       // app in foreground
@@ -201,99 +192,14 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
     }
   }
 
-  /// 批量获取在线终端的 hwinfo realtime（CPU/GPU/RAM）—— 走 WebSocket。
-  /// [netbarId] 为发起时的网吧 ID，贯穿整条异步链做防串台校验：
-  /// merchantId 直接用它（避免与 seatId 错配），切网吧后停止旧网吧的批次、丢弃迟到响应。
-  Future<void> _loadRealtimeStats(List<Terminal> terminals, int? netbarId) async {
-    if (_realtimeLoading) return;
-    if (netbarId == null) return;
-    _realtimeLoading = true;
-    final api = ref.read(terminalApiProvider);
-
-    final online = terminals.where((t) => t.status > 0 && t.seatId.isNotEmpty).toList();
-
-    // 分批限流：每批最多 5 个并发；每批之间校验仍是发起时的网吧，切网吧即停（防串台）
-    final futures = <Future>[];
-    for (final t in online) {
-      if (!mounted || ref.read(currentNetbarIdProvider) != netbarId) break;
-      futures.add(
-        api.getHardwareRealtime(t.seatId, merchantId: netbarId).then((rt) {
-          // 防串台：响应回来后若已切换网吧，丢弃（不写缓存）
-          if (!mounted || ref.read(currentNetbarIdProvider) != netbarId) return;
-          final stats = <String, double>{};
-          // CPU
-          final cpuList = rt['cpu'] as List?;
-          if (cpuList != null && cpuList.isNotEmpty) {
-            final c = cpuList[0];
-            if (c is Map<String, dynamic>) stats['cpu'] = (c['load_total'] ?? 0).toDouble();
-          }
-          // GPU
-          final gpuList = rt['gpu'] as List?;
-          if (gpuList != null && gpuList.isNotEmpty) {
-            final g = gpuList[0];
-            if (g is Map<String, dynamic>) stats['gpu'] = (g['load_gpu'] ?? 0).toDouble();
-          }
-          // Memory
-          final memData = rt['memory'];
-          if (memData is List && memData.isNotEmpty) {
-            double total = 0; int count = 0;
-            for (final m in memData) {
-              if (m is Map<String, dynamic>) { total += (m['load_total'] ?? 0).toDouble(); count++; }
-            }
-            if (count > 0) stats['ram'] = total / count;
-          } else if (memData is Map<String, dynamic>) {
-            stats['ram'] = (memData['load_total'] ?? 0).toDouble();
-          }
-          _realtimeCache[t.seatId] = stats;
-        }).catchError((_) {}),
-      );
-      // Throttle: every 5 requests, wait for them to complete
-      if (futures.length >= 5) {
-        await Future.wait(futures);
-        futures.clear();
-      }
-    }
-    if (futures.isNotEmpty) await Future.wait(futures);
-
-    // 防串台：已切网吧则干净退出——加载标志在切换时已重置，这里不再触碰
-    // （避免误清新网吧的标志）、不 setState、不排下一轮。
-    if (!mounted || ref.read(currentNetbarIdProvider) != netbarId) return;
-
-    _realtimeLoading = false;
-    _realtimeAttempted = true; // 已尝试过一次（成功或全失败），阻断 build 自动重触发的死循环
-    setState(() {}); // trigger rebuild with updated cache
-  }
-
-  /// Apply cached realtime stats to a terminal
-  Terminal _applyRealtimeStats(Terminal t) {
-    final stats = _realtimeCache[t.seatId];
-    if (stats == null || stats.isEmpty) return t;
-    return Terminal(
-      id: t.id, seatId: t.seatId, name: t.name, alias: t.alias, code: t.code,
-      netbarId: t.netbarId, areaId: t.areaId, ip: t.ip, mac: t.mac,
-      os: t.os, type: t.type, status: t.status,
-      cpuUsage: stats['cpu'] ?? t.cpuUsage,
-      ramUsage: stats['ram'] ?? t.ramUsage,
-      gpuUsage: stats['gpu'] ?? t.gpuUsage,
-      diskUsage: t.diskUsage, uptime: t.uptime,
-      screenshotUrl: t.screenshotUrl, lastOnline: t.lastOnline,
-      lastHeartbeat: t.lastHeartbeat, createdAt: t.createdAt,
-      updatedAt: t.updatedAt, remote: t.remote,
-      mode: t.mode, // 透传 mode 字段，避免下游 mode==1 判断误判
-      version: t.version, // 透传 version，避免实时数据合入后卡片版本号丢失
-      remark: t.remark, // 透传 remark
-    );
-  }
-
-  /// 鼠标进入卡片：启动该终端 1s 轮询（CPU/内存/GPU + 截图）。
+  /// 鼠标进入卡片：启动该终端 1s 截图轮询。
   /// 立即拉一次，之后每 1s 一次。防串台：请求内校验 netbarId。
   void _onCardHoverStart(Terminal terminal) {
-    if (terminal.status == 0) return; // 离线机器无实时数据，不拉截图/硬件
+    if (terminal.status == 0) return; // 离线机器无实时数据，不拉截图
     final seatId = terminal.seatId;
     if (seatId.isEmpty || _hoverTimers.containsKey(seatId)) return;
     final netbarId = ref.read(currentNetbarIdProvider);
     void tick() {
-      _loadSingleRealtime(terminal, netbarId);
       _loadHoverScreenshot(terminal, netbarId);
     }
     tick(); // 立即一次，避免等满 1s 才出数据
@@ -301,13 +207,9 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
         Timer.periodic(const Duration(seconds: 1), (_) => tick());
   }
 
-  /// 鼠标离开卡片：停止轮询，并清掉该终端实时硬件缓存（hover 结束即隐藏数值）。
-  /// 截图缓存保留（最后一帧作为更新后的静态缩略图）。
+  /// 鼠标离开卡片：停止轮询。截图缓存保留（最后一帧作为更新后的静态缩略图）。
   void _onCardHoverEnd(String seatId) {
     _hoverTimers.remove(seatId)?.cancel();
-    if (_realtimeCache.remove(seatId) != null && mounted) {
-      setState(() {});
-    }
   }
 
   void _cancelAllHoverTimers() {
@@ -315,52 +217,6 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
       t.cancel();
     }
     _hoverTimers.clear();
-  }
-
-  /// 单终端实时硬件（hover 轮询用）。解析与批量版一致，写入 _realtimeCache。
-  /// 仅当该终端仍在 hover（timer 未取消）且仍是当前网吧时才写入，
-  /// 避免离开后/切网吧后迟到响应又回显或串台。
-  Future<void> _loadSingleRealtime(Terminal terminal, int? netbarId) async {
-    if (netbarId == null || terminal.seatId.isEmpty) return;
-    try {
-      final api = ref.read(terminalApiProvider);
-      final rt =
-          await api.getHardwareRealtime(terminal.seatId, merchantId: netbarId);
-      if (!mounted || ref.read(currentNetbarIdProvider) != netbarId) return;
-      final stats = <String, double>{};
-      final cpuList = rt['cpu'] as List?;
-      if (cpuList != null && cpuList.isNotEmpty) {
-        final c = cpuList[0];
-        if (c is Map<String, dynamic>) {
-          stats['cpu'] = (c['load_total'] ?? 0).toDouble();
-        }
-      }
-      final gpuList = rt['gpu'] as List?;
-      if (gpuList != null && gpuList.isNotEmpty) {
-        final g = gpuList[0];
-        if (g is Map<String, dynamic>) {
-          stats['gpu'] = (g['load_gpu'] ?? 0).toDouble();
-        }
-      }
-      final memData = rt['memory'];
-      if (memData is List && memData.isNotEmpty) {
-        double total = 0;
-        int count = 0;
-        for (final m in memData) {
-          if (m is Map<String, dynamic>) {
-            total += (m['load_total'] ?? 0).toDouble();
-            count++;
-          }
-        }
-        if (count > 0) stats['ram'] = total / count;
-      } else if (memData is Map<String, dynamic>) {
-        stats['ram'] = (memData['load_total'] ?? 0).toDouble();
-      }
-      if (_hoverTimers.containsKey(terminal.seatId)) {
-        _realtimeCache[terminal.seatId] = stats;
-        setState(() {});
-      }
-    } catch (_) {}
   }
 
   /// hover 轮询的截图请求：直接拉缩略图覆盖缓存，失败等下个 tick，不走重试队列
@@ -487,8 +343,6 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
     ref.listen<CurrentNetbar>(currentNetbarProvider, (prev, next) {
       if (prev?.id != next.id) {
         _cancelAllHoverTimers(); // 切网吧：停掉所有 hover 轮询，防止旧网吧迟到响应串台
-        _realtimeLoading = false; // 切网吧：释放加载标志，允许新网吧立即启动 realtime
-        _realtimeAttempted = false; // 切网吧：重置尝试标志，新网吧首帧重新触发 realtime 拉取
         // 切网吧重置手机端打开详情的去抖记录，避免跨网吧误判去抖窗口。
         _lastOpenTerminalId = null;
         _lastOpenTerminalAt = null;
@@ -498,7 +352,6 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
           _searchController.clear();
           _screenshotCache.clear();
           _screenshotRetryCount.clear();
-          _realtimeCache.clear();
         });
         // 防御：若当前路由栈在 /terminal/:id（主窗口 in-place 详情页），
         // 主窗口切网吧时将其归位到 /monitor，避免详情页持有旧网吧的 owner state。
@@ -540,8 +393,6 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                 _loadScreenshots(terminals, netbarId, force: force);
               });
             }
-            // 实时硬件(CPU/内存/GPU)不再默认批量拉取，也不默认展示：
-            // 仅在鼠标 hover 卡片时每 500ms 单点拉取并展示（见 _onCardHoverStart）。
             return _buildContent(terminals);
           },
         ),
@@ -1096,7 +947,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                                       context,
                                       index,
                                     ) {
-                                      final terminal = _applyRealtimeStats(filteredClients[index]);
+                                      final terminal = filteredClients[index];
                                       return TerminalCard(
                                         terminal: terminal,
                                         screenshotBytes: _screenshotCache[terminal.seatId],
@@ -1167,7 +1018,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                         mainAxisSpacing: 16,
                       ),
                       delegate: SliverChildBuilderDelegate((context, index) {
-                        final terminal = _applyRealtimeStats(filteredClients[index]);
+                        final terminal = filteredClients[index];
                         return TerminalCard(
                           terminal: terminal,
                           screenshotBytes: _screenshotCache[terminal.seatId],
@@ -1717,7 +1568,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                       width: itemWidth,
                       height: itemHeight,
                       child: TerminalCard(
-                        terminal: _applyRealtimeStats(d),
+                        terminal: d,
                         screenshotBytes: _screenshotCache[d.seatId],
                         onTap: () => _openTerminalDetail(d),
                         onSecondaryTapDown: (details) =>
@@ -1878,17 +1729,13 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
       height: 32,
       child: IconButton(
         onPressed: () {
-          // 重新拉取：列表数据 + 路由 + 实时硬件占用(CPU/内存) + 路由器流量 + 截图缩略图。
-          // - 清 _realtimeCache 让 build 的 data 分支因 isEmpty 重新触发 _loadRealtimeStats
+          // 重新拉取：列表数据 + 路由 + 路由器流量 + 截图缩略图。
           // - _routerRefreshTick++ 让 RouterCard didUpdateWidget 立即重拉流量并重置 15s 计时
           // - _screenshotForceRefresh 让 build 用最新列表强制重拉截图(保留旧图直到新图到达)
           setState(() {
-            _realtimeCache.clear();
             _routerRefreshTick++;
             _screenshotForceRefresh = true;
           });
-          _realtimeLoading = false;
-          _realtimeAttempted = false; // 刷新：允许 build 重新触发一次 realtime 拉取
           ref.invalidate(terminalsProvider(netbarId));
           if (netbarId != null) ref.invalidate(routersProvider(netbarId));
         },
@@ -2004,16 +1851,12 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
               _buildToolbarButton(
                 icon: LucideIcons.refreshCw,
                 tooltip: '刷新',
-                // 重新拉取：终端列表数据 + 实时硬件占用(CPU/内存) + 截图缩略图。
-                // 清 _realtimeCache 让 build 的 data 分支因 isEmpty 重新触发 _loadRealtimeStats；
+                // 重新拉取：终端列表数据 + 截图缩略图。
                 // 置 _screenshotForceRefresh 让 build 用最新列表强制重拉截图(保留旧图直到新图到达)。
                 onPressed: () {
                   setState(() {
-                    _realtimeCache.clear();
                     _screenshotForceRefresh = true;
                   });
-                  _realtimeLoading = false;
-                  _realtimeAttempted = false; // 刷新：允许 build 重新触发一次 realtime 拉取
                   ref.invalidate(terminalsProvider(ref.read(currentNetbarIdProvider)));
                 },
                 size: isNarrow ? 40 : 44,

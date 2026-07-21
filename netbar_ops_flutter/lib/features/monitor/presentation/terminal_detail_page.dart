@@ -56,8 +56,6 @@ import 'widgets/edit_name_modal.dart';
 import 'widgets/file_manager_tab.dart';
 import 'widgets/process_manager_tab.dart';
 import 'widgets/console_manager_tab.dart';
-import 'widgets/hardware_info_tab.dart';
-import 'widgets/network_monitor_tab.dart';
 import 'widgets/log_manager_tab.dart';
 import '../../game_library/presentation/game_manage_view.dart';
 
@@ -190,8 +188,6 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     {'icon': LucideIcons.fileText, 'label': '文件管理'},
     {'icon': LucideIcons.activity, 'label': '进程管理'},
     {'icon': LucideIcons.terminal, 'label': '终端命令'},
-    {'icon': LucideIcons.cpu, 'label': '硬件配置'},
-    {'icon': LucideIcons.network, 'label': '网络监控'},
     {'icon': LucideIcons.fileSpreadsheet, 'label': '操作日志'},
   ];
 
@@ -212,7 +208,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     if (widget.initialTab != null && widget.initialTab!.isNotEmpty) {
       _selectedTab = widget.initialTab!;
     }
-    // Immediately fetch realtime data, then repeat every 15s
+    // 立即拉一次心跳，之后每 15s 刷新（status/uptime/remark 等，不含硬件占用）
     _refreshHeartbeat(widget.terminalId, silent: true);
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       _refreshHeartbeat(widget.terminalId, silent: true);
@@ -613,22 +609,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
                           WindowControl.startDragging(wid);
                         }
                       : null,
-                  child: Align(
+                  // 空白拖拽区（原 CPU/GPU 使用率文本已随 hwinfo 下线移除，
+                  // Align 撑满 Expanded 保住子窗口标题栏拖拽热区）
+                  child: const Align(
                     alignment: Alignment.centerRight,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'CPU使用率: ${terminal.cpuUsage.round()}%',
-                          style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                        ),
-                        const SizedBox(width: 16),
-                        Text(
-                          'GPU使用率: ${terminal.gpuUsage.round()}%',
-                          style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                        ),
-                      ],
-                    ),
+                    child: SizedBox.shrink(),
                   ),
                 ),
               ),
@@ -779,13 +764,6 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
                   onPressed: _handleClose,
                 ),
             ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'CPU: ${terminal.cpuUsage.round()}%  ·  GPU: ${terminal.gpuUsage.round()}%',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
           ),
         ],
       ),
@@ -1116,49 +1094,21 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
         children: [
           const Text('系统状态', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
           const SizedBox(height: 16),
-          _buildStatusRow('运行时间', terminal.uptime, null),
-          const SizedBox(height: 12),
-          _buildStatusRow('CPU', '${terminal.cpuUsage.round()}%', terminal.cpuUsage / 100, color: Colors.blue),
-          const SizedBox(height: 12),
-          _buildStatusRow('内存', '${terminal.ramUsage.round()}%', terminal.ramUsage / 100, color: Colors.purple),
-          const SizedBox(height: 12),
-          _buildStatusRow('GPU', '${terminal.gpuUsage.round()}%', terminal.gpuUsage / 100, color: Colors.orange),
-          const SizedBox(height: 12),
-          _buildStatusRow('磁盘', '${terminal.diskUsage.round()}%', terminal.diskUsage / 100, color: Colors.teal),
+          _buildStatusRow('运行时间', terminal.uptime),
         ],
       ),
     );
   }
 
-  Widget _buildStatusRow(String label, String value, double? progress, {Color? color}) {
+  Widget _buildStatusRow(String label, String value) {
     return Row(
       children: [
         SizedBox(width: 60, child: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600))),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (progress != null)
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(2),
-                  child: LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 6,
-                    backgroundColor: Colors.grey.shade100,
-                    valueColor: AlwaysStoppedAnimation<Color>(color ?? Colors.blue),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 12),
-        SizedBox(
-          width: 50,
-          child: Text(
-            value,
-            textAlign: TextAlign.end,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-          ),
+        const Spacer(),
+        Text(
+          value,
+          textAlign: TextAlign.end,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
         ),
       ],
     );
@@ -1256,8 +1206,6 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
       id: src.id, seatId: src.seatId, name: src.name, code: src.code,
       netbarId: src.netbarId, areaId: src.areaId, ip: src.ip, mac: src.mac,
       os: src.os, type: src.type, status: src.status,
-      cpuUsage: src.cpuUsage, ramUsage: src.ramUsage,
-      gpuUsage: src.gpuUsage, diskUsage: src.diskUsage,
       uptime: src.uptime, screenshotUrl: src.screenshotUrl,
       lastOnline: src.lastOnline, lastHeartbeat: src.lastHeartbeat,
       createdAt: src.createdAt, updatedAt: src.updatedAt, remote: src.remote,
@@ -1395,10 +1343,6 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
       return ProcessManagerTab(terminalId: terminal.id, seatId: terminal.seatId);
     } else if (_selectedTab == '终端命令') {
       return ConsoleManagerTab(terminalId: terminal.id, seatId: terminal.seatId);
-    } else if (_selectedTab == '硬件配置') {
-      return HardwareInfoTab(terminalId: terminal.id, seatId: terminal.seatId);
-    } else if (_selectedTab == '网络监控') {
-      return NetworkMonitorTab(seatId: terminal.seatId);
     } else if (_selectedTab == '操作日志') {
       return LogManagerTab(terminalId: terminal.id);
     }
@@ -1453,75 +1397,10 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     try {
       final api = ref.read(terminalApiProvider);
 
-      // Step 1: fetch /terminals via central HTTP and update UI immediately
+      // 拉中央 HTTP /terminals 心跳（status/mode/remark/2FA锁屏/uptime 等）并刷新 UI。
+      // 硬件实时占用（hwinfo）已随后端禁用整体下线，不再二次拉取。
       final hb = await api.getHeartbeat(terminalId, merchantId: ownerNetbarId);
       if (mounted) setState(() => _liveTerminal = hb);
-
-      // Step 2: fetch realtime hwinfo via WebSocket in background, update UI when ready
-      final seatId = hb.seatId.isNotEmpty ? hb.seatId : (_liveTerminal?.seatId ?? '');
-      if (seatId.isNotEmpty && hb.status > 0) {
-        api.getHardwareRealtime(seatId, merchantId: ownerNetbarId).then((rt) {
-          if (!mounted) return;
-          double cpu = hb.cpuUsage, gpu = hb.gpuUsage, ram = hb.ramUsage;
-          double disk = hb.diskUsage;
-          try {
-            // CPU: load_total (%)
-            final cpuList = rt['cpu'] as List?;
-            if (cpuList != null && cpuList.isNotEmpty) {
-              final c = cpuList[0];
-              if (c is Map<String, dynamic>) cpu = (c['load_total'] ?? 0).toDouble();
-            }
-            // GPU: load_gpu (%)
-            final gpuList = rt['gpu'] as List?;
-            if (gpuList != null && gpuList.isNotEmpty) {
-              final g = gpuList[0];
-              if (g is Map<String, dynamic>) gpu = (g['load_gpu'] ?? 0).toDouble();
-            }
-            // Memory: average load_total across modules
-            final memData = rt['memory'];
-            if (memData is List && memData.isNotEmpty) {
-              double totalLoad = 0; int count = 0;
-              for (final m in memData) {
-                if (m is Map<String, dynamic>) { totalLoad += (m['load_total'] ?? 0).toDouble(); count++; }
-              }
-              if (count > 0) ram = totalLoad / count;
-            } else if (memData is Map<String, dynamic>) {
-              ram = (memData['load_total'] ?? 0).toDouble();
-            }
-            // Storage: used_space / (used_space + free_space)
-            final storageList = rt['storage'] as List?;
-            if (storageList != null && storageList.isNotEmpty) {
-              double totalUsed = 0, totalFree = 0;
-              for (final s in storageList) {
-                if (s is Map<String, dynamic>) {
-                  totalUsed += (s['used_space'] as num?)?.toDouble() ?? 0;
-                  totalFree += (s['free_space'] as num?)?.toDouble() ?? 0;
-                }
-              }
-              final totalSize = totalUsed + totalFree;
-              if (totalSize > 0) disk = (totalUsed / totalSize * 100);
-            }
-          } catch (e) {
-            debugPrint('[TerminalDetail] hwinfo parse error: $e');
-          }
-          debugPrint('[TerminalDetail] realtime: cpu=$cpu, gpu=$gpu, ram=$ram, disk=$disk');
-          if (mounted) {
-            setState(() {
-              // 基于 hb 用 copyWith 仅覆盖实时硬件占用，其余字段（mode/version/remark/
-              // alias/lockScreenEnabled 等）自动保留，避免逐字段透传时漏字段
-              // （历史 bug：曾漏 lockScreenEnabled，导致「2FA锁屏」开关被冲为关闭）。
-              _liveTerminal = hb.copyWith(
-                cpuUsage: cpu,
-                ramUsage: ram,
-                gpuUsage: gpu,
-                diskUsage: disk,
-              );
-            });
-          }
-        }).catchError((e) {
-          debugPrint('[TerminalDetail] hwinfo realtime failed (non-critical): $e');
-        });
-      }
       if (mounted && !silent) {
         showTopNotice(context, '已刷新状态', level: NoticeLevel.success);
       }

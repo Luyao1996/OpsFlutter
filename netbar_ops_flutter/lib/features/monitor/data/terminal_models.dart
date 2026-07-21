@@ -17,10 +17,6 @@ class Terminal {
   final String os;
   final String type; // server, client, console, cashier
   final int status; // 0: 离线, 1: 在线
-  final double cpuUsage;
-  final double ramUsage;
-  final double gpuUsage;
-  final double diskUsage;
   final String uptime;
   final String? screenshotUrl;
   final String? lastOnline;
@@ -46,10 +42,6 @@ class Terminal {
     required this.os,
     required this.type,
     required this.status,
-    required this.cpuUsage,
-    required this.ramUsage,
-    required this.gpuUsage,
-    required this.diskUsage,
     required this.uptime,
     this.screenshotUrl,
     this.lastOnline,
@@ -76,10 +68,6 @@ class Terminal {
     String? os,
     String? type,
     int? status,
-    double? cpuUsage,
-    double? ramUsage,
-    double? gpuUsage,
-    double? diskUsage,
     String? uptime,
     String? screenshotUrl,
     String? lastOnline,
@@ -105,10 +93,6 @@ class Terminal {
       os: os ?? this.os,
       type: type ?? this.type,
       status: status ?? this.status,
-      cpuUsage: cpuUsage ?? this.cpuUsage,
-      ramUsage: ramUsage ?? this.ramUsage,
-      gpuUsage: gpuUsage ?? this.gpuUsage,
-      diskUsage: diskUsage ?? this.diskUsage,
       uptime: uptime ?? this.uptime,
       screenshotUrl: screenshotUrl ?? this.screenshotUrl,
       lastOnline: lastOnline ?? this.lastOnline,
@@ -216,10 +200,6 @@ class Terminal {
       os: json['os'] ?? '',
       type: type,
       status: status,
-      cpuUsage: (json['cpu_usage'] ?? json['cpuUsage'] ?? 0).toDouble(),
-      ramUsage: (json['ram_usage'] ?? json['ramUsage'] ?? 0).toDouble(),
-      gpuUsage: (json['gpu_usage'] ?? json['gpuUsage'] ?? 0).toDouble(),
-      diskUsage: (json['disk_usage'] ?? json['diskUsage'] ?? 0).toDouble(),
       uptime: json['uptime'] ?? '0天',
       screenshotUrl: json['screenshot_url'] ?? json['screenshotUrl'],
       // 中央 HTTP 用 online_at/offline_at 表达上下线时刻
@@ -252,10 +232,6 @@ class Terminal {
         'os': os,
         'type': type,
         'status': status,
-        'cpu_usage': cpuUsage,
-        'ram_usage': ramUsage,
-        'gpu_usage': gpuUsage,
-        'disk_usage': diskUsage,
         'uptime': uptime,
         'screenshot_url': screenshotUrl,
         'last_online': lastOnline,
