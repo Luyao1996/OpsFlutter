@@ -1,0 +1,3 @@
+PACKAGE=com.netbarops.netbar_ops_flutter
+MD5=5CB6A67D65083B6D3E9CADE79811479C
+PUBKEY=
