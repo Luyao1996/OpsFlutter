@@ -261,6 +261,28 @@ class TaskWsClient implements TaskWs {
   @override
   String generateSessionId() => _genId();
 
+  /// 复位鉴权终态（不属于 [TaskWs] 接口，仅主窗口在登录态变更时调用）。
+  ///
+  /// [TaskWsState.authFailed] 是进程级吸收态：一次 auth.failed 后
+  /// [ensureConnected] 永久拒连，重新登录换了新 token 也救不回来，
+  /// 只能重启 App。登录成功（存入新 token）/ 登出清 token 后调用本方法，
+  /// 把状态复位为 idle，后续业务调用按需用最新 token 重新建连。
+  void resetAuth() {
+    _log('INFO', 'reset-auth', '-',
+        'state=${_state.name} hasWaiter=${_readyWaiter != null} holding=${_holding.length}');
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _retryDelay = const Duration(seconds: 1);
+    _closeChannel();
+    _setState(TaskWsState.idle);
+    // 仍有调用方挂在 ensureConnected 上等（登录竞态中的订阅/请求）：
+    // 有可用 token 就立刻重连驱动，避免这些 waiter 悬死；
+    // 登出路径 token 已清空，不重连（下次登录后按需再连）
+    if (_readyWaiter != null && (TokenStore.getToken() ?? '').isNotEmpty) {
+      _connect();
+    }
+  }
+
   // ---------- 内部 ----------
 
   /// 生成消息 id。[kind] 非空时前置类型段（如 'holdon'），用于标识"持续型"消息，
@@ -489,6 +511,14 @@ class TaskWsClient implements TaskWs {
           'auth failed';
       _log('ERROR', 'auth', '-', 'auth_failed: $reason');
       _setState(TaskWsState.authFailed);
+      // 连接期挂在 ensureConnected 上的 waiter 必须显式失败：
+      // 首次连接就 auth.failed 时 _pending 还是空的（request 先 await
+      // ensureConnected 再入表），不失败 waiter 调用方会无限悬死无提示
+      final waiter = _readyWaiter;
+      _readyWaiter = null;
+      if (waiter != null && !waiter.isCompleted) {
+        waiter.completeError(StateError('auth failed: $reason'));
+      }
       _failAllPending('auth failed: $reason');
       _failAllHoldings('auth failed: $reason');
       _closeChannel();

@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
 import '../../core/network/api_client.dart';
+import '../../core/network/task_ws_client.dart';
 import '../../core/network/task_ws_provider.dart';
 import '../../core/network/window_runtime.dart';
 import '../../core/storage/token_store.dart';
@@ -104,6 +105,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
   /// 使用Token登录（扫码登录第二步）
   Future<void> loginWithToken(String token) async {
     await TokenStore.setToken(token);
+    // 同进程重新登录：复位 WS 单例可能残留的 authFailed 终态，
+    // 否则远程等 WS 业务在重启 App 前永远 "refuse to reconnect"
+    _resetTaskWs();
     // 获取用户信息
     final user = await _authApi.getCurrentUser();
     await TokenStore.setUser(user.toJson());
@@ -123,6 +127,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
       } catch (_) {}
     }());
     await TokenStore.clearAuth();
+    // 断开旧 token 的 WS 连接并清可能的 authFailed 终态，下次登录从干净状态起步
+    _resetTaskWs();
   }
 
   /// 401/强制登出：只更新状态，触发路由跳转
@@ -189,10 +195,19 @@ class AuthNotifier extends StateNotifier<AuthState> {
     try {
       await TokenStore.clearAuth();
     } catch (_) {}
+    _resetTaskWs();
     if (mounted) {
       state = AuthState(isLoggedIn: false);
     }
     _handlingInvalid = false;
+  }
+
+  /// 登录态变更后复位主窗口 WS 单例（清 authFailed 终态 + 断开旧 token 连接）。
+  /// 子窗口的 [TaskWsProxy] 状态由主窗口同步而来，无需单独处理。
+  void _resetTaskWs() {
+    if (WindowRuntime.isMainWindow) {
+      TaskWsClient.instance.resetAuth();
+    }
   }
 
   @override
