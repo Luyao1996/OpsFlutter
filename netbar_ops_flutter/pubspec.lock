@@ -1504,7 +1504,7 @@ packages:
     description:
       path: "examples/FlutterUi"
       ref: "feature/sfu_rebuild"
-      resolved-ref: "0886a9687a55f8bdf5051efd738e1ca53d804b42"
+      resolved-ref: "0d06cfa6377264de31ce4fde6e4d9aebb62cab5d"
       url: "https://github.com/Luyao1996/WebRtcGo.git"
     source: git
     version: "1.0.0+1"
