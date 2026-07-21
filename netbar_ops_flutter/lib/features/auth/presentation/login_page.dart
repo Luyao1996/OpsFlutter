@@ -476,6 +476,8 @@ class _LoginPageState extends ConsumerState<LoginPage>
 
   /// 手机端微信登录 - 跳转小程序
   Future<void> _handleWeChatLogin() async {
+    // iOS 端屏蔽微信（过审整改）: 入口已隐藏，此处兜底拦截，禁止发起 weixin:// 跳转
+    if (_isIOS) return;
     setState(() {
       _qrStatus = 'loading';
       _qrError = null;
@@ -1259,19 +1261,20 @@ class _LoginPageState extends ConsumerState<LoginPage>
           ),
         ),
         const SizedBox(height: 24),
-        // 微信/扫码登录入口（始终显示；iOS 上账密是默认视图, 该入口即微信登录的次要入口）
-        TextButton.icon(
-          onPressed: _backToWeChatLogin,
-          icon: Icon(
-            _isIOS ? LucideIcons.messageCircle : LucideIcons.chevronLeft,
-            size: 16,
-            color: Colors.white.withValues(alpha: 0.5),
+        // 微信/扫码登录入口（iOS 端屏蔽微信: 不渲染该入口，仅剩账密登录；其他平台不变）
+        if (!_isIOS)
+          TextButton.icon(
+            onPressed: _backToWeChatLogin,
+            icon: Icon(
+              _isIOS ? LucideIcons.messageCircle : LucideIcons.chevronLeft,
+              size: 16,
+              color: Colors.white.withValues(alpha: 0.5),
+            ),
+            label: Text(
+              _isIOS ? '使用微信登录' : '返回微信登录',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+            ),
           ),
-          label: Text(
-            _isIOS ? '使用微信登录' : '返回微信登录',
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
-          ),
-        ),
         if (_savedUsers.isNotEmpty)
           TextButton.icon(
             onPressed: () => setState(() => _viewState = 'users'),
@@ -1425,8 +1428,8 @@ class _LoginPageState extends ConsumerState<LoginPage>
               ],
             ),
           ],
-          // 如果是移动端，显示返回微信登录的按钮
-          if (_isMobile) ...[
+          // 如果是移动端，显示返回微信登录的按钮（iOS 端屏蔽微信: 不显示）
+          if (_isMobile && !_isIOS) ...[
             const SizedBox(height: 16),
             TextButton.icon(
               onPressed: () {

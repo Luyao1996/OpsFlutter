@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -307,6 +308,8 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   }
 
   void _handleBindMiniProgram(User user) async {
+    // iOS 端屏蔽微信（过审整改）: 入口已隐藏，此处兜底拦截绑定操作
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) return;
     try {
       final api = ref.read(userApiProvider);
       final response = await api.bindMiniProgram(user.id);
@@ -335,6 +338,8 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
   }
 
   void _handleUnbindMiniProgram(User user) async {
+    // iOS 端屏蔽微信（过审整改）: 入口已隐藏，此处兜底拦截解绑操作
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(

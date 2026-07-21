@@ -4,7 +4,8 @@
 // ============================================================================
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -12,6 +13,9 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../core/logging/exit_reason_reporter.dart';
 import 'crash_log_export_helper.dart';
+
+// iOS 端屏蔽微信字样（过审整改）: iOS 用中性文案，其他平台保留原文案
+bool get _isIOSPlatform => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
 /// 查看崩溃日志页面
 ///
@@ -123,10 +127,12 @@ class _CrashLogViewerPageState extends State<CrashLogViewerPage> {
     await Clipboard.setData(ClipboardData(text: header + _content));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('已复制全部日志到剪贴板，去微信粘贴发送即可'),
-        duration: Duration(seconds: 3),
-        backgroundColor: Color(0xFF2563EB),
+      SnackBar(
+        content: Text(_isIOSPlatform
+            ? '已复制全部日志到剪贴板，粘贴发送给开发者即可'
+            : '已复制全部日志到剪贴板，去微信粘贴发送即可'),
+        duration: const Duration(seconds: 3),
+        backgroundColor: const Color(0xFF2563EB),
       ),
     );
   }
@@ -300,10 +306,12 @@ class _CrashLogViewerPageState extends State<CrashLogViewerPage> {
               const Icon(LucideIcons.messageCircle,
                   size: 16, color: Color(0xFF2563EB)),
               const SizedBox(width: 6),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  '请点右上角"打包"按钮导出日志，再通过微信分享给开发者，便于快速定位问题。',
-                  style: TextStyle(fontSize: 12, color: Color(0xFF1D4ED8)),
+                  _isIOSPlatform
+                      ? '请点右上角"打包"按钮导出日志，再分享给开发者，便于快速定位问题。'
+                      : '请点右上角"打包"按钮导出日志，再通过微信分享给开发者，便于快速定位问题。',
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF1D4ED8)),
                 ),
               ),
             ],

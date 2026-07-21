@@ -28,8 +28,10 @@
 	<false/>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
+		<!-- iOS 端屏蔽微信（过审整改），恢复时取消注释
 		<string>weixin</string>
 		<string>weixinULAPI</string>
+		-->
 		<string>tel</string>
 	</array>
 	<key>LSRequiresIPhoneOS</key>

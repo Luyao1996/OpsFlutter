@@ -33,6 +33,9 @@ class _UserCardState extends State<UserCard> {
   bool _isHovered = false;
   late TextEditingController _ttlController;
 
+  // iOS 端屏蔽微信（过审整改）: 隐藏微信小程序绑定入口
+  bool get _isIOS => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+
   @override
   void initState() {
     super.initState();
@@ -256,51 +259,52 @@ class _UserCardState extends State<UserCard> {
                 ],
               ),
             ),
-            // Footer - 微信小程序绑定
-            Container(
-              padding: const EdgeInsets.only(top: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        LucideIcons.smartphone,
-                        size: 14,
-                        color: widget.user.isBindWx ? Colors.green.shade600 : Colors.grey.shade400,
+            // Footer - 微信小程序绑定（iOS 端屏蔽微信: 整行不渲染，其他平台不变）
+            if (!_isIOS)
+              Container(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          LucideIcons.smartphone,
+                          size: 14,
+                          color: widget.user.isBindWx ? Colors.green.shade600 : Colors.grey.shade400,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          widget.user.isBindWx
+                              ? (widget.user.phoneNumber ?? '已绑定小程序')
+                              : '未绑定小程序',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: widget.user.isBindWx ? Colors.green.shade600 : Colors.grey.shade500,
+                          ),
+                        ),
+                      ],
+                    ),
+                    TextButton(
+                      onPressed: widget.user.isBindWx
+                          ? widget.onUnbindMiniProgram
+                          : widget.onBindMiniProgram,
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
-                      const SizedBox(width: 4),
-                      Text(
-                        widget.user.isBindWx
-                            ? (widget.user.phoneNumber ?? '已绑定小程序')
-                            : '未绑定小程序',
+                      child: Text(
+                        widget.user.isBindWx ? '解绑' : '绑定小程序',
                         style: TextStyle(
                           fontSize: 12,
-                          color: widget.user.isBindWx ? Colors.green.shade600 : Colors.grey.shade500,
+                          color: widget.user.isBindWx ? Colors.red.shade600 : AppColors.iosBlue,
                         ),
                       ),
-                    ],
-                  ),
-                  TextButton(
-                    onPressed: widget.user.isBindWx
-                        ? widget.onUnbindMiniProgram
-                        : widget.onBindMiniProgram,
-                    style: TextButton.styleFrom(
-                      padding: EdgeInsets.zero,
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
-                    child: Text(
-                      widget.user.isBindWx ? '解绑' : '绑定小程序',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: widget.user.isBindWx ? Colors.red.shade600 : AppColors.iosBlue,
-                      ),
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
             // Footer - 登录有效时长（仅管理员可见）
             if (widget.isAdmin)
               Container(
