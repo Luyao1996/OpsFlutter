@@ -186,6 +186,28 @@ class _TerminalCardState extends State<TerminalCard> {
             ),
           ),
         ),
+        // 左下角：IP 地址（常驻显示，空则不渲染）
+        if (t.ip.isNotEmpty)
+          Positioned(
+            bottom: 4,
+            left: 4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+              ),
+              child: Text(
+                t.ip,
+                style: TextStyle(
+                  fontSize: 10,
+                  color: Colors.white.withValues(alpha: 0.9),
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+          ),
         // 左上角：主/副服务器类型角标（终端不显示）
         if (t.isMainServer || t.isBackupServer)
           Positioned(
