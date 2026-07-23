@@ -540,6 +540,8 @@ class _LoginPageState extends ConsumerState<LoginPage>
             _buildTimeDisplay(),
             Center(child: _buildMainContent()),
             _buildFooterControls(),
+            // iOS 端工信部 App 备案号（仅展示：普通 Text 不可复制，无手势不可点击）
+            if (_isIOS) _buildIcpFooter(),
           ],
         ),
       ),
@@ -1630,6 +1632,31 @@ class _LoginPageState extends ConsumerState<LoginPage>
             const SizedBox(height: 16),
             Text(text, style: TextStyle(fontSize: 13, color: Colors.grey[600])),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// iOS 端 App 备案号（工信部《APP 备案通知》要求，仅 iOS 渲染）
+  static const String _kIosIcpNumber = '蜀ICP备18023210号-16A';
+
+  Widget _buildIcpFooter() {
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            _kIosIcpNumber,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.3),
+              fontSize: 12,
+            ),
+          ),
         ),
       ),
     );
