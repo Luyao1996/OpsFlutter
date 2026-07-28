@@ -531,17 +531,26 @@ class _LoginPageState extends ConsumerState<LoginPage>
 
   @override
   Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    // 键盘弹出或窗口过矮（iPad 兼容窗口/小屏/分屏）时收起时钟与底部装饰，
+    // 防止 Positioned 元素被压进登录表单造成控件重叠（App Store Guideline 4 拒审点）
+    final compact = media.viewInsets.bottom > 0 || media.size.height < 700;
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(color: Color(0xFF1a1a2e)),
         child: Stack(
           children: [
             _buildAuroraBackground(),
-            _buildTimeDisplay(),
-            Center(child: _buildMainContent()),
-            _buildFooterControls(),
+            if (!compact) _buildTimeDisplay(),
+            Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                child: _buildMainContent(),
+              ),
+            ),
+            if (!compact) _buildFooterControls(),
             // iOS 端工信部 App 备案号（仅展示：普通 Text 不可复制，无手势不可点击）
-            if (_isIOS) _buildIcpFooter(),
+            if (_isIOS && !compact) _buildIcpFooter(),
           ],
         ),
       ),
@@ -1666,50 +1675,25 @@ class _LoginPageState extends ConsumerState<LoginPage>
     return Positioned(
       bottom: 32,
       right: 32,
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          _buildCircleButton(LucideIcons.shield, '需要帮助?', () {}),
-          const SizedBox(width: 16),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Netbar Ops Pro v2.5.0',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.3),
-                  fontSize: 12,
-                ),
-              ),
-              Text(
-                'Designed by Gemini',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.3),
-                  fontSize: 12,
-                ),
-              ),
-            ],
+          Text(
+            'Netbar Ops Pro v2.5.0',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.3),
+              fontSize: 12,
+            ),
+          ),
+          Text(
+            'Designed by Gemini',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.3),
+              fontSize: 12,
+            ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildCircleButton(IconData icon, String tooltip, VoidCallback onTap) {
-    return Tooltip(
-      message: tooltip,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.white.withValues(alpha: 0.1),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-          ),
-          child: Icon(icon, size: 20, color: Colors.white),
-        ),
       ),
     );
   }
