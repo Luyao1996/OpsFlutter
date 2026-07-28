@@ -590,8 +590,13 @@ class _EditNetbarModalState extends State<EditNetbarModal> {
         builder: (ctx, setDialogState) => AlertDialog(
           title: Text(title, style: const TextStyle(fontSize: 16)),
           contentPadding: const EdgeInsets.symmetric(vertical: 16),
-          content: SizedBox(
-            width: 300,
+          content: ConstrainedBox(
+            // 选项多时（如省份列表）限高滚动，防止 AlertDialog 被竖向撑爆
+            constraints: BoxConstraints(
+              minWidth: 300,
+              maxWidth: 300,
+              maxHeight: MediaQuery.of(ctx).size.height * 0.5,
+            ),
             child: items.isEmpty
                 ? const Padding(
                     padding: EdgeInsets.all(24),

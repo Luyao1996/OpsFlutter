@@ -327,7 +327,7 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
     );
   }
 
-  /// 底部分页：[上一页] {current/last} [下一页]
+  /// 底部分页：[上一页] {current/last} [下一页]（窄屏降级为图标按钮，防 Row 溢出）
   Widget _buildPagination() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -335,38 +335,69 @@ class _LogManagerTabState extends ConsumerState<LogManagerTab> {
         color: Colors.white,
         border: Border(top: BorderSide(color: Colors.grey.shade200)),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          OutlinedButton.icon(
-            onPressed:
-                _currentPage > 1 ? () => _gotoPage(_currentPage - 1) : null,
-            icon: const Icon(LucideIcons.chevronLeft, size: 14),
-            label: const Text('上一页', style: TextStyle(fontSize: 12)),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(80, 32),
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              '$_currentPage / $_lastPage 页（每页 $_perPage 条）',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-            ),
-          ),
-          OutlinedButton.icon(
-            onPressed: _currentPage < _lastPage
-                ? () => _gotoPage(_currentPage + 1)
-                : null,
-            icon: const Icon(LucideIcons.chevronRight, size: 14),
-            label: const Text('下一页', style: TextStyle(fontSize: 12)),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(80, 32),
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-            ),
-          ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 400;
+          if (compact) {
+            return Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  onPressed:
+                      _currentPage > 1 ? () => _gotoPage(_currentPage - 1) : null,
+                  icon: const Icon(LucideIcons.chevronLeft, size: 16),
+                ),
+                Flexible(
+                  child: Text(
+                    '$_currentPage / $_lastPage 页（每页 $_perPage 条）',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _currentPage < _lastPage
+                      ? () => _gotoPage(_currentPage + 1)
+                      : null,
+                  icon: const Icon(LucideIcons.chevronRight, size: 16),
+                ),
+              ],
+            );
+          }
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              OutlinedButton.icon(
+                onPressed:
+                    _currentPage > 1 ? () => _gotoPage(_currentPage - 1) : null,
+                icon: const Icon(LucideIcons.chevronLeft, size: 14),
+                label: const Text('上一页', style: TextStyle(fontSize: 12)),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(80, 32),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  '$_currentPage / $_lastPage 页（每页 $_perPage 条）',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: _currentPage < _lastPage
+                    ? () => _gotoPage(_currentPage + 1)
+                    : null,
+                icon: const Icon(LucideIcons.chevronRight, size: 14),
+                label: const Text('下一页', style: TextStyle(fontSize: 12)),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(80, 32),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

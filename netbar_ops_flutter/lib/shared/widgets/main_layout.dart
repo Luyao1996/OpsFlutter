@@ -507,7 +507,6 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
               LucideIcons.clock,
               Colors.orange,
             ),
-            _buildMenuItem('安全中心', '#', LucideIcons.shield, Colors.red),
           ],
         ),
         // 版本号：PC 端全程显示；手机端仅 /dashboard 首页显示

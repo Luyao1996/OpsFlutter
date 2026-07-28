@@ -1555,6 +1555,8 @@ class _ChannelManagementPageState extends ConsumerState<ChannelManagementPage> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
+          // 横屏矮窗口下选项列表可滚动，防竖向溢出
+          scrollable: true,
           title: const Text('选择禁用时长'),
           content: Column(
             mainAxisSize: MainAxisSize.min,

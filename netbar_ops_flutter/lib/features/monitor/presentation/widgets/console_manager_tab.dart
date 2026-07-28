@@ -709,17 +709,25 @@ class _ConsoleManagerTabState extends ConsumerState<ConsoleManagerTab> {
       ),
       child: Row(
         children: [
-          // 左侧：IP 和座位 ID
-          Text(
-            _terminalIp ?? '-',
-            style: const TextStyle(color: Color(0xFF888888), fontSize: 12),
+          // 左侧：IP 和座位 ID（窄屏下可收缩省略，防 Row 溢出）
+          Flexible(
+            child: Text(
+              _terminalIp ?? '-',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Color(0xFF888888), fontSize: 12),
+            ),
           ),
           const SizedBox(width: 8),
           const Text('|', style: TextStyle(color: Color(0xFF444444), fontSize: 12)),
           const SizedBox(width: 8),
-          Text(
-            widget.seatId,
-            style: const TextStyle(color: Color(0xFF888888), fontSize: 12),
+          Flexible(
+            child: Text(
+              widget.seatId,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Color(0xFF888888), fontSize: 12),
+            ),
           ),
           const Spacer(),
           // 右侧：编码状态

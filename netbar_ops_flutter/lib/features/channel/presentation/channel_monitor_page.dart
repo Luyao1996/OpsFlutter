@@ -5,6 +5,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/utils/adaptive_show.dart';
 import '../data/startup_item_api.dart';
 import '../data/startup_monitor_models.dart';
 import 'widgets/monitor_item_dialog.dart';
@@ -891,10 +892,10 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
     return GestureDetector(
       onTap: () {
         final startupItemId = int.tryParse(item.id);
-        showDialog(
-          context: context,
-          barrierColor: Colors.black.withOpacity(0.3),
-          builder: (context) => MonitorItemDialog(
+        // 窄屏走全屏页、宽屏走 Dialog（弹窗组件本身是 ResponsiveDialogScaffold）
+        showAdaptive(
+          context,
+          (context) => MonitorItemDialog(
             item: item,
             netbarName: netbar.name,
             onClose: () => Navigator.of(context).pop(),
@@ -911,6 +912,7 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
                     context.go('/channel-management?tab=startup&zone=BRANCH&edit_startup_item_id=$startupItemId');
                   },
           ),
+          barrierColor: Colors.black.withOpacity(0.3),
         );
       },
       child: Container(

@@ -9,6 +9,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/providers/app_providers.dart';
+import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../data/startup_item_api.dart';
 import '../../data/resource_api.dart' as res;
@@ -959,9 +960,9 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
 
   Future<void> _pickLocalePath(_LocaleFileEntry file) async {
     final visibleZones = _buildVisibleZones();
-    final selected = await showDialog<res.Resource>(
-      context: context,
-      builder: (context) => ExePickerDialog(visibleZones: visibleZones, exeOnly: false),
+    final selected = await showAdaptive<res.Resource>(
+      context,
+      (context) => ExePickerDialog(visibleZones: visibleZones, exeOnly: false),
     );
     if (!mounted || selected == null) return;
 

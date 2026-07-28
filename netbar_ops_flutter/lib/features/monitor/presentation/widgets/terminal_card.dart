@@ -139,51 +139,90 @@ class _TerminalCardState extends State<TerminalCard> {
                   // 无截图/离线：本地占位图（不再请求外部随机图）
                   : Image.asset(kScreenshotPlaceholderAsset, fit: BoxFit.cover)),
         ),
-        // 右上角: 状态 & 运行时间
+        // 顶部徽章行: 左侧主/副服务器角标 + 右侧状态徽章同行排布，
+        // 窄网格(手机/iPad兼容窗口 2 列)下右侧文本省略收缩，物理上不会互相叠压
         Positioned(
           top: 4,
+          left: 4,
           right: 4,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.4),
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 主/副服务器类型角标（终端不显示）
+              if (t.isMainServer || t.isBackupServer)
                 Container(
-                  width: 6,
-                  height: 6,
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _statusBadge['color'] as Color,
+                    color: (t.isMainServer ? AppColors.iosBlue : AppColors.orange)
+                        .withValues(alpha: 0.85),
+                    borderRadius: BorderRadius.circular(4),
                   ),
-                ),
-                const SizedBox(width: 4),
-                // 版本号（仅非空时显示）—— 略淡于 uptime，区分次要信息
-                if (t.version != null && t.version!.isNotEmpty) ...[
-                  Text(
-                    'v${t.version}',
-                    style: TextStyle(
+                  child: Text(
+                    t.deviceTypeLabel,
+                    style: const TextStyle(
                       fontSize: 10,
-                      color: Colors.white.withValues(alpha: 0.7),
-                      fontFamily: 'monospace',
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                  const SizedBox(width: 6),
-                ],
-                Text(
-                  t.uptime.isNotEmpty ? t.uptime : '0天',
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: Colors.white.withValues(alpha: 0.9),
-                    fontFamily: 'monospace',
+                )
+              else
+                const SizedBox.shrink(),
+              // 状态 & 版本号 & 运行时间
+              Flexible(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _statusBadge['color'] as Color,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      // 版本号（仅非空时显示）—— 略淡于 uptime，区分次要信息
+                      if (t.version != null && t.version!.isNotEmpty) ...[
+                        Flexible(
+                          child: Text(
+                            'v${t.version}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.white.withValues(alpha: 0.7),
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      Flexible(
+                        child: Text(
+                          t.uptime.isNotEmpty ? t.uptime : '0天',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.white.withValues(alpha: 0.9),
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
         // 左下角：IP 地址（常驻显示，空则不渲染）
@@ -204,28 +243,6 @@ class _TerminalCardState extends State<TerminalCard> {
                   fontSize: 10,
                   color: Colors.white.withValues(alpha: 0.9),
                   fontFamily: 'monospace',
-                ),
-              ),
-            ),
-          ),
-        // 左上角：主/副服务器类型角标（终端不显示）
-        if (t.isMainServer || t.isBackupServer)
-          Positioned(
-            top: 4,
-            left: 4,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: (t.isMainServer ? AppColors.iosBlue : AppColors.orange)
-                    .withValues(alpha: 0.85),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                t.deviceTypeLabel,
-                style: const TextStyle(
-                  fontSize: 10,
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),

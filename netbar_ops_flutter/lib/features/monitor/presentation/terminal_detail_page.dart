@@ -2785,7 +2785,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
                   ),
                 ),
                 const SizedBox(width: 16),
-                Text(log['msg']!, style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                Expanded(
+                  child: Text(log['msg']!, style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                ),
               ],
             ),
           );
@@ -4314,102 +4316,105 @@ class _WindowsPasswordDialogState
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 460),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // 标题
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      '服务端windows密码',
-                      style: TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w600),
-                      overflow: TextOverflow.ellipsis,
+        // 键盘弹出时 Dialog 可用高度骤减，包滚动容器防竖向溢出
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 标题
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        '服务端windows密码',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                  ),
-                  IconButton(
-                    icon: const Icon(LucideIcons.x, size: 18),
-                    splashRadius: 18,
-                    onPressed: _submitting
-                        ? null
-                        : () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1),
-            // 描述
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-              child: Text(
-                '设置安装服务端电脑windows密码，用于同步登录',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-              ),
-            ),
-            // 输入框
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
-              child: TextField(
-                controller: _pwdCtrl,
-                obscureText: false, // 与 toolboxPage 一致：明文显示便于复制
-                enabled: !_submitting,
-                decoration: InputDecoration(
-                  hintText: '请输入密码',
-                  errorText: _errorText,
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(6)),
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 10),
+                    IconButton(
+                      icon: const Icon(LucideIcons.x, size: 18),
+                      splashRadius: 18,
+                      onPressed: _submitting
+                          ? null
+                          : () => Navigator.of(context).pop(),
+                    ),
+                  ],
                 ),
-                onChanged: (_) {
-                  if (_errorText != null) {
-                    setState(() => _errorText = null);
-                  }
-                },
-                onSubmitted: (_) => _handleSubmit(),
               ),
-            ),
-            // 提示：对标 toolboxPage hint-text（12px #9ca3af）
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-              child: Text(
-                '设置后会同时修改本地Windows的密码',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+              const Divider(height: 1),
+              // 描述
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+                child: Text(
+                  '设置安装服务端电脑windows密码，用于同步登录',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
               ),
-            ),
-            const Divider(height: 1),
-            // 底部按钮
-            Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: _submitting
-                        ? null
-                        : () => Navigator.of(context).pop(),
-                    child: const Text('取消'),
+              // 输入框
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+                child: TextField(
+                  controller: _pwdCtrl,
+                  obscureText: false, // 与 toolboxPage 一致：明文显示便于复制
+                  enabled: !_submitting,
+                  decoration: InputDecoration(
+                    hintText: '请输入密码',
+                    errorText: _errorText,
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6)),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
                   ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: _submitting ? null : _confirmSubmitWithNotice,
-                    child: _submitting
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white))
-                        : const Text('确定'),
-                  ),
-                ],
+                  onChanged: (_) {
+                    if (_errorText != null) {
+                      setState(() => _errorText = null);
+                    }
+                  },
+                  onSubmitted: (_) => _handleSubmit(),
+                ),
               ),
-            ),
-          ],
+              // 提示：对标 toolboxPage hint-text（12px #9ca3af）
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: Text(
+                  '设置后会同时修改本地Windows的密码',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                ),
+              ),
+              const Divider(height: 1),
+              // 底部按钮
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: _submitting
+                          ? null
+                          : () => Navigator.of(context).pop(),
+                      child: const Text('取消'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: _submitting ? null : _confirmSubmitWithNotice,
+                      child: _submitting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white))
+                          : const Text('确定'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
