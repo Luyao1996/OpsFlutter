@@ -539,18 +539,21 @@ class _LoginPageState extends ConsumerState<LoginPage>
       body: Container(
         decoration: const BoxDecoration(color: Color(0xFF1a1a2e)),
         child: Stack(
+          // 装饰元素用 Visibility 控制显隐而非 if 增删 children：
+          // 子级数量/顺序必须恒定，否则 compact 翻转时 Center 表单子树被销毁重建，
+          // TextField 焦点丢失导致键盘弹出后立即收起（收起后 compact 又翻回，死循环）
           children: [
             _buildAuroraBackground(),
-            if (!compact) _buildTimeDisplay(),
+            Visibility(visible: !compact, child: _buildTimeDisplay()),
             Center(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(vertical: 24),
                 child: _buildMainContent(),
               ),
             ),
-            if (!compact) _buildFooterControls(),
+            Visibility(visible: !compact, child: _buildFooterControls()),
             // iOS 端工信部 App 备案号（仅展示：普通 Text 不可复制，无手势不可点击）
-            if (_isIOS && !compact) _buildIcpFooter(),
+            if (_isIOS) Visibility(visible: !compact, child: _buildIcpFooter()),
           ],
         ),
       ),
