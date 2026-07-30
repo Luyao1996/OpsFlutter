@@ -513,7 +513,7 @@ packages:
     description:
       path: "examples/FlutterUi/plugins/flutter_webrtc"
       ref: "feature/optimization"
-      resolved-ref: "68def544ddeaef0da02f9ad77835d8093a11cd43"
+      resolved-ref: "431ed7ea8b1617afad58be6aa1dbf08c06f84096"
       url: "https://github.com/Luyao1996/WebRtcGo.git"
     source: git
     version: "1.3.1"
@@ -1504,7 +1504,7 @@ packages:
     description:
       path: "examples/FlutterUi"
       ref: "feature/sfu_rebuild"
-      resolved-ref: "0d06cfa6377264de31ce4fde6e4d9aebb62cab5d"
+      resolved-ref: "5659523890a51fbb94059d80dd853fb787d52986"
       url: "https://github.com/Luyao1996/WebRtcGo.git"
     source: git
     version: "1.0.0+1"
