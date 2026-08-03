@@ -307,12 +307,24 @@ class AuthApi {
     return QRLoginStatus.fromJson(response.data ?? {});
   }
 
-  /// 从 ApiError.raw 里取 Apple 登录接口的业务错误码（APPLE_ID_NOT_BOUND 等）
+  /// 从 ApiError 里取 Apple 登录接口的业务错误码（APPLE_ID_NOT_BOUND 等）。
+  /// 兼容两种后端形态：HTTP 非200（约定形态，读 DioException.response.data）；
+  /// HTTP 200 信封 {code,...}（拦截器 reject 包装，response 仍挂原始 body，
+  /// 兜底再看内层 ApiError.raw 的信封 Map）。
   String? _appleBizCode(Object e) {
-    if (e is ApiError && e.raw is DioException) {
-      final data = (e.raw as DioException).response?.data;
-      if (data is Map) return data['code']?.toString();
+    if (e is! ApiError) return null;
+    final raw = e.raw;
+    dynamic data;
+    if (raw is DioException) {
+      data = raw.response?.data;
+      if (data is! Map) {
+        final inner = raw.error;
+        if (inner is ApiError && inner.raw is Map) data = inner.raw;
+      }
+    } else if (raw is Map) {
+      data = raw;
     }
+    if (data is Map) return data['code']?.toString();
     return null;
   }
 
@@ -331,7 +343,11 @@ class AuthApi {
       final response = await _client.post(
         url,
         data: {'identity_token': identityToken, 'nonce': nonce},
-        options: Options(extra: {'ignoreUnauthorized': true}),
+        options: Options(
+          extra: {'ignoreUnauthorized': true},
+          // 后端首次/缓存过期时需外呼 Apple JWKS，全局 5s 可能不够
+          receiveTimeout: const Duration(seconds: 15),
+        ),
       );
       return TokenResponse.fromJson(response.data ?? {});
     } catch (e) {
@@ -364,7 +380,10 @@ class AuthApi {
           'username': username,
           'password': password,
         },
-        options: Options(extra: {'ignoreUnauthorized': true}),
+        options: Options(
+          extra: {'ignoreUnauthorized': true},
+          receiveTimeout: const Duration(seconds: 15),
+        ),
       );
       return TokenResponse.fromJson(response.data ?? {});
     } catch (e) {

@@ -89,7 +89,7 @@ Content-Type: application/json
 | 401 | `INVALID_APPLE_TOKEN` | token 验签失败 / 过期 / iss/aud/nonce 不符（细分原因写日志，不外露） |
 | 403 | `ACCOUNT_DISABLED` | sub 有绑定但对应账号已停用（与账密登录停用行为对齐） |
 
-错误响应体格式与你们现有错误结构对齐即可，但**必须包含可供客户端判定的 `code` 字段**，例如：
+⚠️ **错误必须按上表用 HTTP 状态码（非 200）返回**，不要按 `/api` 的习惯把错误包成 HTTP 200 + `{code, message, data}` 信封——App 端按 HTTP 状态码 + body 里的**字符串** `code` 字段分支，信封形态会导致关联流程判定失效。错误 body 为 JSON：
 
 ```json
 { "code": "APPLE_ID_NOT_BOUND", "message": "该 Apple 账号尚未关联系统账号" }
@@ -106,7 +106,7 @@ Content-Type: application/json
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `identity_token` | string | 是 | 同上（App 会在关联窗提交时**重新拉起 Apple 授权**取新 token，避免过期） |
+| `identity_token` | string | 是 | 同上（App 复用登录时的 token；若已过期收到 `INVALID_APPLE_TOKEN`，App 会自动重新拉起 Apple 授权换新 token 重试一次） |
 | `nonce` | string | 是 | 同上 |
 | `username` | string | 是 | 已有系统账号 |
 | `password` | string | 是 | 密码（校验逻辑与 `/alpha/passport/login` 完全一致，含失败限流策略） |
@@ -197,6 +197,9 @@ function verifyAppleIdentityToken(string $identityToken, string $rawNonce): obje
 2. **不要把 identity_token 全文写进日志**（它在有效期内等同登录凭证）。日志记 `sub`、JWT header 的 `kid`、失败原因即可。
 3. 接口二含密码校验，**必须套用与 `/alpha/passport/login` 相同的防爆破限流**（按 IP+username）。
 4. 日志格式沿用项目统一规范：`[time][level][module][operType][contextId] message`，module 建议 `passport.apple`，operType 如 `login`/`bind`，contextId 用请求 ID 或 sub 前 8 位。
+5. **防重放**：nonce 绑定的是"客户端 ↔ Apple"链路；服务端层面建议对**验证通过的 identity_token 做短期去重**（如 `sha256(token)` 存 redis 15 分钟，重复出现即拒），防同一 token 被截获后重放。
+6. **JWKS 缓存位置**：放应用私有目录（0700）或 Redis，**不要放 /tmp**（共享主机上可被其他本地用户预写投毒 → 认证绕过）；写缓存失败必须记日志，不可静默。
+7. **强刷节流**：kid 未命中触发的 JWKS 强制刷新要加最小间隔（如 5 分钟）——该接口未认证，否则可被随机 kid 的伪造 token 打成对 Apple 的外呼风暴。
 
 ---
 

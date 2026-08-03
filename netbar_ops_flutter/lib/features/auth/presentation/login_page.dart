@@ -550,6 +550,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
       }
       if (kDebugMode) {
         // 联调期供后端 curl 实时回放（token 约 10 分钟过期），release 不输出
+        // TODO: 与后端联调结束后删除本段（debug 日志里的 token 是有效登录凭证）
         debugPrint('[SIWA][debug] nonce=$rawNonce');
         debugPrint('[SIWA][debug] identityToken=$identityToken');
       }
@@ -578,6 +579,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
     } on SignInWithAppleAuthorizationException catch (e) {
       // 用户主动取消授权：静默返回不报错
       if (e.code != AuthorizationErrorCode.canceled && mounted) {
+        debugPrint('[SIWA] 授权失败: ${e.code} ${e.message}'); // 线上排障抓手
         setState(() => _loginError = 'Apple 授权失败，请重试');
       }
     } catch (e) {
@@ -833,6 +835,21 @@ class _LoginPageState extends ConsumerState<LoginPage>
             _buildWeChatSuccess()
           else // idle 或其他状态，显示登录按钮
             _buildWeChatButton(),
+
+          // iOS：App Store 4.8 —— 凡出现第三方登录的界面须同屏提供等权 Apple 入口
+          if (_isIOS) ...[
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: SignInWithAppleButton(
+                onPressed: _isAppleLoggingIn ? null : _handleAppleLogin,
+                text: '通过 Apple 登录',
+                height: 44,
+                style: SignInWithAppleButtonStyle.white,
+                borderRadius: const BorderRadius.all(Radius.circular(8)),
+              ),
+            ),
+          ],
 
           const SizedBox(height: 24),
           // 切换到扫码登录（用另一台设备扫）
@@ -1362,9 +1379,9 @@ class _LoginPageState extends ConsumerState<LoginPage>
         // - 其他平台：保持原有"返回微信登录"文字入口
         if (_isIOS) ...[
           SizedBox(
-            width: double.infinity,
+            width: 280, // 与上方表单同宽，防止拉满屏宽与表单错位
             child: SignInWithAppleButton(
-              onPressed: _isAppleLoggingIn ? () {} : _handleAppleLogin,
+              onPressed: _isAppleLoggingIn ? null : _handleAppleLogin,
               text: '通过 Apple 登录',
               height: 44,
               style: SignInWithAppleButtonStyle.white,
@@ -1373,7 +1390,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
           ),
           const SizedBox(height: 12),
           SizedBox(
-            width: double.infinity,
+            width: 280,
             height: 44,
             child: ElevatedButton.icon(
               onPressed: _backToWeChatLogin,
@@ -1389,6 +1406,17 @@ class _LoginPageState extends ConsumerState<LoginPage>
               label: const Text('使用微信登录', style: TextStyle(fontSize: 16)),
             ),
           ),
+          if (_isAppleLoggingIn) ...[
+            const SizedBox(height: 12),
+            const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white70,
+              ),
+            ),
+          ],
         ] else
           TextButton.icon(
             onPressed: _backToWeChatLogin,
@@ -2035,7 +2063,17 @@ class _AppleBindDialogState extends State<_AppleBindDialog> {
     try {
       final resp = await _tryBind(username, password);
       if (!mounted) return;
-      Navigator.of(context).pop(resp.accessToken);
+      // 路由已在退场（用户点了 X/遮罩）时不再 pop，防止误弹掉下层登录页；
+      // 绑定已在服务端生效，用户再点 Apple 登录会直接一键进入
+      final route = ModalRoute.of(context);
+      if (route != null && route.isCurrent) {
+        Navigator.of(context).pop(resp.accessToken);
+      }
+    } on SignInWithAppleAuthorizationException catch (e) {
+      // token 过期重授权被用户取消：静默保留弹窗，不糊英文异常串
+      if (e.code != AuthorizationErrorCode.canceled && mounted) {
+        setState(() => _error = 'Apple 授权失败，请重试');
+      }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {

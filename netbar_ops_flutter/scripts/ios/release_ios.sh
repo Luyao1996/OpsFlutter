@@ -427,6 +427,9 @@ phase_c_manual() {
   echo "   - Xcode > Settings > Accounts: 用付费 Apple ID 登录(不要 Personal Team);"
   echo "   - 打开 ios/Runner.xcworkspace -> 选 Runner target -> Signing & Capabilities:"
   echo "     勾选 Automatically manage signing, Team 选你的付费团队;"
+  echo "   - 确认 Signing & Capabilities 面板已出现 Sign In with Apple 能力且无红字"
+  echo "     (工程已内置 Runner.entitlements; 若报错先去 developer.apple.com 的"
+  echo "      Identifiers 里给 $BUNDLE_ID 勾选 Sign In with Apple);"
   echo "   - 让 Xcode 联网自动生成 Apple Distribution 证书与描述文件(看到面板无红色报错即可)。"
   if has_cmd open; then
     confirm "现在用 Xcode 打开 Runner.xcworkspace?" "y" && \
@@ -667,6 +670,9 @@ diagnose_build_log() {
   echo "${C_YEL}---- 构建错误诊断 ----${C_RST}"
   if grep -qi 'requires a development team\|No profiles\|no signing certificate' "$L"; then
     echo " * 签名问题: 回阶段 C3, 在 Xcode 勾 Automatically manage signing 并选付费 Team, 让它生成证书/描述文件。"
+  fi
+  if grep -qi 'applesignin\|Sign In with Apple' "$L"; then
+    echo " * Sign In with Apple 能力问题: 去 developer.apple.com 的 Identifiers 给 $BUNDLE_ID 勾选 Sign In with Apple, 再回 Xcode 让自动签名刷新描述文件后重试。"
   fi
   if grep -qi 'higher minimum .*deployment target\|deployment target' "$L"; then
     echo " * 某插件要求更高的最低 iOS 版本: 调高 ios/Podfile 顶部 platform :ios, 和工程 IPHONEOS_DEPLOYMENT_TARGET, 再 flutter clean 重试。"

@@ -89,11 +89,17 @@ class ApiClient {
               return handler.next(response);
             } else {
               // 失败时抛出ApiError
+              // code/message 做类型守卫：后端若返回字符串型 code（如 Apple 登录
+              // 的 APPLE_ID_NOT_BOUND），直接塞 int? 字段会在运行期抛 TypeError
               return handler.reject(
                 DioException(
                   requestOptions: response.requestOptions,
                   response: response,
-                  error: ApiError(code: code, message: message ?? '请求失败', raw: map),
+                  error: ApiError(
+                    code: code is int ? code : null,
+                    message: message is String ? message : '请求失败',
+                    raw: map,
+                  ),
                   type: DioExceptionType.badResponse,
                 ),
               );
