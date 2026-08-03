@@ -118,6 +118,9 @@ dependencies:
   open_filex: ^4.4.0          # Android 拉起 APK 安装（自带 FileProvider）
   qr_flutter: ^4.1.0          # PC 端"下载 App" hover 二维码
 
+  # Sign in with Apple（App Store 4.8：iOS 提供微信登录必须成对提供 Apple 登录）
+  sign_in_with_apple: ^7.0.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

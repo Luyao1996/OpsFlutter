@@ -306,4 +306,84 @@ class AuthApi {
     final response = await _client.get('/passport/token', queryParameters: {'pwd': sessionId});
     return QRLoginStatus.fromJson(response.data ?? {});
   }
+
+  /// 从 ApiError.raw 里取 Apple 登录接口的业务错误码（APPLE_ID_NOT_BOUND 等）
+  String? _appleBizCode(Object e) {
+    if (e is ApiError && e.raw is DioException) {
+      final data = (e.raw as DioException).response?.data;
+      if (data is Map) return data['code']?.toString();
+    }
+    return null;
+  }
+
+  /// Apple 登录（Sign in with Apple）。
+  /// 与账密登录同前缀（/alpha），成功返回同构 access_token。
+  /// 401/404 是登录场景的业务分支（凭证无效/未绑定），带 ignoreUnauthorized
+  /// 防止触发全局 401 踢登录。
+  Future<TokenResponse> loginWithApple({
+    required String identityToken,
+    required String nonce,
+  }) async {
+    final url = Uri.parse(AppConfig.baseUrl)
+        .replace(path: '/alpha/passport/login/apple')
+        .toString();
+    try {
+      final response = await _client.post(
+        url,
+        data: {'identity_token': identityToken, 'nonce': nonce},
+        options: Options(extra: {'ignoreUnauthorized': true}),
+      );
+      return TokenResponse.fromJson(response.data ?? {});
+    } catch (e) {
+      switch (_appleBizCode(e)) {
+        case 'APPLE_ID_NOT_BOUND':
+          throw AppleIdNotBoundException();
+        case 'INVALID_APPLE_TOKEN':
+          throw AppleTokenInvalidException();
+      }
+      rethrow;
+    }
+  }
+
+  /// Apple 首次登录关联已有账号（绑定 + 登录一步完成）
+  Future<TokenResponse> bindApple({
+    required String identityToken,
+    required String nonce,
+    required String username,
+    required String password,
+  }) async {
+    final url = Uri.parse(AppConfig.baseUrl)
+        .replace(path: '/alpha/passport/login/apple/bind')
+        .toString();
+    try {
+      final response = await _client.post(
+        url,
+        data: {
+          'identity_token': identityToken,
+          'nonce': nonce,
+          'username': username,
+          'password': password,
+        },
+        options: Options(extra: {'ignoreUnauthorized': true}),
+      );
+      return TokenResponse.fromJson(response.data ?? {});
+    } catch (e) {
+      if (_appleBizCode(e) == 'INVALID_APPLE_TOKEN') {
+        throw AppleTokenInvalidException();
+      }
+      rethrow;
+    }
+  }
+}
+
+/// Apple 登录：该 Apple 账号尚未关联系统账号（调用方据此弹关联窗）
+class AppleIdNotBoundException implements Exception {
+  @override
+  String toString() => '该 Apple 账号尚未关联系统账号';
+}
+
+/// Apple 登录：identityToken 无效或已过期（调用方据此重新拉起 Apple 授权）
+class AppleTokenInvalidException implements Exception {
+  @override
+  String toString() => 'Apple 授权凭证已失效，请重试';
 }

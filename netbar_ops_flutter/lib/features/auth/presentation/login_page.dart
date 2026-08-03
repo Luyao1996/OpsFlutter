@@ -3,20 +3,25 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui';
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart'
-    show kIsWeb, defaultTargetPlatform, TargetPlatform;
+    show kIsWeb, kDebugMode, debugPrint, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/storage/token_store.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/utils/adaptive_show.dart';
+import '../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../channel/presentation/platform_helper.dart';
+import '../data/auth_api.dart';
 
 // 小程序配置
 const String _wxMiniAppId = 'wxd10d1fac349fe344';
@@ -86,6 +91,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLoggingIn = false;
+  bool _isAppleLoggingIn = false; // Sign in with Apple 进行中防重入
   String? _loginError;
 
   // 时间
@@ -476,8 +482,6 @@ class _LoginPageState extends ConsumerState<LoginPage>
 
   /// 手机端微信登录 - 跳转小程序
   Future<void> _handleWeChatLogin() async {
-    // iOS 端屏蔽微信（过审整改）: 入口已隐藏，此处兜底拦截，禁止发起 weixin:// 跳转
-    if (_isIOS) return;
     setState(() {
       _qrStatus = 'loading';
       _qrError = null;
@@ -501,16 +505,93 @@ class _LoginPageState extends ConsumerState<LoginPage>
 
       // 直接尝试跳转（不使用 canLaunchUrl，因为对自定义 scheme 检测不准确）
       final uri = Uri.parse(schemeUrl);
-      await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
+      bool launched = false;
+      try {
+        launched = await launchUrl(
+          uri,
+          mode: LaunchMode.externalApplication,
+        );
+      } catch (_) {
+        // 未安装微信：iOS 抛 PlatformException，Android 返回 false，统一走降级
+        launched = false;
+      }
+      if (!launched) {
+        _qrPollTimer?.cancel();
+        _qrRefreshTimer?.cancel();
+        setState(() {
+          _qrStatus = 'error';
+          _qrError = '未检测到微信客户端，请使用账号密码登录';
+        });
+      }
     } catch (e) {
       setState(() {
         _qrStatus = 'error';
         _qrError = e.toString();
       });
     }
+  }
+
+  /// Sign in with Apple 登录（App Store 4.8：iOS 提供微信登录必须成对提供）
+  Future<void> _handleAppleLogin() async {
+    if (_isAppleLoggingIn) return;
+    setState(() {
+      _isAppleLoggingIn = true;
+      _loginError = null;
+    });
+    try {
+      final rawNonce = _generateAppleNonce();
+      final credential = await SignInWithApple.getAppleIDCredential(
+        scopes: const [], // 隐私最小化：不索取邮箱/姓名，身份只认 sub
+        nonce: sha256.convert(utf8.encode(rawNonce)).toString(),
+      );
+      final identityToken = credential.identityToken;
+      if (identityToken == null || identityToken.isEmpty) {
+        throw ApiError(message: 'Apple 授权失败，请重试');
+      }
+      if (kDebugMode) {
+        // 联调期供后端 curl 实时回放（token 约 10 分钟过期），release 不输出
+        debugPrint('[SIWA][debug] nonce=$rawNonce');
+        debugPrint('[SIWA][debug] identityToken=$identityToken');
+      }
+      final api = ref.read(authApiProvider);
+      try {
+        final tokenResp = await api.loginWithApple(
+          identityToken: identityToken,
+          nonce: rawNonce,
+        );
+        await _finishAppleLogin(tokenResp.accessToken);
+      } on AppleIdNotBoundException {
+        if (!mounted) return;
+        final accessToken = await showAdaptive<String>(
+          context,
+          (_) => _AppleBindDialog(
+            api: api,
+            identityToken: identityToken,
+            rawNonce: rawNonce,
+          ),
+          routeName: 'apple-bind',
+        );
+        if (accessToken != null && accessToken.isNotEmpty) {
+          await _finishAppleLogin(accessToken);
+        }
+      }
+    } on SignInWithAppleAuthorizationException catch (e) {
+      // 用户主动取消授权：静默返回不报错
+      if (e.code != AuthorizationErrorCode.canceled && mounted) {
+        setState(() => _loginError = 'Apple 授权失败，请重试');
+      }
+    } catch (e) {
+      if (mounted) setState(() => _loginError = e.toString());
+    } finally {
+      if (mounted) setState(() => _isAppleLoggingIn = false);
+    }
+  }
+
+  /// Apple 登录拿到业务 token 后的收尾（与账密/扫码登录后半程同路）
+  Future<void> _finishAppleLogin(String accessToken) async {
+    final authNotifier = ref.read(authNotifierProvider.notifier);
+    await authNotifier.loginWithToken(accessToken);
+    if (mounted) context.go('/monitor');
   }
 
   /// 从账号密码界面返回微信/扫码登录
@@ -1275,17 +1356,49 @@ class _LoginPageState extends ConsumerState<LoginPage>
           ),
         ),
         const SizedBox(height: 24),
-        // 微信/扫码登录入口（iOS 端屏蔽微信: 不渲染该入口，仅剩账密登录；其他平台不变）
-        if (!_isIOS)
+        // 登录方式入口：
+        // - iOS：Apple 官方按钮 + 微信按钮等权并列（App Store 4.8 要求提供
+        //   第三方登录必须成对提供 Apple 登录，且微信不得比 Apple 更突出）
+        // - 其他平台：保持原有"返回微信登录"文字入口
+        if (_isIOS) ...[
+          SizedBox(
+            width: double.infinity,
+            child: SignInWithAppleButton(
+              onPressed: _isAppleLoggingIn ? () {} : _handleAppleLogin,
+              text: '通过 Apple 登录',
+              height: 44,
+              style: SignInWithAppleButtonStyle.white,
+              borderRadius: const BorderRadius.all(Radius.circular(8)),
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: ElevatedButton.icon(
+              onPressed: _backToWeChatLogin,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF07C160), // 微信品牌绿
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              icon: const Icon(LucideIcons.messageCircle, size: 18),
+              label: const Text('使用微信登录', style: TextStyle(fontSize: 16)),
+            ),
+          ),
+        ] else
           TextButton.icon(
             onPressed: _backToWeChatLogin,
             icon: Icon(
-              _isIOS ? LucideIcons.messageCircle : LucideIcons.chevronLeft,
+              LucideIcons.chevronLeft,
               size: 16,
               color: Colors.white.withValues(alpha: 0.5),
             ),
             label: Text(
-              _isIOS ? '使用微信登录' : '返回微信登录',
+              '返回微信登录',
               style: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
             ),
           ),
@@ -1442,8 +1555,8 @@ class _LoginPageState extends ConsumerState<LoginPage>
               ],
             ),
           ],
-          // 如果是移动端，显示返回微信登录的按钮（iOS 端屏蔽微信: 不显示）
-          if (_isMobile && !_isIOS) ...[
+          // 如果是移动端，显示返回微信登录的按钮
+          if (_isMobile) ...[
             const SizedBox(height: 16),
             TextButton.icon(
               onPressed: () {
@@ -1860,6 +1973,165 @@ class _HoverableUserAvatarState extends State<_HoverableUserAvatar>
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 生成 SIWA 防重放随机串（原文送后端校验，sha256 后传给 Apple）
+String _generateAppleNonce([int length = 32]) {
+  const charset =
+      '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  final random = math.Random.secure();
+  return List.generate(
+    length,
+    (_) => charset[random.nextInt(charset.length)],
+  ).join();
+}
+
+/// Apple 登录首次使用：关联已有账号弹窗（窄屏全屏页 / 宽屏对话框）。
+/// 成功时 pop 返回业务 access_token，取消返回 null。
+class _AppleBindDialog extends StatefulWidget {
+  final AuthApi api;
+  final String identityToken;
+  final String rawNonce;
+
+  const _AppleBindDialog({
+    required this.api,
+    required this.identityToken,
+    required this.rawNonce,
+  });
+
+  @override
+  State<_AppleBindDialog> createState() => _AppleBindDialogState();
+}
+
+class _AppleBindDialogState extends State<_AppleBindDialog> {
+  final _usernameController = TextEditingController();
+  final _passwordController = TextEditingController();
+  late String _identityToken = widget.identityToken;
+  late String _rawNonce = widget.rawNonce;
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final username = _usernameController.text.trim();
+    final password = _passwordController.text;
+    if (username.isEmpty || password.isEmpty) {
+      setState(() => _error = '请输入账号和密码');
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final resp = await _tryBind(username, password);
+      if (!mounted) return;
+      Navigator.of(context).pop(resp.accessToken);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<TokenResponse> _tryBind(String username, String password) async {
+    try {
+      return await widget.api.bindApple(
+        identityToken: _identityToken,
+        nonce: _rawNonce,
+        username: username,
+        password: password,
+      );
+    } on AppleTokenInvalidException {
+      // identityToken 约 10 分钟过期（用户填表超时）：重新拉起 Apple 授权换新凭证重试一次
+      final rawNonce = _generateAppleNonce();
+      final credential = await SignInWithApple.getAppleIDCredential(
+        scopes: const [],
+        nonce: sha256.convert(utf8.encode(rawNonce)).toString(),
+      );
+      final token = credential.identityToken;
+      if (token == null || token.isEmpty) rethrow;
+      _identityToken = token;
+      _rawNonce = rawNonce;
+      return await widget.api.bindApple(
+        identityToken: _identityToken,
+        nonce: _rawNonce,
+        username: username,
+        password: password,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ResponsiveDialogScaffold(
+      title: '关联已有账号',
+      maxWidth: 420,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            '首次使用 Apple 登录，需要关联管理员分配的账号（仅需一次，之后可直接一键登录）。',
+            style: TextStyle(fontSize: 13, color: Colors.black54),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _usernameController,
+            decoration: const InputDecoration(
+              labelText: '账号',
+              border: OutlineInputBorder(),
+            ),
+            textInputAction: TextInputAction.next,
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _passwordController,
+            obscureText: true,
+            decoration: const InputDecoration(
+              labelText: '密码',
+              border: OutlineInputBorder(),
+            ),
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _submit(),
+          ),
+          // 错误提示只追加在末尾：不改变前面输入框的子级下标，键盘焦点不丢
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              _error!,
+              style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+            ),
+          ],
+        ],
+      ),
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          const SizedBox(width: 8),
+          FilledButton(
+            onPressed: _submitting ? null : _submit,
+            child: _submitting
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('关联并登录'),
+          ),
+        ],
       ),
     );
   }
