@@ -1,5 +1,10 @@
 # Sign in with Apple 后端接口技术方案（PHP）
 
+> ⚠️ **本文档已完成历史使命**：后端已按自有框架实现并定稿，实际协议（信封格式、
+> bind_ticket 票据制绑定流程、error_code 错误码表）以
+> **《SignInWithApple前端接口文档_后端定稿.md》** 为准，客户端已于 2026-08-04 适配。
+> 本文档仅保留 §4 identityToken 验证细则与 §5 安全要求作为实现参考。
+
 > 交付对象：passport 认证服务（admin.wwls.net）后端开发
 > 需求方：iOS App（智维网吧管家，Bundle ID `com.netbarops.netbarOpsFlutter`）
 > 日期：2026-08-03

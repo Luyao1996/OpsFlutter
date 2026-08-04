@@ -308,31 +308,63 @@ class AuthApi {
     return QRLoginStatus.fromJson(response.data ?? {});
   }
 
-  /// 从 ApiError 里取 Apple 登录接口的业务错误码（APPLE_ID_NOT_BOUND 等）。
-  /// 兼容两种后端形态：HTTP 非200（约定形态，读 DioException.response.data）；
-  /// HTTP 200 信封 {code,...}（拦截器 reject 包装，response 仍挂原始 body，
-  /// 兜底再看内层 ApiError.raw 的信封 Map）。
-  String? _appleBizCode(Object e) {
+  // ===== Sign in with Apple（协议以 docs/SignInWithApple前端接口文档_后端定稿.md 为准）=====
+  // 后端统一信封：HTTP 200 + {code(int:0成功/1业务失败/401认证失败), message, data,
+  // error_code(string 稳定错误码)}；code=0 时 ApiClient 拦截器已把 response.data
+  // 解包为信封里的 data，code!=0 时拦截器 reject，原始信封挂在 response.data 上。
+
+  /// 从 ApiError 提取后端信封 Map（{code, message, data, error_code}）
+  Map? _appleEnvelope(Object e) {
     if (e is! ApiError) return null;
     final raw = e.raw;
-    dynamic data;
     if (raw is DioException) {
-      data = raw.response?.data;
-      if (data is! Map) {
-        final inner = raw.error;
-        if (inner is ApiError && inner.raw is Map) data = inner.raw;
-      }
+      final data = raw.response?.data;
+      if (data is Map) return data;
+      final inner = raw.error;
+      if (inner is ApiError && inner.raw is Map) return inner.raw as Map;
     } else if (raw is Map) {
-      data = raw;
+      return raw;
     }
-    if (data is Map) return data['code']?.toString();
     return null;
   }
 
-  /// Apple 登录（Sign in with Apple）。
-  /// 与账密登录同前缀（/alpha），成功返回同构 access_token。
-  /// 401/404 是登录场景的业务分支（凭证无效/未绑定），带 ignoreUnauthorized
-  /// 防止触发全局 401 踢登录。
+  /// 后端稳定错误码 → 用户可见中文文案（对齐后端定稿文档 §6，分支必须用
+  /// error_code，禁止依赖 message 文本）
+  String _appleErrorMessage(String errorCode, String fallback) {
+    switch (errorCode) {
+      case 'INVALID_APPLE_TOKEN':
+        return 'Apple 授权凭证无效，请重新尝试 Apple 登录';
+      case 'ACCOUNT_DISABLED':
+        return '该账号已停用，请联系管理员';
+      case 'INVALID_BIND_TICKET':
+        return '本次 Apple 登录已超时，请重新点击"通过 Apple 登录"';
+      case 'BIND_TICKET_BUSY':
+        return '绑定正在处理中，请稍候重试';
+      case 'APPLE_ALREADY_BOUND':
+        return '该 Apple 账号已关联其他系统账号';
+      case 'USER_ALREADY_BOUND_APPLE':
+        return '当前系统账号已关联过其他 Apple 账号';
+      case 'RECENT_LOGIN_REQUIRED':
+        return '安全校验过期，请重新输入账号密码';
+      case 'APPLE_SERVICE_UNAVAILABLE':
+        return 'Apple 服务暂时不可用，请稍后重试';
+      case 'APPLE_LOGIN_DISABLED':
+        // 注意：iOS 端 Apple 入口是 App Store 4.8 强制项，不可据此隐藏入口
+        return 'Apple 登录服务未启用，请联系管理员或使用其他方式登录';
+      case 'TOO_MANY_ATTEMPTS':
+        return '操作过于频繁，请稍后重试';
+      case 'APPLE_LOGIN_FAILED':
+        return 'Apple 登录失败，请稍后重试';
+      case 'APPLE_BIND_FAILED':
+        return 'Apple 绑定失败，请稍后重试';
+    }
+    return fallback;
+  }
+
+  /// Apple 登录（无需业务 JWT）。
+  /// 成功（已绑定）返回业务 token；未绑定抛 [AppleIdNotBoundException]（携带
+  /// 300 秒一次性 bind_ticket）；其余业务失败抛 [AppleAuthException]。
+  /// 信封 code=401 属业务分支，带 ignoreUnauthorized 防全局踢登录。
   Future<TokenResponse> loginWithApple({
     required String identityToken,
     required String nonce,
@@ -352,58 +384,77 @@ class AuthApi {
       );
       return TokenResponse.fromJson(response.data ?? {});
     } catch (e) {
-      switch (_appleBizCode(e)) {
-        case 'APPLE_ID_NOT_BOUND':
-          throw AppleIdNotBoundException();
-        case 'INVALID_APPLE_TOKEN':
-          throw AppleTokenInvalidException();
+      final env = _appleEnvelope(e);
+      final errorCode = env?['error_code']?.toString();
+      if (errorCode == 'APPLE_NOT_BOUND') {
+        final data = env?['data'];
+        final ticket = (data is Map ? data['bind_ticket'] : null)?.toString();
+        if (ticket != null && ticket.isNotEmpty) {
+          throw AppleIdNotBoundException(bindTicket: ticket);
+        }
+        throw AppleAuthException(errorCode, 'Apple 登录失败：绑定票据缺失，请重试');
+      }
+      if (errorCode != null && errorCode.isNotEmpty) {
+        throw AppleAuthException(
+          errorCode,
+          _appleErrorMessage(errorCode, e is ApiError ? e.message : '登录失败'),
+        );
       }
       rethrow;
     }
   }
 
-  /// Apple 首次登录关联已有账号（绑定 + 登录一步完成）
-  Future<TokenResponse> bindApple({
-    required String identityToken,
-    required String nonce,
-    required String username,
-    required String password,
-  }) async {
+  /// 消费 bind_ticket 完成 Apple 绑定。
+  /// 前置：必须刚用账密登录成功（600 秒近期认证窗口），拦截器自动携带该 JWT；
+  /// 成功后端不换发 token，继续用当前 JWT。失败抛 [AppleAuthException]。
+  Future<void> bindApple({required String bindTicket}) async {
     final url = Uri.parse(AppConfig.baseUrl)
         .replace(path: '/alpha/passport/login/apple/bind')
         .toString();
     try {
-      final response = await _client.post(
+      await _client.post(
         url,
-        data: {
-          'identity_token': identityToken,
-          'nonce': nonce,
-          'username': username,
-          'password': password,
-        },
+        data: {'bind_ticket': bindTicket},
         options: Options(
           extra: {'ignoreUnauthorized': true},
           receiveTimeout: const Duration(seconds: 15),
         ),
       );
-      return TokenResponse.fromJson(response.data ?? {});
+      // code=0 即成功，data 为空数组无需解析
     } catch (e) {
-      if (_appleBizCode(e) == 'INVALID_APPLE_TOKEN') {
-        throw AppleTokenInvalidException();
+      final env = _appleEnvelope(e);
+      final errorCode = env?['error_code']?.toString();
+      if (errorCode != null && errorCode.isNotEmpty) {
+        throw AppleAuthException(errorCode, _appleErrorMessage(errorCode, '绑定失败'));
+      }
+      // code=401 无 error_code（框架层认证失败）：按后端文档提示重新登录
+      if (env?['code'] == 401) {
+        throw AppleAuthException(null, '登录状态校验失败，请重新尝试 Apple 登录');
       }
       rethrow;
     }
   }
 }
 
-/// Apple 登录：该 Apple 账号尚未关联系统账号（调用方据此弹关联窗）
+/// Apple 登录：该 Apple 账号尚未绑定系统账号（正常业务分支，非失败）。
+/// 携带后端签发的一次性绑定票据（300 秒有效、只能消费一次）。
 class AppleIdNotBoundException implements Exception {
+  final String bindTicket;
+
+  AppleIdNotBoundException({required this.bindTicket});
+
   @override
   String toString() => '该 Apple 账号尚未关联系统账号';
 }
 
-/// Apple 登录：identityToken 无效或已过期（调用方据此重新拉起 Apple 授权）
-class AppleTokenInvalidException implements Exception {
+/// Apple 登录/绑定业务失败。[errorCode] 为后端稳定错误码（可能为 null，
+/// 如信封 code=401 无 error_code 的框架层失败），[message] 为用户可见文案。
+class AppleAuthException implements Exception {
+  final String? errorCode;
+  final String message;
+
+  AppleAuthException(this.errorCode, this.message);
+
   @override
-  String toString() => 'Apple 授权凭证已失效，请重试';
+  String toString() => message;
 }

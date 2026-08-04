@@ -561,20 +561,15 @@ class _LoginPageState extends ConsumerState<LoginPage>
           nonce: rawNonce,
         );
         await _finishAppleLogin(tokenResp.accessToken);
-      } on AppleIdNotBoundException {
+      } on AppleIdNotBoundException catch (nb) {
         if (!mounted) return;
-        final accessToken = await showAdaptive<String>(
+        final loggedIn = await showAdaptive<bool>(
           context,
-          (_) => _AppleBindDialog(
-            api: api,
-            identityToken: identityToken,
-            rawNonce: rawNonce,
-          ),
+          (_) => _AppleBindDialog(bindTicket: nb.bindTicket),
           routeName: 'apple-bind',
         );
-        if (accessToken != null && accessToken.isNotEmpty) {
-          await _finishAppleLogin(accessToken);
-        }
+        // 弹窗内已完成账密登录与绑定尝试，此处只负责跳转
+        if (loggedIn == true && mounted) context.go('/monitor');
       }
     } on SignInWithAppleAuthorizationException catch (e) {
       // 用户主动取消授权：静默返回不报错
@@ -2018,27 +2013,21 @@ String _generateAppleNonce([int length = 32]) {
 }
 
 /// Apple 登录首次使用：关联已有账号弹窗（窄屏全屏页 / 宽屏对话框）。
-/// 成功时 pop 返回业务 access_token，取消返回 null。
-class _AppleBindDialog extends StatefulWidget {
-  final AuthApi api;
-  final String identityToken;
-  final String rawNonce;
+/// 后端票据制流程（docs/SignInWithApple前端接口文档_后端定稿.md §5）：
+/// 弹窗内完成账密登录（600 秒近期认证窗口）→ 消费一次性 bind_ticket 绑定。
+/// 登录成功即 pop(true)（绑定失败不阻断进入系统），取消返回 null。
+class _AppleBindDialog extends ConsumerStatefulWidget {
+  final String bindTicket;
 
-  const _AppleBindDialog({
-    required this.api,
-    required this.identityToken,
-    required this.rawNonce,
-  });
+  const _AppleBindDialog({required this.bindTicket});
 
   @override
-  State<_AppleBindDialog> createState() => _AppleBindDialogState();
+  ConsumerState<_AppleBindDialog> createState() => _AppleBindDialogState();
 }
 
-class _AppleBindDialogState extends State<_AppleBindDialog> {
+class _AppleBindDialogState extends ConsumerState<_AppleBindDialog> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
-  late String _identityToken = widget.identityToken;
-  late String _rawNonce = widget.rawNonce;
   bool _submitting = false;
   String? _error;
 
@@ -2061,51 +2050,31 @@ class _AppleBindDialogState extends State<_AppleBindDialog> {
       _error = null;
     });
     try {
-      final resp = await _tryBind(username, password);
+      // 1) 账密登录建立登录态：后端要求绑定必须携带"近期账密认证"的 JWT
+      //    （600 秒窗口）；login 内部落 token + 拉 profile，与正常登录同路
+      await ref.read(authNotifierProvider.notifier).login(username, password);
+
+      // 2) 拦截器此时自动携带新 JWT，立即消费一次性票据完成绑定。
+      //    登录已成功，绑定失败不阻断进入系统——下次 Apple 登录会重走本流程
+      try {
+        await ref
+            .read(authApiProvider)
+            .bindApple(bindTicket: widget.bindTicket);
+      } catch (bindErr) {
+        debugPrint('[SIWA] 绑定失败(登录已成功,不阻断): $bindErr');
+      }
+
       if (!mounted) return;
-      // 路由已在退场（用户点了 X/遮罩）时不再 pop，防止误弹掉下层登录页；
-      // 绑定已在服务端生效，用户再点 Apple 登录会直接一键进入
+      // 路由已在退场（用户点了 X/遮罩）时不再 pop，防止误弹掉下层登录页
       final route = ModalRoute.of(context);
       if (route != null && route.isCurrent) {
-        Navigator.of(context).pop(resp.accessToken);
-      }
-    } on SignInWithAppleAuthorizationException catch (e) {
-      // token 过期重授权被用户取消：静默保留弹窗，不糊英文异常串
-      if (e.code != AuthorizationErrorCode.canceled && mounted) {
-        setState(() => _error = 'Apple 授权失败，请重试');
+        Navigator.of(context).pop(true);
       }
     } catch (e) {
+      // 账密登录失败（密码错误/网络等）：留在弹窗内提示，可修改后重试
       if (mounted) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _submitting = false);
-    }
-  }
-
-  Future<TokenResponse> _tryBind(String username, String password) async {
-    try {
-      return await widget.api.bindApple(
-        identityToken: _identityToken,
-        nonce: _rawNonce,
-        username: username,
-        password: password,
-      );
-    } on AppleTokenInvalidException {
-      // identityToken 约 10 分钟过期（用户填表超时）：重新拉起 Apple 授权换新凭证重试一次
-      final rawNonce = _generateAppleNonce();
-      final credential = await SignInWithApple.getAppleIDCredential(
-        scopes: const [],
-        nonce: sha256.convert(utf8.encode(rawNonce)).toString(),
-      );
-      final token = credential.identityToken;
-      if (token == null || token.isEmpty) rethrow;
-      _identityToken = token;
-      _rawNonce = rawNonce;
-      return await widget.api.bindApple(
-        identityToken: _identityToken,
-        nonce: _rawNonce,
-        username: username,
-        password: password,
-      );
     }
   }
 
