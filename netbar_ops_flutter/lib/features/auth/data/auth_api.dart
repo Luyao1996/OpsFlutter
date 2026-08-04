@@ -50,9 +50,10 @@ class User {
   String? get email => null;
   String? get phone => phoneNumber;
 
-  // 与后端一致的管理员判断逻辑
-  /// 总部管理员：group_id 为空（0 或 null）
-  bool get isTopManager => groupId == null || groupId == 0;
+  // 与后端一致的管理员判断逻辑（对齐 toolboxPage permissions.js isHeadquartersAdmin）
+  /// 总部管理员：group_id 为空（0 或 null）且 is_manager 为 true。
+  /// 总部普通成员（group_id 空但非 manager）不是管理员。
+  bool get isTopManager => (groupId == null || groupId == 0) && isManager;
   /// 分部管理员：group_id > 0 且 is_manager 为 true
   bool get isSubManager => (groupId != null && groupId! > 0) && isManager;
   /// 普通用户：group_id > 0 且 is_manager 为 false

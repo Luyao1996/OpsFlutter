@@ -24,8 +24,10 @@ class PermissionService {
 
   PermissionService({required this.groupId, required this.isManager, this.permissions = const []});
 
-  /// 总部管理员：group_id 为空（0 或 null）
-  bool get isTopManager => groupId == null || groupId == 0;
+  /// 总部管理员：group_id 为空（0 或 null）且 is_manager 为 true
+  /// （对齐 toolboxPage permissions.js isHeadquartersAdmin = 总部人员 && is_manager；
+  ///  总部普通成员不是管理员，走 permissions 数组细分权限）
+  bool get isTopManager => (groupId == null || groupId == 0) && isManager;
 
   /// 分部管理员：group_id > 0 且 is_manager 为 true
   bool get isSubManager => (groupId != null && groupId! > 0) && isManager;

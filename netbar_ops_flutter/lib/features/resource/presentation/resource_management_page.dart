@@ -722,11 +722,11 @@ class _ResourceManagementPageState
     return auth.user?.id ?? 0;
   }
 
-  /// 是否是超级管理员（总部管理员，group_id == 0 或 null）
+  /// 是否是超级管理员（总部管理员）：复用 User.isTopManager 统一判定
+  /// （group_id 空且 is_manager；总部普通成员不算）
   bool get _isSuperAdmin {
     final auth = ref.watch(authNotifierProvider);
-    final groupId = auth.user?.groupId;
-    return groupId == null || groupId == 0;
+    return auth.user?.isTopManager == true;
   }
 
   /// 是否是管理员（SuperAdmin 或 分部管理员）
