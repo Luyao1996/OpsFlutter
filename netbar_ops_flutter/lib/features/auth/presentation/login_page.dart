@@ -540,10 +540,13 @@ class _LoginPageState extends ConsumerState<LoginPage>
     });
     try {
       final rawNonce = _generateAppleNonce();
+      // 30 秒超时自愈：系统授权面板卡死（模拟器认证服务/Metal 故障等）时
+      // 复位按钮状态，不必重启 App。注意超时不会关闭系统面板；用户若在超时后
+      // 才完成授权，该次结果被忽略，重新点按钮即可
       final credential = await SignInWithApple.getAppleIDCredential(
         scopes: const [], // 隐私最小化：不索取邮箱/姓名，身份只认 sub
         nonce: sha256.convert(utf8.encode(rawNonce)).toString(),
-      );
+      ).timeout(const Duration(seconds: 30));
       final identityToken = credential.identityToken;
       if (identityToken == null || identityToken.isEmpty) {
         throw ApiError(message: 'Apple 授权失败，请重试');
@@ -570,6 +573,10 @@ class _LoginPageState extends ConsumerState<LoginPage>
         );
         // 弹窗内已完成账密登录与绑定尝试，此处只负责跳转
         if (loggedIn == true && mounted) context.go('/monitor');
+      }
+    } on TimeoutException {
+      if (mounted) {
+        setState(() => _loginError = 'Apple 授权超时，请重试');
       }
     } on SignInWithAppleAuthorizationException catch (e) {
       // 用户主动取消授权：静默返回不报错
@@ -613,6 +620,12 @@ class _LoginPageState extends ConsumerState<LoginPage>
     // 键盘弹出或窗口过矮（iPad 兼容窗口/小屏/分屏）时收起时钟与底部装饰，
     // 防止 Positioned 元素被压进登录表单造成控件重叠（App Store Guideline 4 拒审点）
     final compact = media.viewInsets.bottom > 0 || media.size.height < 700;
+    // 手机端微信/扫码视图的卡片较高（图标+状态区+双登录按钮+切换入口），
+    // 与顶部时钟/日期装饰必然纵向重叠（iOS 模拟器实测），该场景单独收起时钟；
+    // 底部备案号/版本区不受影响，仍按 compact 规则
+    final hideClock = compact ||
+        (_isMobile &&
+            (_viewState == 'wechat_mobile' || _viewState == 'qrcode'));
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(color: Color(0xFF1a1a2e)),
@@ -622,7 +635,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
           // TextField 焦点丢失导致键盘弹出后立即收起（收起后 compact 又翻回，死循环）
           children: [
             _buildAuroraBackground(),
-            Visibility(visible: !compact, child: _buildTimeDisplay()),
+            Visibility(visible: !hideClock, child: _buildTimeDisplay()),
             Center(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(vertical: 24),
