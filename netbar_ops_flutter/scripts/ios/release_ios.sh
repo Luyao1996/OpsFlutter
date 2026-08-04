@@ -548,7 +548,7 @@ check_privacy_manifest() {
 # build 号自增并写回 pubspec.yaml
 bump_build_number() {
   local noconfirm="${1:-}"
-  local verline cur_name cur_build new_build
+  local verline cur_name cur_build new_build input_name
   verline="$(grep -E '^version:' "$PUBSPEC" | head -n1)"
   # 形如 version: 1.0.0+3
   cur_name="$(printf '%s' "$verline" | sed -E 's/^version:[[:space:]]*([0-9.]+)\+([0-9]+).*/\1/')"
@@ -557,6 +557,21 @@ bump_build_number() {
     die "无法从 pubspec.yaml 解析 build 号" \
         "当前 version 行: $verline" \
         "请确保格式为  version: x.y.z+N  后重跑。"
+  fi
+  # 版本号(x.y.z)确认: 回车用当前值, 可输入新版本号。
+  # App Store 某版本上架后其提交通道即关闭(altool 409 Invalid Pre-Release Train/
+  # CFBundleShortVersionString must be higher), 再次发版必须在这里输入更高版本号。
+  if [ "$noconfirm" != "--yes" ]; then
+    echo ""
+    while :; do
+      read -r -p "本次上传将使用版本号: ${C_BOLD}${cur_name}${C_RST} (回车确认, 或输入新版本号如 1.0.1): " input_name || input_name=""
+      [ -z "$input_name" ] && break
+      if printf '%s' "$input_name" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+        cur_name="$input_name"
+        break
+      fi
+      echo "  格式不正确: '$input_name' (应为 x.y.z 形式, 如 1.0.1), 请重输。"
+    done
   fi
   new_build=$(( cur_build + 1 ))
   # 与上次上传成功的号比较, 取更大者+0(确保严格递增)
@@ -570,8 +585,8 @@ bump_build_number() {
       die "已取消" "如需手动指定版本, 修改 pubspec.yaml 的 version 行后重跑 --from D"
   fi
   cp "$PUBSPEC" "$PUBSPEC.bak.$RUN_ID"
-  # 仅替换 version 行的 build 号
-  sed -i.sedtmp -E "s/^(version:[[:space:]]*[0-9.]+)\+[0-9]+/\1+$new_build/" "$PUBSPEC"
+  # 写回版本号(可能在上方交互中被修改)与新 build 号
+  sed -i.sedtmp -E "s/^version:[[:space:]]*[0-9.]+\+[0-9]+/version: $cur_name+$new_build/" "$PUBSPEC"
   rm -f "$PUBSPEC.sedtmp"
   BUILD_NAME="$cur_name"; BUILD_NUMBER="$new_build"
   log_ok "pubspec.yaml 已更新为 $cur_name+$new_build (备份: $PUBSPEC.bak.$RUN_ID)" "version"
