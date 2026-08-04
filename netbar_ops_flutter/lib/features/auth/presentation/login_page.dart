@@ -540,13 +540,14 @@ class _LoginPageState extends ConsumerState<LoginPage>
     });
     try {
       final rawNonce = _generateAppleNonce();
-      // 30 秒超时自愈：系统授权面板卡死（模拟器认证服务/Metal 故障等）时
-      // 复位按钮状态，不必重启 App。注意超时不会关闭系统面板；用户若在超时后
-      // 才完成授权，该次结果被忽略，重新点按钮即可
+      // 2 分钟超时自愈：系统授权面板卡死（模拟器认证服务/Metal 故障等）时
+      // 复位按钮状态，不必重启 App。留足首次登录输 Apple 密码/2FA 的时间；
+      // 注意超时不会关闭系统面板，用户若在超时后才完成授权，该次结果被忽略，
+      // 重新点按钮即可
       final credential = await SignInWithApple.getAppleIDCredential(
         scopes: const [], // 隐私最小化：不索取邮箱/姓名，身份只认 sub
         nonce: sha256.convert(utf8.encode(rawNonce)).toString(),
-      ).timeout(const Duration(seconds: 30));
+      ).timeout(const Duration(minutes: 2));
       final identityToken = credential.identityToken;
       if (identityToken == null || identityToken.isEmpty) {
         throw ApiError(message: 'Apple 授权失败，请重试');
