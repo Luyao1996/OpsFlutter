@@ -357,6 +357,8 @@ class AuthApi {
         return 'Apple 登录失败，请稍后重试';
       case 'APPLE_BIND_FAILED':
         return 'Apple 绑定失败，请稍后重试';
+      case 'APPLE_UNBIND_FAILED':
+        return '解绑失败，请稍后重试';
     }
     return fallback;
   }
@@ -430,6 +432,36 @@ class AuthApi {
       // code=401 无 error_code（框架层认证失败）：按后端文档提示重新登录
       if (env?['code'] == 401) {
         throw AppleAuthException(null, '登录状态校验失败，请重新尝试 Apple 登录');
+      }
+      rethrow;
+    }
+  }
+
+  /// 解除当前用户的 Apple 绑定（幂等：未绑定时调用也返回成功）。
+  /// 前置：必须刚完成账密登录（600 秒近期认证窗口），拦截器自动携带该新 JWT；
+  /// 空请求体，解绑对象始终是 JWT 对应的当前用户（后端定稿文档 §5）。
+  Future<void> unbindApple() async {
+    final url = Uri.parse(AppConfig.baseUrl)
+        .replace(path: '/alpha/passport/apple/unbind')
+        .toString();
+    try {
+      await _client.post(
+        url,
+        data: const <String, dynamic>{},
+        options: Options(
+          extra: {'ignoreUnauthorized': true},
+          receiveTimeout: const Duration(seconds: 15),
+        ),
+      );
+      // code=0 即成功，data 为空数组无需解析
+    } catch (e) {
+      final env = _appleEnvelope(e);
+      final errorCode = env?['error_code']?.toString();
+      if (errorCode != null && errorCode.isNotEmpty) {
+        throw AppleAuthException(errorCode, _appleErrorMessage(errorCode, '解绑失败'));
+      }
+      if (env?['code'] == 401) {
+        throw AppleAuthException(null, '登录状态校验失败，请重新验证密码');
       }
       rethrow;
     }

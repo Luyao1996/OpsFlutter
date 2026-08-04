@@ -225,9 +225,73 @@ POST /alpha/passport/login
 
 该响应可能没有 `error_code`。前端遇到 `code = 401` 时应要求用户重新完成 Alpha 账号密码登录，再重新调用绑定接口。
 
-## 5. 推荐绑定流程
+## 5. Apple 账号解绑
 
-### 5.1 流程说明
+### 5.1 接口
+
+```http
+POST /alpha/passport/apple/unbind
+Authorization: Bearer {recent_password_login_access_token}
+Content-Type: application/json
+
+{}
+```
+
+请求体不接收 `user_id`、Apple `sub` 或密码。解绑目标始终是 Bearer JWT 对应的当前用户。
+
+### 5.2 前置条件
+
+解绑属于账号安全操作，必须满足：
+
+1. 用户重新完成 Alpha 账号密码登录。
+2. 使用该次登录返回的正常业务 JWT 调用解绑接口。
+3. JWT 对应的近期认证窗口未超过 600 秒。
+4. Apple 登录、微信或二维码登录、refresh、临时 JWT、接口口令、Query Token 和仅存在于 Session 中的 JWT 均不能解绑。
+
+不要在解绑接口中再次提交密码，也不要通过刷新 JWT 延长近期认证窗口。
+
+### 5.3 解绑成功
+
+```json
+{
+  "code": 0,
+  "message": "Apple 账号解绑成功",
+  "data": []
+}
+```
+
+当前用户没有 Apple 绑定时也返回相同成功响应，因此前端可以安全重试，但应避免连续点击。
+
+解绑成功后：
+
+- 当前业务 JWT 继续有效，不会强制退出当前会话。
+- 原 Apple ID 以后不能直接登录；再次登录时返回 `APPLE_NOT_BOUND`。
+- 如需恢复 Apple 登录，必须重新进行 Alpha 账号密码登录并走现有绑定票据流程。
+
+### 5.4 推荐解绑流程
+
+```text
+用户在账号安全页点击解除 Apple 绑定
+    ↓
+前端二次确认
+    ↓
+用户重新完成 Alpha 账号密码登录
+    ↓
+POST /alpha/passport/apple/unbind
+Authorization: Bearer {recent_password_login_access_token}
+    ├─ code=0
+    │    └─ 清除前端 Apple 已绑定状态，继续保留当前会话
+    │
+    ├─ error_code=RECENT_LOGIN_REQUIRED 或 code=401
+    │    └─ 重新进行 Alpha 账号密码登录，不使用 refresh、Apple 或微信登录
+    │
+    └─ error_code=APPLE_UNBIND_FAILED
+         └─ 保留当前展示状态，提示稍后重试或重新查询账号状态
+```
+
+## 6. 推荐绑定流程
+
+### 6.1 流程说明
 
 ```text
 用户点击 Apple 登录
@@ -255,7 +319,7 @@ POST /alpha/passport/login/apple
               └─ 根据 error_code 或 code 提示重试、重新登录或重新获取票据
 ```
 
-### 5.2 完整 HTTP 示例
+### 6.2 完整 HTTP 示例
 
 第一步，尝试 Apple 登录：
 
@@ -334,7 +398,7 @@ Content-Type: application/json
 
 第四步，可选验证：退出当前账号后重新执行 Apple 登录。此时接口应直接返回新的业务 JWT。
 
-## 6. 稳定错误码
+## 7. 稳定错误码
 
 | `error_code` | 可能出现的接口 | 含义 | 前端建议 |
 | --- | --- | --- | --- |
@@ -345,16 +409,17 @@ Content-Type: application/json
 | `BIND_TICKET_BUSY` | Apple 绑定 | 同一票据正在被另一个请求处理。 | 禁止并发提交；短暂等待后查询结果或重试一次。 |
 | `APPLE_ALREADY_BOUND` | Apple 绑定 | 该 Apple 身份已绑定其他系统账号。 | 提示用户切换正确的系统账号；不要自动覆盖绑定。 |
 | `USER_ALREADY_BOUND_APPLE` | Apple 绑定 | 当前系统账号已绑定其他 Apple 身份。 | 提示当前账号已有 Apple 绑定；不要自动覆盖。 |
-| `RECENT_LOGIN_REQUIRED` | Apple 绑定 | 当前 JWT 没有匹配的近期账号密码认证证明。 | 重新进行 Alpha 账号密码登录，并使用新返回的 JWT 立即绑定。 |
+| `RECENT_LOGIN_REQUIRED` | Apple 绑定、解绑 | 当前 JWT 没有匹配的近期账号密码认证证明。 | 重新进行 Alpha 账号密码登录，并使用新返回的 JWT 立即完成敏感操作。 |
 | `APPLE_SERVICE_UNAVAILABLE` | Apple 登录 | Apple 公钥服务暂时不可用且后端无可用缓存。 | 提示稍后重试，避免快速循环请求。 |
-| `APPLE_LOGIN_DISABLED` | Apple 登录、绑定 | 后端尚未启用 Apple 登录。 | 隐藏或禁用 Apple 登录入口，并上报环境配置问题。 |
-| `TOO_MANY_ATTEMPTS` | Apple 登录、绑定 | 请求触发 IP、用户或 Apple subject 限流。 | 根据产品策略等待后重试，禁止立即循环请求。 |
+| `APPLE_LOGIN_DISABLED` | Apple 登录、绑定、解绑 | 后端尚未启用 Apple 登录。 | 隐藏或禁用 Apple 相关入口，并上报环境配置问题。 |
+| `TOO_MANY_ATTEMPTS` | Apple 登录、绑定、解绑 | 请求触发 IP、用户或 Apple subject 限流。 | 根据产品策略等待后重试，禁止立即循环请求。 |
 | `APPLE_LOGIN_FAILED` | Apple 登录 | 后端发生未预期登录异常。 | 展示通用失败提示并允许稍后重试。 |
 | `APPLE_BIND_FAILED` | Apple 绑定 | 后端发生未预期绑定异常。 | 保留当前登录态；必要时重新获取票据后重试。 |
+| `APPLE_UNBIND_FAILED` | Apple 解绑 | 后端发生未预期解绑异常。 | 不假定绑定已删除；保留当前展示状态并允许稍后重试。 |
 
 前端不得根据 `message` 精确文本判断错误类型，必须优先使用 `error_code`。
 
-## 7. 前端状态处理建议
+## 8. 前端状态处理建议
 
 建议至少维护以下状态：
 
@@ -364,6 +429,7 @@ apple_authorizing
 apple_logging_in
 existing_account_login_required
 binding
+unbinding
 authenticated
 failed
 ```
@@ -376,8 +442,9 @@ failed
 - `RECENT_LOGIN_REQUIRED` 应重新走现有账号登录，不应通过刷新 JWT 解决。
 - `code = 401` 时清理失效业务 JWT，但不要把完整 Token 写入日志。
 - 绑定成功后不需要替换当前 JWT，也不需要再次调用绑定接口。
+- 解绑成功后不需要退出当前会话，但应立即更新账号安全页的 Apple 绑定展示。
 
-## 8. 联调检查清单
+## 9. 联调检查清单
 
 - [ ] 相同的原始 nonce 同时用于 Apple 授权和后端 Apple 登录请求。
 - [ ] 已绑定 Apple 身份可以直接获得业务 JWT。
@@ -387,4 +454,7 @@ failed
 - [ ] 绑定请求不提交 `identity_token`、`nonce` 或密码。
 - [ ] 绑定成功后继续使用原业务 JWT。
 - [ ] 票据过期、近期登录过期、重复绑定和账号冲突均按稳定错误码处理。
+- [ ] 解绑前重新完成 Alpha 账号密码登录，且请求体不提交用户 ID、Apple sub 或密码。
+- [ ] 未绑定状态重复解绑仍返回成功。
+- [ ] 解绑后当前 JWT 继续有效，原 Apple ID 再次登录返回 `APPLE_NOT_BOUND`。
 - [ ] 前端日志、埋点和崩溃报告不包含完整凭证。

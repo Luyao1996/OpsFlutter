@@ -13,7 +13,9 @@ import '../../debug/crash_log_viewer_page.dart';
 import '../../debug/crash_log_export_helper.dart' as crash_export;
 import '../../../shared/providers/app_providers.dart';
 import '../../../core/storage/token_store.dart';
+import '../../../shared/utils/adaptive_show.dart';
 import '../../../shared/utils/top_notice.dart';
+import '../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../update/data/apk_downloader.dart';
 import '../../update/data/controller_downloader.dart';
 import '../../update/data/update_api.dart';
@@ -274,6 +276,7 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
               _buildExportCrashLogButton(),
               _buildCrashTestButton(),
               _buildCheckUpdateButton(),
+              _buildUnbindAppleButton(),
               _buildLogoutButton(),
             ],
           ),
@@ -373,6 +376,7 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
               _buildExportCrashLogButton(),
               _buildCrashTestButton(),
               _buildCheckUpdateButton(),
+              _buildUnbindAppleButton(),
               _buildLogoutButton(),
             ],
           ),
@@ -667,6 +671,54 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
         ),
       ),
     );
+  }
+
+  /// 解绑 Apple 账号（全平台可见）。后端无绑定状态查询接口，入口恒显，
+  /// 靠接口幂等兜底（未绑定时调用同样返回成功）
+  Widget _buildUnbindAppleButton() {
+    return InkWell(
+      onTap: _handleUnbindApple,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        width: double.infinity,
+        constraints: const BoxConstraints(minHeight: 48),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Row(
+          children: [
+            Icon(LucideIcons.unlink, size: 18, color: Color(0xFF6B7280)),
+            SizedBox(width: 12),
+            Text(
+              '解绑 Apple 账号',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF374151),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleUnbindApple() async {
+    final user = ref.read(authNotifierProvider).user;
+    final username = user?.username ?? '';
+    if (username.isEmpty) {
+      showTopNotice(context, '未获取到当前账号信息', level: NoticeLevel.error);
+      return;
+    }
+    final ok = await showAdaptive<bool>(
+      context,
+      (_) => _AppleUnbindDialog(username: username),
+      routeName: 'apple-unbind',
+    );
+    if (ok == true && mounted) {
+      showTopNotice(context, '已解除 Apple 账号绑定', level: NoticeLevel.success);
+    }
   }
 
   Widget _buildLogoutButton() {
@@ -1249,5 +1301,134 @@ class _NoScrollbarScrollBehavior extends MaterialScrollBehavior {
   @override
   Widget buildScrollbar(BuildContext context, Widget child, ScrollableDetails details) {
     return child;
+  }
+}
+
+/// 解绑 Apple 账号：密码验证弹窗（窄屏全屏页 / 宽屏对话框）。
+/// 后端要求解绑必须携带"刚完成账密登录"的 JWT（600 秒近期认证窗口，
+/// docs/SignInWithApple前端接口文档_后端定稿.md §5），故先重登再解绑；
+/// 同账号重登对当前会话无感。成功 pop(true)，取消返回 null。
+class _AppleUnbindDialog extends ConsumerStatefulWidget {
+  final String username;
+
+  const _AppleUnbindDialog({required this.username});
+
+  @override
+  ConsumerState<_AppleUnbindDialog> createState() => _AppleUnbindDialogState();
+}
+
+class _AppleUnbindDialogState extends ConsumerState<_AppleUnbindDialog> {
+  final _passwordController = TextEditingController();
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final password = _passwordController.text;
+    if (password.isEmpty) {
+      setState(() => _error = '请输入登录密码');
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      // 1) 重新账密登录取新 JWT（600 秒近期认证窗口，旧会话 token 会被
+      //    RECENT_LOGIN_REQUIRED 拒绝）
+      await ref
+          .read(authNotifierProvider.notifier)
+          .login(widget.username, password);
+      // 2) 拦截器自动携带新 JWT 调解绑（幂等：未绑定也返回成功）
+      await ref.read(authApiProvider).unbindApple();
+      if (!mounted) return;
+      // 路由已在退场（用户点了 X/遮罩）时不再 pop，防止误弹掉下层页面
+      final route = ModalRoute.of(context);
+      if (route != null && route.isCurrent) {
+        Navigator.of(context).pop(true);
+      }
+    } catch (e) {
+      // 密码错误 / 解绑失败：留在弹窗内提示，可修改后重试
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ResponsiveDialogScaffold(
+      title: '解绑 Apple 账号',
+      maxWidth: 420,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            '解绑后该 Apple 账号将无法直接登录本系统（之后可重新绑定）。'
+            '为保障账号安全，请重新验证登录密码。',
+            style: TextStyle(fontSize: 13, color: Colors.black54),
+          ),
+          const SizedBox(height: 16),
+          InputDecorator(
+            decoration: const InputDecoration(
+              labelText: '当前账号',
+              border: OutlineInputBorder(),
+            ),
+            child: Text(
+              widget.username,
+              style: const TextStyle(fontSize: 14, color: Color(0xFF6B7280)),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _passwordController,
+            obscureText: true,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: '登录密码',
+              border: OutlineInputBorder(),
+            ),
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _submit(),
+          ),
+          // 错误提示只追加在末尾：不改变前面输入框的子级下标，键盘焦点不丢
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              _error!,
+              style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+            ),
+          ],
+        ],
+      ),
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          const SizedBox(width: 8),
+          FilledButton(
+            onPressed: _submitting ? null : _submit,
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626), // 解绑属安全敏感操作，红色警示
+            ),
+            child: _submitting
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('确认解绑'),
+          ),
+        ],
+      ),
+    );
   }
 }
