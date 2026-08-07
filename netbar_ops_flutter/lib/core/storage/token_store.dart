@@ -12,6 +12,12 @@ class TokenStore {
   static SharedPreferences? _prefs;
   static Future<void> Function()? onBeforeClearAuth;
 
+  /// clearAuth 完成后的清理钩子。
+  /// 由 [ApiCacheStore] 在 init 时注册，用于换账号/登出时清空接口缓存，
+  /// 防止下一个登录的人看到上一个人的数据。
+  /// 反向注册而非直接 import，保持 storage 层不依赖 cache 层。
+  static Future<void> Function()? onAfterClearAuth;
+
   /// 初始化
   static Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
@@ -113,6 +119,9 @@ class TokenStore {
     await _prefs?.remove(_autoConnectKey);
     // 历史遗留：旧版本曾存过 token_expire_at，主动清掉避免残留
     await _prefs?.remove('token_expire_at');
+    try {
+      await onAfterClearAuth?.call();
+    } catch (_) {}
   }
 
   /// 是否已登录

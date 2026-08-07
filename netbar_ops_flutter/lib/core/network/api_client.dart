@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
+import '../cache/api_cache_interceptor.dart';
 import '../config/app_config.dart';
 import '../storage/token_store.dart';
 import 'http_log_interceptor.dart';
@@ -121,6 +122,11 @@ class ApiClient {
 
     // 统一日志拦截器（放在业务拦截器之后，能看到完整 headers）
     _dio.interceptors.add(HttpLogInterceptor());
+
+    // 离线缓存拦截器（必须挂在最后一环）：
+    // - onResponse 顺序在解包之后，缓存到的是剥壳后的 data，与各 API 的 fromJson 同构；
+    // - onError 顺序在 401 处理与日志之后，只兜网络类失败，不干扰既有错误链路。
+    _dio.interceptors.add(ApiCacheInterceptor());
   }
 
   static ApiClient get instance {

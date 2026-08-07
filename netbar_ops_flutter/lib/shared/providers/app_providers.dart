@@ -83,11 +83,26 @@ class AuthNotifier extends StateNotifier<AuthState> {
   Timer? _profileWatchdog;
   bool _handlingInvalid = false;
 
-  AuthNotifier(this._authApi)
-      : super(AuthState(isLoggedIn: TokenStore.isLoggedIn())) {
+  AuthNotifier(this._authApi) : super(_initialState()) {
     if (state.isLoggedIn && WindowRuntime.isMainWindow) {
       _startWatchdog();
     }
+  }
+
+  /// 启动初值：登录态与用户信息都从本地恢复，不依赖网络。
+  ///
+  /// user 必须一并恢复：[permissionProvider] 派生自它，离线冷启动时若为 null，
+  /// 菜单会因为拿到空权限而少掉「用户账户」等入口。
+  static AuthState _initialState() {
+    if (!TokenStore.isLoggedIn()) return AuthState(isLoggedIn: false);
+    User? cached;
+    try {
+      final map = TokenStore.getUser();
+      if (map != null) cached = User.fromJson(map);
+    } catch (_) {
+      // 旧版本残留的用户信息结构不兼容时忽略，等联网后由 watchdog 刷新
+    }
+    return AuthState(isLoggedIn: true, user: cached);
   }
 
   /// 账号密码登录（走 /alpha/passport/login；返回 token 后复用扫码登录的取用户流程）
@@ -139,13 +154,21 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   /// 加载当前用户
+  ///
+  /// 只有后端明确拒绝（401）才登出。断网/超时必须保持登录态：
+  /// 这里原先的 `catch(_) { forceLogout(); }` 会让离线冷启动直接被踢回登录页，
+  /// 是「没网就完全用不了」的首要原因。
   Future<void> loadCurrentUser() async {
     if (!TokenStore.isLoggedIn()) return;
     try {
       final user = await _authApi.getCurrentUser();
+      // 顺带刷新本地副本，保证下次离线启动恢复的是最新用户信息
+      await TokenStore.setUser(user.toJson());
       state = AuthState(isLoggedIn: true, user: user);
+    } on ApiError catch (e) {
+      if (e.code == 401) forceLogout();
     } catch (_) {
-      forceLogout();
+      // 网络异常忽略，watchdog 下一轮会再试
     }
   }
 

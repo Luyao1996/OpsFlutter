@@ -14,6 +14,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'core/cache/api_cache_store.dart';
 import 'core/logging/exit_reason_reporter.dart';
 import 'core/logging/logging_binary_messenger.dart';
 import 'core/logging/webrtc_crash_logger.dart';
@@ -139,6 +140,10 @@ void main(List<String> args) async {
 
   // 初始化 SharedPreferences holder（供 isPreviewProvider 等同步访问）
   await SharedPreferencesHolder.ensureInitialized();
+
+  // 初始化接口离线缓存（须在 TokenStore 之后：要读用户 id 做缓存归属、
+  // 并注册 clearAuth 后的清空钩子）。失败不抛，整体降级为「无缓存」。
+  await ApiCacheStore.instance.init();
 
   // L4: 查询并记录上次 Android 进程异常退出原因（OOM/被杀/native 崩溃等）。
   unawaited(recordExitReasons());

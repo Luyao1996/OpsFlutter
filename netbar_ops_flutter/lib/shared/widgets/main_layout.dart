@@ -12,6 +12,7 @@ import '../../features/netbar/data/netbar_api.dart';
 import '../../features/dashboard/presentation/dashboard_page.dart';
 import '../../features/dashboard/data/dashboard_api.dart';
 import 'netbar_tab_bar.dart';
+import 'offline_banner.dart';
 import 'app_version_label.dart';
 import '../providers/permission_provider.dart';
 import '../../features/netbar/presentation/widgets/default_win_pwd_dialog.dart';
@@ -79,6 +80,8 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
       children: [
         // 顶栏
         _buildHeader(authState, isNarrow, stats),
+        // 离线提示条（仅离线时占位）
+        const OfflineBanner(),
         // 主内容
         Expanded(child: widget.child),
       ],
