@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import '../cache/api_cache_interceptor.dart';
 import '../config/app_config.dart';
+import '../security/server_clock_interceptor.dart';
 import '../storage/token_store.dart';
 import 'http_log_interceptor.dart';
 import 'trusted_roots.dart';
@@ -122,6 +123,10 @@ class ApiClient {
 
     // 统一日志拦截器（放在业务拦截器之后，能看到完整 headers）
     _dio.interceptors.add(HttpLogInterceptor());
+
+    // 服务端时钟校准（读 Date 头）：必须排在缓存拦截器之前，
+    // 否则缓存短路的「假响应」会被当成真实响应拿去校准。
+    _dio.interceptors.add(ServerClockInterceptor());
 
     // 离线缓存拦截器（必须挂在最后一环）：
     // - onResponse 顺序在解包之后，缓存到的是剥壳后的 data，与各 API 的 fromJson 同构；

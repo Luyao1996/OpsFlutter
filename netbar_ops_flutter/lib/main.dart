@@ -16,6 +16,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'core/cache/api_cache_store.dart';
 import 'core/logging/exit_reason_reporter.dart';
+import 'core/security/server_clock.dart';
 import 'core/logging/logging_binary_messenger.dart';
 import 'core/logging/webrtc_crash_logger.dart';
 import 'core/storage/token_store.dart';
@@ -144,6 +145,9 @@ void main(List<String> args) async {
   // 初始化接口离线缓存（须在 TokenStore 之后：要读用户 id 做缓存归属、
   // 并注册 clearAuth 后的清空钩子）。失败不抛，整体降级为「无缓存」。
   await ApiCacheStore.instance.init();
+
+  // 恢复上次的服务端时钟偏移：离线算 2FA 时用它补偿本机时钟
+  ServerClock.instance.init();
 
   // L4: 查询并记录上次 Android 进程异常退出原因（OOM/被杀/native 崩溃等）。
   unawaited(recordExitReasons());

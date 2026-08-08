@@ -32,7 +32,11 @@ import '../../../../core/config/app_config.dart';
 import '../../../../core/network/api_client.dart' show ApiError;
 import '../../../../core/network/task_ws_provider.dart';
 import '../../../../core/network/ws_binary.dart';
+import '../../../../core/security/builtin_totp_seed.dart';
+import '../../../../core/security/server_clock.dart';
+import '../../../../core/security/totp.dart';
 import '../../../../core/storage/token_store.dart';
+import '../data/offline_2fa_audit.dart';
 import '../data/terminal_api.dart';
 import '../../application/presentation/app_center_dialog.dart';
 import '../../desktop/data/desktop_api.dart';
@@ -1813,16 +1817,68 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
         throw Exception('2FA 码为空');
       }
       await Clipboard.setData(ClipboardData(text: code));
+      // 在线成功即证明链路可用，顺手把之前离线生成的记录补回服务端审计流
+      unawaited(Offline2faAudit.flush());
       if (!mounted) return;
       final msg = expiresIn is int
           ? '2FA 已复制（$code，剩 $expiresIn 秒）'
           : '2FA 已复制：$code';
       showTopNotice(context, msg, level: NoticeLevel.success);
+    } on ApiError catch (e) {
+      // 只有网络不可达才允许回退本地计算：code == null 表示压根没拿到 HTTP 状态码。
+      // 401/403 等服务端明确拒绝时必须照常失败，否则本地回退就成了绕过后端权限校验的后门。
+      if (e.code == null && await _copyLocal2FA()) return;
+      if (!mounted) return;
+      showTopNotice(context, '复制 2FA 失败：${e.message}', level: NoticeLevel.error);
     } catch (e) {
       if (!mounted) return;
       showTopNotice(context, '复制 2FA 失败：$e', level: NoticeLevel.error);
     } finally {
       if (mounted) setState(() => _copying2FA = false);
+    }
+  }
+
+  /// 离线兜底：用内置种子在本地算 TOTP（与网吧端 auth2fa.go 同构）。
+  ///
+  /// 锁屏端与服务端的验证顺序同构（超级密码 → 内置种子 ±120s → secret.dat ±30s），
+  /// 内置种子这一级在「网吧联网」和「网吧断网」两种情况下都会被校验通过。
+  ///
+  /// 成功返回 true（已写剪贴板 + 提示 + 记本地审计）；种子解析或计算失败返回 false，
+  /// 由调用方按原路径报错。
+  Future<bool> _copyLocal2FA() async {
+    final seed = builtinTotpSeed();
+    if (seed == null) return false;
+    try {
+      // 用服务端校准过的时间，而不是 DateTime.now()：本机时钟偏出 ±120s 容错窗
+      // 就会算出一个看起来正常、实际必然被拒的码
+      final now = ServerClock.instance.now();
+      final code = Totp.generate(
+        seed: seed,
+        time: now,
+        period: builtinSeedPeriod,
+        digits: builtinSeedDigits,
+      );
+      await Clipboard.setData(ClipboardData(text: code));
+
+      final name = _liveTerminal?.name ?? '终端#${widget.terminalId}';
+      unawaited(Offline2faAudit.record(
+        terminalId: widget.terminalId,
+        terminalName: name,
+        at: now,
+      ));
+
+      if (!mounted) return true;
+      final remain =
+          builtinSeedPeriod - (now.millisecondsSinceEpoch ~/ 1000) % builtinSeedPeriod;
+      final tip = ServerClock.instance.hasSynced
+          ? '离线生成：$code（本地计算，剩 $remain 秒）'
+          : '离线生成：$code（本地计算，从未校准过服务器时间，若解锁失败请检查设备时间）';
+      showTopNotice(context, tip, level: NoticeLevel.warning);
+      return true;
+    } catch (e) {
+      // 不打印种子相关的任何内容（对齐网吧端 D84）
+      debugPrint('[Offline2FA] 本地生成失败: ${e.runtimeType}');
+      return false;
     }
   }
 
