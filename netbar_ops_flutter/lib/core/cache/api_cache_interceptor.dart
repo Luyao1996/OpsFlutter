@@ -32,10 +32,16 @@ const String kNoCacheExtra = 'noCache';
 ///   放行一个真实请求探活，成功即自动恢复在线。
 class ApiCacheInterceptor extends Interceptor {
   /// 不参与缓存的路径：一次性凭证与登出，缓存它们没有意义且有安全风险。
+  ///
+  /// 时效性凭证必须排除：TOTP 码只有 30 秒有效期（period=30），离线时回落缓存
+  /// 会甩给用户一个早已过期的码，复制去解锁必然失败，界面上还看不出它是旧的。
+  /// 宁可离线时明确报错，也不能给一个看起来正常的错码。
   static const List<String> _excludedPaths = [
     '/passport/prelogin',
     '/passport/token',
     '/passport/logout',
+    '/passport/twoFactorCode',
+    '/merchant/totp',
   ];
 
   bool _cacheable(RequestOptions options) {
