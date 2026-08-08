@@ -48,15 +48,18 @@ class Offline2faAudit {
   static int pendingCount() => _load().length;
 
   /// 记一条离线生成记录。
+  ///
+  /// [terminalId] / [terminalName] 可空：个人中心那个入口生成的是通用码
+  /// （内置种子与终端无关），本来就没有对应的终端。
   static Future<void> record({
-    required int terminalId,
-    required String terminalName,
+    int? terminalId,
+    String? terminalName,
     required DateTime at,
   }) async {
     final list = _load();
     list.add({
-      'terminal_id': terminalId,
-      'terminal_name': terminalName,
+      if (terminalId != null) 'terminal_id': terminalId,
+      if (terminalName != null) 'terminal_name': terminalName,
       'at': at.millisecondsSinceEpoch,
     });
     while (list.length > _maxEntries) {
@@ -102,11 +105,13 @@ class Offline2faAudit {
   /// 显示、一起被筛选到（后端 eventMap 认得这个名字）。补传时间不等于发生时间，
   /// 所以把真实发生时刻写进描述里，否则审计价值大打折扣。
   static String _describe(Map<String, dynamic> e) {
-    final name = (e['terminal_name'] ?? '').toString();
     final atMs = (e['at'] as num?)?.toInt();
     final at = atMs != null
         ? _fmt.format(DateTime.fromMillisecondsSinceEpoch(atMs))
         : '时间未知';
-    return '离线生成2FA动态码（客户端本地计算，实际发生于 $at）: $name';
+    final name = (e['terminal_name'] ?? '').toString();
+    // 个人中心入口没有终端上下文，如实写明，别伪造一个终端名
+    final target = name.isEmpty ? '个人中心（未指定终端）' : name;
+    return '离线生成2FA动态码（客户端本地计算，实际发生于 $at）: $target';
   }
 }

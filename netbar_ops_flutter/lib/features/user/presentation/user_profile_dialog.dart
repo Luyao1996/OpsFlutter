@@ -5,9 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import '../../../core/cache/offline_status.dart';
 import '../../../core/responsive/responsive.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/logging/webrtc_crash_logger.dart';
+import '../../channel/presentation/platform_helper.dart';
+import 'widgets/offline_2fa_code_dialog.dart';
 import '../../debug/crash_test_sheet.dart';
 import '../../debug/crash_log_viewer_page.dart';
 import '../../debug/crash_log_export_helper.dart' as crash_export;
@@ -272,6 +275,8 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
           child: Column(
             children: [
+              // 离线时用户打开个人中心多半就是为了拿码，放在最前
+              _buildOffline2faButton(),
               _buildViewCrashLogButton(),
               _buildExportCrashLogButton(),
               _buildCrashTestButton(),
@@ -372,6 +377,8 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
           child: Column(
             children: [
+              // 离线时用户打开个人中心多半就是为了拿码，放在最前
+              _buildOffline2faButton(),
               _buildViewCrashLogButton(),
               _buildExportCrashLogButton(),
               _buildCrashTestButton(),
@@ -670,6 +677,59 @@ class _UserProfileDialogState extends ConsumerState<UserProfileDialog> {
           ],
         ),
       ),
+    );
+  }
+
+  /// 「显示2FA码」入口：仅手机端 + 离线时出现，其余情况完全不占位。
+  ///
+  /// 离线时终端详情那条「复制2FA」路径依赖先进到某台终端的详情页，手机上层级太深；
+  /// 这里给一个直达入口。内置种子算出来的本就是与终端无关的通用码，所以这个入口
+  /// 不需要任何终端上下文。
+  ///
+  /// 用 ValueListenableBuilder 监听而非读一次快照：弹窗开着时网络恢复了，
+  /// 入口要跟着消失。
+  Widget _buildOffline2faButton() {
+    if (!platformHelper.isMobile) return const SizedBox.shrink();
+    return ValueListenableBuilder<bool>(
+      valueListenable: OfflineStatus.instance.offline,
+      builder: (context, offline, _) {
+        if (!offline) return const SizedBox.shrink();
+        return InkWell(
+          onTap: _handleShow2faCode,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(minHeight: 48),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Row(
+              children: [
+                Icon(LucideIcons.shieldCheck,
+                    size: 18, color: AppColors.orange),
+                SizedBox(width: 12),
+                Text(
+                  '显示2FA码',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF374151),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _handleShow2faCode() async {
+    await showAdaptive<void>(
+      context,
+      (_) => const Offline2faCodeDialog(),
+      routeName: 'offline-2fa-code',
     );
   }
 
