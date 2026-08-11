@@ -34,14 +34,13 @@ class ApiCacheStore {
 
   /// 缓存保留时长。
   ///
-  /// 最初定的 3 天，但那会直接违背「离线要能看到我看过的数据」这个目标：
-  /// 隔个周末没在线打开过某个页面，缓存就被清掉，断网时照样是错误页。
-  /// 实测缓存体量极小（7 条约 65KB），拿磁盘换可用性完全划算，放宽到 30 天，
-  /// 并由 [maxTotalBytes] 兜住极端情况。
-  static const Duration maxAge = Duration(days: 30);
+  /// 最初定的 3 天太短，会直接违背「离线要能看到我看过的数据」：隔个周末没在线
+  /// 打开过某个页面，缓存就被清掉，断网时照样是错误页。7 天能覆盖跨周末的间隔。
+  static const Duration maxAge = Duration(days: 7);
 
   /// 缓存目录总量上限，超出时从最旧的开始删。
-  static const int maxTotalBytes = 50 * 1024 * 1024;
+  /// mtime 每次写入都会刷新，所以常看的页面不会被挤掉。
+  static const int maxTotalBytes = 10 * 1024 * 1024;
 
   /// 单条响应上限 1MB：游戏库等接口可达 MB 级，全量落盘不划算。
   static const int maxEntryChars = 1024 * 1024;
