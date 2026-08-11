@@ -37,11 +37,17 @@ class ApiCacheInterceptor extends Interceptor {
   /// 会甩给用户一个早已过期的码，复制去解锁必然失败，界面上还看不出它是旧的。
   /// 宁可离线时明确报错，也不能给一个看起来正常的错码。
   static const List<String> _excludedPaths = [
-    '/passport/prelogin',
+    // 扫码登录二维码 + 会话 pwd。路径以实际请求为准：AuthApi.preLogin() /
+    // createQRSession() 打的是 /passport/login/qr（早先这里错写成
+    // /passport/prelogin，等于没排除，离线会回落一张早已作废的二维码，
+    // 用户扫了永远登不上还看不出是旧的）
+    '/passport/login/qr',
     '/passport/token',
     '/passport/logout',
     '/passport/twoFactorCode',
     '/merchant/totp',
+    // TOTP 密钥，落盘等于把二次验证的根凭证明文写进磁盘
+    '/user/twoFactorAuth',
   ];
 
   bool _cacheable(RequestOptions options) {
@@ -99,8 +105,11 @@ class ApiCacheInterceptor extends Interceptor {
     // 真实响应到达即证明网络可达（缓存短路的响应不会走到这里）
     OfflineStatus.instance.markOnline();
     if (_cacheable(response.requestOptions)) {
-      ApiCacheStore.instance
-          .write(_keyOf(response.requestOptions), response.data);
+      ApiCacheStore.instance.write(
+        _keyOf(response.requestOptions),
+        response.data,
+        label: response.requestOptions.path,
+      );
     }
     handler.next(response);
   }
@@ -113,7 +122,11 @@ class ApiCacheInterceptor extends Interceptor {
     if (!_cacheable(err.requestOptions)) return handler.next(err);
 
     final cached = await ApiCacheStore.instance.read(_keyOf(err.requestOptions));
-    if (cached == null) return handler.next(err);
+    if (cached == null) {
+      // 这条日志是排查「离线时某页面为什么还是报错」的第一落点
+      debugPrint('[ApiCache] 无可用缓存，按原错误返回 ${err.requestOptions.path}');
+      return handler.next(err);
+    }
 
     debugPrint(
       '[ApiCache] 网络失败回落缓存 ${err.requestOptions.path}（缓存于 ${cached.savedAt}）',

@@ -147,16 +147,19 @@ class TerminalApi {
     return raw;
   }
 
-  /// 判断是否应该返回空列表（而非抛出异常）
-  /// 包括：404、CORS 错误、网络错误等
+  /// 判断是否应该返回空列表（而非抛出异常）。
+  ///
+  /// 语义严格限定为「后端没有实现这个接口」（404/405/501、no route）。
+  ///
+  /// 断网**不属于**这一类：原先这里把 connectionError / unknown 也判成 true，
+  /// 结果离线时 getFiles/getProcesses 返回的是 TerminalMockData 的假数据、
+  /// getAll 返回空列表、controlPc 静默"成功"，既盖掉了离线缓存回退，
+  /// 也让用户以为看到的是真实状态。网络类错误必须原样抛出，交给缓存层兜底。
   bool _shouldReturnEmpty(Object e) {
     // Dio 错误
     if (e is DioException) {
       final statusCode = e.response?.statusCode;
       if (statusCode == 404 || statusCode == 405 || statusCode == 501) return true;
-      // CORS 预检失败通常表现为网络错误
-      if (e.type == DioExceptionType.connectionError ||
-          e.type == DioExceptionType.unknown) return true;
     }
     // ApiError
     if (e is ApiError) {

@@ -73,7 +73,9 @@ class ApiClient {
               final ignoreUnauthorized = response.requestOptions.extra['ignoreUnauthorized'] == true;
               if (!ignoreUnauthorized) {
                 onUnauthorized?.call();
-                TokenStore.clearAuth();
+                // 被动 401 保留离线缓存：token 到期还是同一个人，
+                // 抹掉他攒的数据会让重新登录后一断网就一无所有
+                TokenStore.clearAuth(keepApiCache: true);
               }
               return handler.reject(
                 DioException(
@@ -114,7 +116,7 @@ class ApiClient {
           final ignoreUnauthorized = error.requestOptions.extra['ignoreUnauthorized'] == true;
           if (!ignoreUnauthorized && error.response?.statusCode == 401) {
             onUnauthorized?.call();
-            TokenStore.clearAuth();
+            TokenStore.clearAuth(keepApiCache: true);
           }
           return handler.next(error);
         },

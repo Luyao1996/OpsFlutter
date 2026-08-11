@@ -122,16 +122,28 @@ class ApiCacheStore {
   }
 
   /// 写缓存。同步返回，落盘异步进行，不阻塞响应返回给调用方。
-  void write(String key, dynamic data) {
-    if (!_ready || data == null) return;
+  ///
+  /// [label] 仅用于日志（一般传请求 path）：跳过缓存的原因必须可见，
+  /// 否则线上出现「这个页面离线怎么没数据」时无从查起。
+  void write(String key, dynamic data, {String label = ''}) {
+    if (!_ready) {
+      debugPrint('[ApiCache] 存储未就绪，未缓存 $label');
+      return;
+    }
+    if (data == null) return;
     final String encoded;
     try {
       encoded = jsonEncode(data);
     } catch (_) {
       // 二进制下载等非 JSON 响应不缓存
+      debugPrint('[ApiCache] 响应无法序列化，未缓存 $label');
       return;
     }
-    if (encoded.length > maxEntryChars) return;
+    if (encoded.length > maxEntryChars) {
+      debugPrint('[ApiCache] 响应过大未缓存 $label '
+          '(${encoded.length ~/ 1024}KB > ${maxEntryChars ~/ 1024}KB)');
+      return;
+    }
 
     final entry = CachedApiEntry(data: data, savedAt: DateTime.now());
     _putMemory(key, entry);

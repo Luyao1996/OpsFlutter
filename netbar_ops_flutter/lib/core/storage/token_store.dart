@@ -108,8 +108,14 @@ class TokenStore {
     return await _prefs?.setBool(_autoConnectKey, enabled) ?? false;
   }
 
-  /// 清除所有认证数据
-  static Future<void> clearAuth() async {
+  /// 清除所有认证数据。
+  ///
+  /// [keepApiCache] 为 true 时保留接口离线缓存，用于「被动 401」路径
+  /// （token 到期、后端偶发 401）：那仍然是同一个人，把他攒下的离线数据全抹掉
+  /// 会导致重新登录后一断网就一无所有。缓存本身按用户 id 分键，换账号登录
+  /// 天然读不到别人的数据，不必靠清空来隔离。
+  /// 主动登出仍然清空 —— 用户点了「退出登录」，预期就是不留痕迹。
+  static Future<void> clearAuth({bool keepApiCache = false}) async {
     try {
       await onBeforeClearAuth?.call();
     } catch (_) {}
@@ -119,9 +125,11 @@ class TokenStore {
     await _prefs?.remove(_autoConnectKey);
     // 历史遗留：旧版本曾存过 token_expire_at，主动清掉避免残留
     await _prefs?.remove('token_expire_at');
-    try {
-      await onAfterClearAuth?.call();
-    } catch (_) {}
+    if (!keepApiCache) {
+      try {
+        await onAfterClearAuth?.call();
+      } catch (_) {}
+    }
   }
 
   /// 是否已登录

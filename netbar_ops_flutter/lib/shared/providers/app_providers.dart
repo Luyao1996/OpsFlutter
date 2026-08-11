@@ -216,7 +216,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
       await TerminalWindowBridge.closeAllSubWindows();
     } catch (_) {}
     try {
-      await TokenStore.clearAuth();
+      // token 失效属被动 401，保留离线缓存（见 TokenStore.clearAuth 注释）
+      await TokenStore.clearAuth(keepApiCache: true);
     } catch (_) {}
     _resetTaskWs();
     if (mounted) {

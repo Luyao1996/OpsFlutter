@@ -51,13 +51,33 @@ Future<String?> readCacheEntry(String key) async {
   }
 }
 
+/// 临时文件序号，保证同进程内并发写同一 key 时互不覆盖。
+int _tmpSeq = 0;
+
 Future<void> writeCacheEntry(String key, String content) async {
+  final dir = _dir;
+  if (dir == null) return;
+  final target = '${dir.path}${Platform.pathSeparator}$key.json';
+  // 先写临时文件再 rename：桌面端子窗口是独立进程，和主窗口共用同一个缓存目录，
+  // 就地覆写会让并发写留下半截文件（读侧只能整条丢弃，表现为「偶发读不到缓存」）。
+  // flush:true 是必须的 —— 移动端进程随时可能被系统回收，留在页缓存里没落盘的
+  // 内容会跟着一起没，那正是「上次明明看过、断网却没有」的成因之一。
+  final tmp = File('$target.${pid}_${_tmpSeq++}.tmp');
   try {
-    final f = _fileOf(key);
-    if (f == null) return;
-    await f.writeAsString(content, flush: false);
+    await tmp.writeAsString(content, flush: true);
+    try {
+      await tmp.rename(target);
+    } catch (_) {
+      // Windows 上 rename 到已存在的路径可能失败，退回「先删后改名」
+      final old = File(target);
+      if (await old.exists()) await old.delete();
+      await tmp.rename(target);
+    }
   } catch (e) {
     debugPrint('[ApiCache] 写入失败 key=$key: $e');
+    try {
+      if (await tmp.exists()) await tmp.delete();
+    } catch (_) {}
   }
 }
 
@@ -78,6 +98,12 @@ Future<void> pruneCacheStorage(Duration maxAge) async {
     await for (final entity in dir.list()) {
       if (entity is! File) continue;
       try {
+        // 写入中途崩溃留下的临时文件，一律清掉
+        if (entity.path.endsWith('.tmp')) {
+          await entity.delete();
+          removed++;
+          continue;
+        }
         final stat = await entity.stat();
         if (now.difference(stat.modified) > maxAge) {
           await entity.delete();
