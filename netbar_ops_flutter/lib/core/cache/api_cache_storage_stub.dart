@@ -44,7 +44,10 @@ Future<void> deleteCacheEntry(String key) async {
 }
 
 /// Web 端没有文件 mtime，只能解析条目里的 savedAt 判断过期。
-Future<void> pruneCacheStorage(Duration maxAge) async {
+///
+/// [maxTotalBytes] 在 Web 端忽略：localStorage 自身就有 5MB 硬上限，
+/// 加上写入侧的单条 200KB 限制已经足够兜底，不值得再遍历统计一遍。
+Future<void> pruneCacheStorage(Duration maxAge, {int? maxTotalBytes}) async {
   final prefs = _prefs;
   if (prefs == null) return;
   try {

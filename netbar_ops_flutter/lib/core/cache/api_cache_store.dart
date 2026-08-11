@@ -33,7 +33,15 @@ class ApiCacheStore {
   static const int _schemaVersion = 1;
 
   /// 缓存保留时长。
-  static const Duration maxAge = Duration(days: 3);
+  ///
+  /// 最初定的 3 天，但那会直接违背「离线要能看到我看过的数据」这个目标：
+  /// 隔个周末没在线打开过某个页面，缓存就被清掉，断网时照样是错误页。
+  /// 实测缓存体量极小（7 条约 65KB），拿磁盘换可用性完全划算，放宽到 30 天，
+  /// 并由 [maxTotalBytes] 兜住极端情况。
+  static const Duration maxAge = Duration(days: 30);
+
+  /// 缓存目录总量上限，超出时从最旧的开始删。
+  static const int maxTotalBytes = 50 * 1024 * 1024;
 
   /// 单条响应上限 1MB：游戏库等接口可达 MB 级，全量落盘不划算。
   static const int maxEntryChars = 1024 * 1024;
@@ -54,7 +62,7 @@ class ApiCacheStore {
     // 换账号 / 登出时清空，防止下一个人看到上一个人的数据。
     // 由缓存层反向注册钩子，保持 storage → cache 的单向依赖。
     TokenStore.onAfterClearAuth = clear;
-    unawaited(pruneCacheStorage(maxAge));
+    unawaited(pruneCacheStorage(maxAge, maxTotalBytes: maxTotalBytes));
   }
 
   /// 缓存归属账号。

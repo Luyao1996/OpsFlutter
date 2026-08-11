@@ -88,13 +88,16 @@ Future<void> deleteCacheEntry(String key) async {
   } catch (_) {}
 }
 
-/// 清理过期缓存。按文件 mtime 判断，省去逐条解析 JSON 的开销。
-Future<void> pruneCacheStorage(Duration maxAge) async {
+/// 清理缓存：先按 mtime 删过期的，再按总量上限从最旧的开始删。
+/// 用 mtime 而非解析 JSON 里的 savedAt，省去逐条读文件的开销。
+Future<void> pruneCacheStorage(Duration maxAge, {int? maxTotalBytes}) async {
   final dir = _dir;
   if (dir == null) return;
   try {
     final now = DateTime.now();
     var removed = 0;
+    final alive = <({File file, DateTime modified, int size})>[];
+
     await for (final entity in dir.list()) {
       if (entity is! File) continue;
       try {
@@ -108,10 +111,29 @@ Future<void> pruneCacheStorage(Duration maxAge) async {
         if (now.difference(stat.modified) > maxAge) {
           await entity.delete();
           removed++;
+          continue;
         }
+        alive.add((file: entity, modified: stat.modified, size: stat.size));
       } catch (_) {}
     }
-    if (removed > 0) debugPrint('[ApiCache] 清理过期缓存 $removed 条');
+
+    if (maxTotalBytes != null) {
+      var total = alive.fold<int>(0, (sum, e) => sum + e.size);
+      if (total > maxTotalBytes) {
+        // 最旧的先删，保住最近看过的
+        alive.sort((a, b) => a.modified.compareTo(b.modified));
+        for (final e in alive) {
+          if (total <= maxTotalBytes) break;
+          try {
+            await e.file.delete();
+            total -= e.size;
+            removed++;
+          } catch (_) {}
+        }
+      }
+    }
+
+    if (removed > 0) debugPrint('[ApiCache] 清理缓存 $removed 条');
   } catch (e) {
     debugPrint('[ApiCache] 清理失败: $e');
   }
