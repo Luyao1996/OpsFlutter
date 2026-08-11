@@ -48,6 +48,10 @@ class ApiCacheInterceptor extends Interceptor {
     '/merchant/totp',
     // TOTP 密钥，落盘等于把二次验证的根凭证明文写进磁盘
     '/user/twoFactorAuth',
+    // profile 响应体里同样带 two_factor_secret 明文。缓存它也没有意义：
+    // 离线时 AuthState.user 是从 TokenStore 恢复的（User 模型不含该字段），
+    // 不依赖这条缓存。
+    '/passport/profile',
   ];
 
   bool _cacheable(RequestOptions options) {

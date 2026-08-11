@@ -42,8 +42,12 @@ class ApiCacheStore {
   /// mtime 每次写入都会刷新，所以常看的页面不会被挤掉。
   static const int maxTotalBytes = 10 * 1024 * 1024;
 
-  /// 单条响应上限 1MB：游戏库等接口可达 MB 级，全量落盘不划算。
-  static const int maxEntryChars = 1024 * 1024;
+  /// 单条响应上限（按未压缩的 JSON 字符数算）。
+  ///
+  /// 原先是 1MB，而网吧列表全量响应明文约 1.5~2MB —— 请求明明成功了，却每次都被
+  /// 这条限制静默丢弃，正是「离线打开网吧列表必现报错」的直接原因。
+  /// 落盘已改为 gzip（这类响应压完约 250KB），实际磁盘占用远小于此值。
+  static const int maxEntryChars = 4 * 1024 * 1024;
 
   /// 内存 LRU 容量（条）。
   static const int _memoryCapacity = 64;

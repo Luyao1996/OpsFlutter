@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -44,7 +45,12 @@ Future<String?> readCacheEntry(String key) async {
   try {
     final f = _fileOf(key);
     if (f == null || !await f.exists()) return null;
-    return await f.readAsString();
+    final bytes = await f.readAsBytes();
+    // gzip magic number；不带则是旧版本写下的明文 JSON，照样能读
+    if (bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
+      return utf8.decode(gzip.decode(bytes));
+    }
+    return utf8.decode(bytes);
   } catch (e) {
     debugPrint('[ApiCache] 读取失败 key=$key: $e');
     return null;
@@ -64,7 +70,9 @@ Future<void> writeCacheEntry(String key, String content) async {
   // 内容会跟着一起没，那正是「上次明明看过、断网却没有」的成因之一。
   final tmp = File('$target.${pid}_${_tmpSeq++}.tmp');
   try {
-    await tmp.writeAsString(content, flush: true);
+    // gzip 落盘：后端本来就是 gzip 传输的，网吧列表这类响应明文 ~2MB、压完 ~250KB，
+    // 不压的话既撑爆单条上限，也让总量上限很快触发淘汰。
+    await tmp.writeAsBytes(gzip.encode(utf8.encode(content)), flush: true);
     try {
       await tmp.rename(target);
     } catch (_) {
