@@ -209,15 +209,18 @@ class TaskWsClient implements TaskWs {
     required int merchantId,
     Map<String, dynamic> data = const {},
     String? sessionId,
+    bool quiet = false,
   }) async {
     await ensureConnected();
     final id = sessionId ?? _genId();
-    _logFrame('INFO', 'send-ff', id, {
-      'fun': fun,
-      'seat': seat,
-      'merchant_id': merchantId,
-      'data': data,
-    });
+    if (!quiet) {
+      _logFrame('INFO', 'send-ff', id, {
+        'fun': fun,
+        'seat': seat,
+        'merchant_id': merchantId,
+        'data': data,
+      });
+    }
     _send(_buildFrame(id, fun, seat, merchantId, data));
   }
 
@@ -474,8 +477,11 @@ class TaskWsClient implements TaskWs {
           'non_string_msg type=${raw.runtimeType}');
       return;
     }
-    // 完整打印 raw 消息体（不截断），便于联调时排查协议异常
-    _log('INFO', 'recv-raw', '-', raw);
+    // 完整打印 raw 消息体（不截断），便于联调时排查协议异常。
+    // ptyIn 回执除外：终端一个按键一条，逐条打印会把关键报文刷出屏幕。
+    if (!raw.contains('"ptyIn"')) {
+      _log('INFO', 'recv-raw', '-', raw);
+    }
     Map<String, dynamic> msg;
     try {
       final decoded = jsonDecode(raw);
@@ -569,7 +575,8 @@ class TaskWsClient implements TaskWs {
         });
         if (!ctrl.isClosed) ctrl.close();
         _pending.remove(id);
-      } else {
+      } else if (payload['fun'] != 'ptyIn') {
+        // ptyIn 回执（一个按键一条）不逐条记录，理由同 recv-raw 处
         _logFrame('INFO', 'recv-chunk', id, {
           'elapsed_ms': elapsed,
           'fun': entry.fun,
@@ -611,6 +618,14 @@ class TaskWsClient implements TaskWs {
           'event=${frame.event} size=${frame.data.length}');
       return;
     }
+    // ptyshell 终端输出：客户机按 16ms/32KB 聚合**连续**推帧，与 thumbnail 的
+    // "一帧即完"语义不同——推到会话流上但不关流（流由 ptyExit/取消终止），
+    // 也不逐帧打日志（16ms 一帧会把关键报文刷出屏幕）。
+    if (frame.event == 'ptyshell' && entry.isStream) {
+      final ctrl = entry.streamCtrl!;
+      if (!ctrl.isClosed) ctrl.add(frame.data);
+      return;
+    }
     final elapsed = DateTime.now().millisecondsSinceEpoch - entry.startMs;
     _log('INFO', 'recv-bin', id,
         'event=${frame.event} fun=${entry.fun} seat=${entry.seat} '
@@ -630,12 +645,14 @@ class TaskWsClient implements TaskWs {
     }
   }
 
-  /// 流终止信号：服务端推 `cmdlogon` 且 code==0（注销成功）。
-  /// 参考：toolboxPage `XtermCmdDialog.vue:1058-1066`。
+  /// 流终止信号：服务端推 `cmdlogon` 且 code==0（注销成功），
+  /// 或 ptyshell 会话推 `ptyExit`（shell 退出/空闲回收，载荷已先入流再关流）。
+  /// 参考：toolboxPage `XtermCmdDialog.vue:1058-1066`；ptyshell 协议手册 §1.4。
   bool _isStreamEnd(Map<String, dynamic> payload) {
     final fun = payload['fun'];
     final code = payload['code'];
     if (fun == 'cmdlogon' && (code == 0 || code == '0')) return true;
+    if (fun == 'ptyExit') return true;
     return false;
   }
 

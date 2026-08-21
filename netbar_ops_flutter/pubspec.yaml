@@ -121,6 +121,9 @@ dependencies:
   # Sign in with Apple（App Store 4.8：iOS 提供微信登录必须成对提供 Apple 登录）
   sign_in_with_apple: ^7.0.1
 
+  # ptyshell 交互式远程终端（新版终端命令 tab）的终端模拟器
+  xterm: ^4.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

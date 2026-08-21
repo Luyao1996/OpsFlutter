@@ -274,12 +274,14 @@ class TerminalWindowBridge {
           ? Map<String, dynamic>.from(args['data'] as Map)
           : <String, dynamic>{};
       final sessionId = args['sessionId'] as String?;
+      final quiet = args['quiet'] == true;
       await TaskWsClient.instance.fireAndForget(
         fun: fun,
         seat: seat,
         merchantId: merchantId,
         data: data,
         sessionId: sessionId,
+        quiet: quiet,
       );
       return {'ok': true};
     } catch (e) {

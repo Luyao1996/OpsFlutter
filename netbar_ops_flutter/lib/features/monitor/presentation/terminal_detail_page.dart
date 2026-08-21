@@ -56,10 +56,12 @@ import '../../../../shared/utils/platform_utils.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../netbar/data/netbar_api.dart' as netbar_api;
 
+import '../data/ptyshell/pty_controller.dart';
 import 'widgets/edit_name_modal.dart';
 import 'widgets/file_manager_tab.dart';
 import 'widgets/process_manager_tab.dart';
 import 'widgets/console_manager_tab.dart';
+import 'widgets/pty_console_tab.dart';
 import 'widgets/log_manager_tab.dart';
 import '../../game_library/presentation/game_manage_view.dart';
 
@@ -191,13 +193,28 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     {'icon': LucideIcons.hardDrive, 'label': '游戏管理'},
     {'icon': LucideIcons.fileText, 'label': '文件管理'},
     {'icon': LucideIcons.activity, 'label': '进程管理'},
+    // 新版 = ptyshell 交互式终端（PtyConsoleTab）；旧版 = cmdlogin 行式终端，保留全部功能
     {'icon': LucideIcons.terminal, 'label': '终端命令'},
+    {'icon': LucideIcons.terminalSquare, 'label': '终端命令（旧版）'},
     {'icon': LucideIcons.fileSpreadsheet, 'label': '操作日志'},
   ];
 
   /// 游戏管理 Tab 是否处于"应用内全屏"展示
   /// （仅影响布局：true 时隐藏 Header / 左侧栏 / TabBar，让内容铺满）
   bool _gameManageFullscreen = false;
+
+  /// 新版终端命令（ptyshell）的会话管理器：详情页存活期间保活
+  /// （切顶层 tab 不销毁，切回来会话与历史输出都在），页面/子窗关闭时统一
+  /// closeAll——否则客户机上的 shell 会残留到 5 分钟空闲回收（ptyshell 指南 §8.2）。
+  PtyShellController? _ptyController;
+
+  PtyShellController _ensurePtyController(String seatId, int merchantId) {
+    return _ptyController ??= PtyShellController(
+      ws: ref.read(taskWsProvider),
+      seat: seatId,
+      merchantId: merchantId,
+    );
+  }
 
   @override
   void initState() {
@@ -232,6 +249,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
           // native 推送的最大化/还原事件 → 更新唯一状态来源（无轮询）
           _windowState?.onNativeMaximizeChanged(call.arguments == true);
         } else if (call.method == '_prepareForClose') {
+          // 独立窗即将销毁：趁 IPC 通道还活着先把 ptyshell 会话全部 ptyClose
+          // （全同步不 await），防止客户机上残留 shell（ptyshell 指南 §8.2 第一层兜底）
+          _ptyController?.closeAllSessions();
           // Pop WebRTC route so RemoteScreen.dispose() runs while the engine is
           // still alive. This prevents a deadlock during window close:
           // DestroyWindow blocks the main thread -> Dart dispose() needs main
@@ -1346,6 +1366,13 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     } else if (_selectedTab == '进程管理') {
       return ProcessManagerTab(terminalId: terminal.id, seatId: terminal.seatId);
     } else if (_selectedTab == '终端命令') {
+      final ownerNetbarId = _ownerNetbarId;
+      if (ownerNetbarId == null) {
+        return const Center(child: Text('网吧 id 为空，无法打开终端'));
+      }
+      return PtyConsoleTab(
+          controller: _ensurePtyController(terminal.seatId, ownerNetbarId));
+    } else if (_selectedTab == '终端命令（旧版）') {
       return ConsoleManagerTab(terminalId: terminal.id, seatId: terminal.seatId);
     } else if (_selectedTab == '操作日志') {
       return LogManagerTab(terminalId: terminal.id);
@@ -1377,6 +1404,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
 
   @override
   void dispose() {
+    // ptyshell 会话必须主动关：客户机侧 CloseAll 挂在 client↔server 断链上，
+    // 本端关页面/关窗断的是 App↔云端那段，不发 ptyClose 会话就泄漏到空闲回收
+    _ptyController?.dispose(); // 内部 closeAllSessions()，全同步
     if (isDesktopPlatform && widget.isStandaloneWindow) {
       _focusChannel.setMethodCallHandler(null);
     }

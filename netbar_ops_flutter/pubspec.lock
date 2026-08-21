@@ -1528,7 +1528,7 @@ packages:
     description:
       path: "examples/FlutterUi"
       ref: "feature/sfu_rebuild"
-      resolved-ref: "5659523890a51fbb94059d80dd853fb787d52986"
+      resolved-ref: e57550b8d6dc126258cf21286d839bffe4d54887
       url: "https://github.com/Luyao1996/WebRtcGo.git"
     source: git
     version: "1.0.0+1"
@@ -1564,6 +1564,14 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "6.6.1"
+  xterm:
+    dependency: "direct main"
+    description:
+      name: xterm
+      sha256: "168dfedca77cba33fdb6f52e2cd001e9fde216e398e89335c19b524bb22da3a2"
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "4.0.0"
   yaml:
     dependency: transitive
     description:
@@ -1572,6 +1580,14 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "3.1.3"
+  zmodem:
+    dependency: transitive
+    description:
+      name: zmodem
+      sha256: "3b7e5b29f3a7d8aee472029b05165a68438eff2f3f7766edf13daba1e297adbf"
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "0.0.6"
 sdks:
   dart: ">=3.10.3 <4.0.0"
   flutter: ">=3.38.4"

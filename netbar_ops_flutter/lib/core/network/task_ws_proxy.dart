@@ -242,6 +242,7 @@ class TaskWsProxy implements TaskWs {
     required int merchantId,
     Map<String, dynamic> data = const {},
     String? sessionId,
+    bool quiet = false,
   }) async {
     await DesktopMultiWindow.invokeMethod(
       _mainWindowId,
@@ -252,6 +253,7 @@ class TaskWsProxy implements TaskWs {
         'merchantId': merchantId,
         'data': data,
         if (sessionId != null) 'sessionId': sessionId,
+        'quiet': quiet,
       },
     );
   }

@@ -78,12 +78,16 @@ abstract class TaskWs {
   ///
   /// [sessionId] 可选：CMD 的 cmdRun/cmdlogout **必须传入与 cmdlogin 相同的 sessionId**，
   /// 否则后端找不到对应 CMD 会话，返回 `code:2 没有找到对应的CMD执行接口`。
+  ///
+  /// [quiet]：按键流（如 ptyshell 的 ptyIn，一个字符一帧）等高频帧置 true，
+  /// 实现层抑制逐帧发送日志，避免把关键报文挤出日志。
   Future<void> fireAndForget({
     required String fun,
     required String seat,
     required int merchantId,
     Map<String, dynamic> data = const {},
     String? sessionId,
+    bool quiet = false,
   });
 
   /// 生成一个全局唯一的 sessionId，供 [requestStream] 与 [fireAndForget] 复用同一会话。
