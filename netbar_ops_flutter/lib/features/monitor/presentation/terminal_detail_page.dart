@@ -203,6 +203,11 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
   /// （仅影响布局：true 时隐藏 Header / 左侧栏 / TabBar，让内容铺满）
   bool _gameManageFullscreen = false;
 
+  /// 终端命令（ptyshell）Tab 的"应用内全屏"，机制同 [_gameManageFullscreen]：
+  /// 仅布局重排，PtyConsoleTab 的 controller 不变 ⇒ 会话保活；
+  /// 尺寸变化由 TerminalView autoResize 自动上报 ptyResize。
+  bool _ptyFullscreen = false;
+
   /// 新版终端命令（ptyshell）的会话管理器：详情页存活期间保活
   /// （切顶层 tab 不销毁，切回来会话与历史输出都在），页面/子窗关闭时统一
   /// closeAll——否则客户机上的 shell 会残留到 5 分钟空闲回收（ptyshell 指南 §8.2）。
@@ -461,6 +466,10 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
           // 游戏管理 Tab 全屏：跳过 Header / 左侧栏 / TabBar，直接铺满
           if (_selectedTab == '游戏管理' && _gameManageFullscreen) {
             return SafeArea(bottom: false, child: _buildGameManageView());
+          }
+          // 终端命令（ptyshell）Tab 全屏：同上机制
+          if (_selectedTab == '终端命令' && _ptyFullscreen) {
+            return SafeArea(bottom: false, child: _buildPtyConsoleView(live));
           }
           return SafeArea(
           bottom: false,
@@ -1298,6 +1307,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
       _selectedTab = label;
       // 切离"游戏管理"时自动退出全屏，避免下次切回来仍然是全屏态
       if (label != '游戏管理') _gameManageFullscreen = false;
+      // 终端命令（ptyshell）同理
+      if (label != '终端命令') _ptyFullscreen = false;
     });
 
     final netbarId = ref.read(currentNetbarProvider).id ?? 0;
@@ -1366,12 +1377,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     } else if (_selectedTab == '进程管理') {
       return ProcessManagerTab(terminalId: terminal.id, seatId: terminal.seatId);
     } else if (_selectedTab == '终端命令') {
-      final ownerNetbarId = _ownerNetbarId;
-      if (ownerNetbarId == null) {
-        return const Center(child: Text('网吧 id 为空，无法打开终端'));
-      }
-      return PtyConsoleTab(
-          controller: _ensurePtyController(terminal.seatId, ownerNetbarId));
+      return _buildPtyConsoleView(terminal);
     } else if (_selectedTab == '终端命令（旧版）') {
       return ConsoleManagerTab(terminalId: terminal.id, seatId: terminal.seatId);
     } else if (_selectedTab == '操作日志') {
@@ -1399,6 +1405,22 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
       isFullscreen: _gameManageFullscreen,
       onToggleFullscreen: () =>
           setState(() => _gameManageFullscreen = !_gameManageFullscreen),
+    );
+  }
+
+  /// 构建"终端命令"（ptyshell）Tab 内容。
+  /// 全屏切换由本组件控制（[_ptyFullscreen]），实际全屏布局在 build 顶层判定
+  /// （隐藏 Header / 左侧栏 / TabBar），机制与游戏管理完全一致。
+  Widget _buildPtyConsoleView(Terminal terminal) {
+    final ownerNetbarId = _ownerNetbarId;
+    if (ownerNetbarId == null) {
+      return const Center(child: Text('网吧 id 为空，无法打开终端'));
+    }
+    return PtyConsoleTab(
+      controller: _ensurePtyController(terminal.seatId, ownerNetbarId),
+      isFullscreen: _ptyFullscreen,
+      onToggleFullscreen: () =>
+          setState(() => _ptyFullscreen = !_ptyFullscreen),
     );
   }
 

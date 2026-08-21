@@ -4,15 +4,59 @@ import 'package:flutter/services.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:xterm/xterm.dart' as xterm;
 
+import '../../../../core/network/task_ws.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../data/ptyshell/pty_controller.dart';
 import '../../data/ptyshell/pty_session.dart';
 
+// ---------- demo 调色板（1:1 对齐 ptyshell-demo src/styles/main.css 的 CSS 变量） ----------
+const _bg1 = Color(0xFF1C1F26); // 面板（标签栏底）
+const _bg2 = Color(0xFF232730); // 非激活标签 / 输入框
+const _bg3 = Color(0xFF2C313C); // hover / 徽标底
+const _fg0 = Color(0xFFD7DAE0); // 主文字
+const _fg1 = Color(0xFF9AA0AB); // 次要文字
+const _fg2 = Color(0xFF6B7280); // 更次要
+const _accent = Color(0xFF4DD0E1); // 强调青
+const _ok = Color(0xFF66BB6A);
+const _warn = Color(0xFFFFA726);
+const _danger = Color(0xFFEF5350);
+const _border = Color(0xFF2F343F);
+const _termBg = Color(0xFF14161A); // 终端底
+
+/// 终端主题：demo TerminalPane.vue 的 xterm.js theme 逐色对齐
+/// （background/foreground/cursor/selection/black/brightBlack），
+/// 其余 ANSI 颜色沿用 xterm.dart TerminalThemes.defaultTheme 原值。
+const _demoTheme = xterm.TerminalTheme(
+  cursor: Color(0xFF4DD0E1),
+  selection: Color(0xAA33405A),
+  foreground: Color(0xFFD7DAE0),
+  background: Color(0xFF14161A),
+  black: Color(0xFF16181D),
+  red: Color(0xFFCD3131),
+  green: Color(0xFF0DBC79),
+  yellow: Color(0xFFE5E510),
+  blue: Color(0xFF2472C8),
+  magenta: Color(0xFFBC3FBC),
+  cyan: Color(0xFF11A8CD),
+  white: Color(0xFFE5E5E5),
+  brightBlack: Color(0xFF5C6370),
+  brightRed: Color(0xFFF14C4C),
+  brightGreen: Color(0xFF23D18B),
+  brightYellow: Color(0xFFF5F543),
+  brightBlue: Color(0xFF3B8EEA),
+  brightMagenta: Color(0xFFD670D6),
+  brightCyan: Color(0xFF29B8DB),
+  brightWhite: Color(0xFFFFFFFF),
+  searchHitBackground: Color(0xFFFFFF2B),
+  searchHitBackgroundCurrent: Color(0xFF31FF26),
+  searchHitForeground: Color(0xFF000000),
+);
+
 /// 新版【终端命令】tab —— ptyshell 交互式远程终端（PowerShell / cmd）。
 ///
-/// UI 按 ptyshell-demo（Vue 版 App.vue）1:1 还原，去掉连接面板与报文日志窗：
-/// 多标签（上限 5、IndexedStack 保活）、shell 选择（默认/PS/CMD）、
-/// 标签状态点（打开中/就绪/已结束）、双击（移动端长按）改名、字号调节、
+/// UI 按 ptyshell-demo（Vue 版 App.vue + main.css）1:1 还原，去掉连接面板与
+/// 报文日志窗（用户拍板不做）：多标签（上限 5、IndexedStack 保活）、shell 选择、
+/// 标签状态点、双击（移动端长按）改名、连接状态、字号调节、应用内最大化、
 /// 右键有选中即复制无选中即粘贴、移动端软键盘工具条。
 ///
 /// 会话状态全部在 [PtyShellController]（详情页 State 持有，切顶层 tab 不销毁），
@@ -20,7 +64,17 @@ import '../../data/ptyshell/pty_session.dart';
 class PtyConsoleTab extends StatefulWidget {
   final PtyShellController controller;
 
-  const PtyConsoleTab({super.key, required this.controller});
+  /// 应用内全屏态（复用游戏管理的机制：布局由 terminal_detail_page 顶层判定，
+  /// 本 widget 只负责按钮图标与回调；controller 不变 ⇒ 切换全屏会话保活）。
+  final bool isFullscreen;
+  final VoidCallback? onToggleFullscreen;
+
+  const PtyConsoleTab({
+    super.key,
+    required this.controller,
+    this.isFullscreen = false,
+    this.onToggleFullscreen,
+  });
 
   @override
   State<PtyConsoleTab> createState() => _PtyConsoleTabState();
@@ -72,9 +126,9 @@ class _PtyConsoleTabState extends State<PtyConsoleTab> {
       builder: (context, _) {
         return Container(
           decoration: BoxDecoration(
-            color: const Color(0xFF0C0C0C),
+            color: _termBg,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFF3A3A3A)),
+            border: Border.all(color: _border),
           ),
           clipBehavior: Clip.antiAlias,
           child: Column(
@@ -89,25 +143,22 @@ class _PtyConsoleTabState extends State<PtyConsoleTab> {
     );
   }
 
-  // ---------- 标签栏 ----------
+  // ---------- 标签栏（demo .tabbar：padding 6/12、bg1 底、border 底边） ----------
 
   Widget _buildTabBar() {
     final canOpen = _ctrl.sessions.length < ptyMaxSessions;
     final active = _ctrl.activeSession;
     return Container(
-      height: 40,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF2D2D2D), Color(0xFF1A1A1A)],
-        ),
-        border: Border(bottom: BorderSide(color: Color(0xFF3A3A3A))),
+        color: _bg1,
+        border: Border(bottom: BorderSide(color: _border)),
       ),
       child: Row(
         children: [
-          Expanded(
+          // 标签区：可收缩横向滚动。★Flexible 而非 Expanded——标签少时不占满，
+          // ＋/▾ 才能紧跟在最后一个标签后面（demo 的 .newtab-wrap 布局）。
+          Flexible(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -117,35 +168,33 @@ class _PtyConsoleTabState extends State<PtyConsoleTab> {
               ),
             ),
           ),
-          const SizedBox(width: 4),
-          // ＋ 新建（缺省 shell：客户机先试 powershell 失败退 cmd）
+          // ＋ 新建（缺省 shell：客户机先试 powershell 失败退 cmd）＋ ▾ 选 shell，
+          // 紧跟标签之后（demo .newtab-wrap margin-right:auto 分组）
           _barButton(
             icon: LucideIcons.plus,
             tooltip: canOpen ? '新建终端（默认 shell）' : '已达上限 $ptyMaxSessions 个',
             enabled: canOpen,
             onTap: () => _ctrl.openSession(),
           ),
-          // ▾ 选 shell 再新建
           PopupMenuButton<String>(
             enabled: canOpen,
             tooltip: '选择 shell 再新建',
-            color: const Color(0xFF2D2D2D),
+            color: _bg2,
             onSelected: (v) => _ctrl.openSession(shell: v == 'auto' ? null : v),
             itemBuilder: (context) => const [
               PopupMenuItem(
                 value: 'auto',
                 child: Text('默认（自动）',
-                    style: TextStyle(color: Color(0xFFCCCCCC), fontSize: 13)),
+                    style: TextStyle(color: _fg0, fontSize: 13)),
               ),
               PopupMenuItem(
                 value: 'powershell',
-                child: Text('PowerShell',
-                    style: TextStyle(color: Color(0xFFCCCCCC), fontSize: 13)),
+                child:
+                    Text('PowerShell', style: TextStyle(color: _fg0, fontSize: 13)),
               ),
               PopupMenuItem(
                 value: 'cmd',
-                child: Text('CMD',
-                    style: TextStyle(color: Color(0xFFCCCCCC), fontSize: 13)),
+                child: Text('CMD', style: TextStyle(color: _fg0, fontSize: 13)),
               ),
             ],
             child: Container(
@@ -153,37 +202,42 @@ class _PtyConsoleTabState extends State<PtyConsoleTab> {
               height: 28,
               alignment: Alignment.center,
               child: Icon(LucideIcons.chevronDown,
-                  size: 13,
-                  color: canOpen
-                      ? const Color(0xFF888888)
-                      : const Color(0xFF555555)),
+                  size: 13, color: canOpen ? _fg1 : _fg2),
             ),
           ),
+          const Spacer(),
           // Win7 降级提示：backend=pipe 无颜色/补全，平台限制不是故障
           if (active != null && active.backend == 'pipe') ...[
-            const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: const Color(0xFFFBBF24).withOpacity(0.15),
+                color: _warn.withOpacity(0.15),
                 borderRadius: BorderRadius.circular(3),
               ),
               child: const Text('纯文本(Win7)',
-                  style: TextStyle(color: Color(0xFFFBBF24), fontSize: 10)),
+                  style: TextStyle(color: _warn, fontSize: 10)),
             ),
+            const SizedBox(width: 10),
           ],
-          const SizedBox(width: 8),
-          // 字号调节（10-22，同 demo）
-          const Icon(LucideIcons.type, size: 12, color: Color(0xFF888888)),
+          // 连接状态（demo .state：通道状态文字），跟随全局任务通道
+          StreamBuilder<TaskWsState>(
+            stream: _ctrl.ws.state,
+            initialData: _ctrl.ws.currentState,
+            builder: (context, snap) => _buildWsState(snap.data),
+          ),
+          const SizedBox(width: 12),
+          // 字号调节（demo .fs：「字号」文字 + 滑条 + 数值）
+          const Text('字号', style: TextStyle(color: _fg1, fontSize: 12)),
           SizedBox(
             width: 90,
             child: SliderTheme(
               data: SliderTheme.of(context).copyWith(
                 trackHeight: 2,
-                thumbShape:
-                    const RoundSliderThumbShape(enabledThumbRadius: 6),
-                overlayShape:
-                    const RoundSliderOverlayShape(overlayRadius: 12),
+                activeTrackColor: _accent,
+                inactiveTrackColor: _bg3,
+                thumbColor: _accent,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
               ),
               child: Slider(
                 value: _fontSize,
@@ -195,20 +249,42 @@ class _PtyConsoleTabState extends State<PtyConsoleTab> {
             ),
           ),
           Text('${_fontSize.round()}',
-              style: const TextStyle(color: Color(0xFF888888), fontSize: 11)),
+              style: const TextStyle(color: _fg1, fontSize: 11)),
+          // 应用内最大化：铺满整个终端详情窗口（同游戏管理的全屏机制）
+          if (widget.onToggleFullscreen != null) ...[
+            const SizedBox(width: 6),
+            _barButton(
+              icon: widget.isFullscreen
+                  ? LucideIcons.minimize2
+                  : LucideIcons.maximize2,
+              tooltip: widget.isFullscreen ? '还原' : '最大化',
+              onTap: widget.onToggleFullscreen!,
+            ),
+          ],
         ],
       ),
     );
   }
 
+  Widget _buildWsState(TaskWsState? s) {
+    final (text, color) = switch (s) {
+      TaskWsState.ready => ('已连接', _ok),
+      TaskWsState.connecting ||
+      TaskWsState.awaitingReady =>
+        ('连接中…', _warn),
+      TaskWsState.closed => ('已断开', _danger),
+      TaskWsState.authFailed => ('鉴权失败', _danger),
+      _ => ('未连接', _fg1),
+    };
+    return Text(text, style: TextStyle(color: color, fontSize: 12));
+  }
+
+  // 单个标签：1:1 demo .tab —— padding 6/10、gap 7、只圆上角、
+  // active 底色与终端融为一体（termBg + border），非 active bg2
   Widget _buildTab(PtySession s) {
     final isActive = s.id == _ctrl.activeId;
     final renaming = _renamingId == s.id;
-    final dotColor = s.ended
-        ? const Color(0xFF666666)
-        : s.opening
-            ? const Color(0xFFFBBF24)
-            : const Color(0xFF4ADE80);
+    final dotColor = s.ended ? _fg2 : (s.opening ? _warn : _ok);
     return Tooltip(
       message:
           '会话 ${s.id}${s.shell.isNotEmpty ? ' · ${s.shell}' : ''}${s.backend.isNotEmpty ? ' · 后端 ${s.backend}' : ''}${s.ended ? ' · 已结束' : ''}',
@@ -218,15 +294,12 @@ class _PtyConsoleTabState extends State<PtyConsoleTab> {
         onDoubleTap: _isMobile ? null : () => _startRename(s),
         onLongPress: _isMobile ? () => _startRename(s) : null,
         child: Container(
-          margin: const EdgeInsets.only(right: 4, top: 6),
-          padding: const EdgeInsets.symmetric(horizontal: 10),
+          margin: const EdgeInsets.only(right: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
-            color: isActive ? const Color(0xFF0C0C0C) : const Color(0xFF222222),
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(6)),
-            border: Border.all(
-                color:
-                    isActive ? const Color(0xFF3A3A3A) : Colors.transparent),
+            color: isActive ? _termBg : _bg2,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+            border: Border.all(color: isActive ? _border : Colors.transparent),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -237,7 +310,7 @@ class _PtyConsoleTabState extends State<PtyConsoleTab> {
                 decoration:
                     BoxDecoration(color: dotColor, shape: BoxShape.circle),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 7),
               if (renaming)
                 SizedBox(
                   width: 96,
@@ -254,8 +327,7 @@ class _PtyConsoleTabState extends State<PtyConsoleTab> {
                       controller: _renameCtrl,
                       focusNode: _renameFocus,
                       maxLength: 40,
-                      style: const TextStyle(
-                          color: Color(0xFFEEEEEE), fontSize: 12),
+                      style: const TextStyle(color: _fg0, fontSize: 12),
                       decoration: const InputDecoration(
                         isDense: true,
                         counterText: '',
@@ -269,40 +341,41 @@ class _PtyConsoleTabState extends State<PtyConsoleTab> {
                   ),
                 )
               else ...[
-                Text(
-                  s.label,
-                  style: TextStyle(
-                    color: isActive
-                        ? const Color(0xFFEEEEEE)
-                        : const Color(0xFF999999),
-                    fontSize: 12,
-                    decoration: s.ended ? TextDecoration.lineThrough : null,
-                    decorationColor: const Color(0xFF999999),
+                // ended：删除线 + 65% 透明（demo .tab.ended .name）
+                Opacity(
+                  opacity: s.ended ? 0.65 : 1,
+                  child: Text(
+                    s.label,
+                    style: TextStyle(
+                      color: isActive ? _fg0 : _fg1,
+                      fontSize: 13,
+                      decoration: s.ended ? TextDecoration.lineThrough : null,
+                      decorationColor: _fg1,
+                    ),
                   ),
                 ),
                 // shell 徽标：客户机回执报的**实际**起的 shell，与 backend 独立
                 if (s.shell.isNotEmpty) ...[
-                  const SizedBox(width: 5),
+                  const SizedBox(width: 7),
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 4, vertical: 1),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF333333),
+                      color: _bg3,
                       borderRadius: BorderRadius.circular(3),
                     ),
                     child: Text(
                       s.shell == 'powershell' ? 'PS' : 'CMD',
-                      style: const TextStyle(
-                          color: Color(0xFF999999), fontSize: 9),
+                      style:
+                          TextStyle(color: isActive ? _fg1 : _fg2, fontSize: 10),
                     ),
                   ),
                 ],
               ],
-              const SizedBox(width: 6),
+              const SizedBox(width: 7),
               InkWell(
                 onTap: () => _ctrl.closeSession(s.id),
-                child: const Icon(LucideIcons.x,
-                    size: 11, color: Color(0xFF888888)),
+                child: const Icon(LucideIcons.x, size: 11, color: _fg2),
               ),
             ],
           ),
@@ -326,11 +399,7 @@ class _PtyConsoleTabState extends State<PtyConsoleTab> {
           width: 28,
           height: 28,
           alignment: Alignment.center,
-          child: Icon(icon,
-              size: 14,
-              color: enabled
-                  ? const Color(0xFF888888)
-                  : const Color(0xFF555555)),
+          child: Icon(icon, size: 14, color: enabled ? _fg1 : _fg2),
         ),
       ),
     );
@@ -345,7 +414,8 @@ class _PtyConsoleTabState extends State<PtyConsoleTab> {
       _renameCtrl.selection =
           TextSelection(baseOffset: 0, extentOffset: _renameCtrl.text.length);
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => _renameFocus.requestFocus());
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _renameFocus.requestFocus());
   }
 
   /// 提交改名。空白名回退默认 #N（controller 里 trim 后清空 custom）。
@@ -367,7 +437,7 @@ class _PtyConsoleTabState extends State<PtyConsoleTab> {
       return const Center(
         child: Text(
           '点「＋」新建终端会话（最多 $ptyMaxSessions 个）',
-          style: TextStyle(color: Color(0xFF666666), fontSize: 13),
+          style: TextStyle(color: _fg2, fontSize: 13),
         ),
       );
     }
@@ -383,7 +453,7 @@ class _PtyConsoleTabState extends State<PtyConsoleTab> {
             controller: s.viewController,
             autofocus: s.id == _ctrl.activeId,
             padding: const EdgeInsets.all(6),
-            theme: xterm.TerminalThemes.defaultTheme,
+            theme: _demoTheme,
             textStyle: xterm.TerminalStyle(
               fontSize: _fontSize,
               fontFamily: 'Cascadia Mono',
@@ -433,8 +503,8 @@ class _PtyConsoleTabState extends State<PtyConsoleTab> {
     return Container(
       height: 36,
       decoration: const BoxDecoration(
-        color: Color(0xFF1A1A1A),
-        border: Border(top: BorderSide(color: Color(0xFF3A3A3A))),
+        color: _bg1,
+        border: Border(top: BorderSide(color: _border)),
       ),
       child: Row(
         children: [
@@ -444,8 +514,7 @@ class _PtyConsoleTabState extends State<PtyConsoleTab> {
                 onTap: () => _ctrl.sendInputToActive(seq),
                 child: Center(
                   child: Text(label,
-                      style: const TextStyle(
-                          color: Color(0xFFCCCCCC), fontSize: 12)),
+                      style: const TextStyle(color: _fg0, fontSize: 12)),
                 ),
               ),
             ),

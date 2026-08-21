@@ -146,6 +146,11 @@ dev_dependencies:
 dependency_overrides:
   desktop_multi_window:
     path: plugins/desktop_multi_window
+  # xterm 4.0.0 的 IME attach 未传 viewId，Flutter 3.24+ 下无法输入字符
+  # （上游 TerminalStudio/xterm.dart#207 未修复），本地 vendor 打一行补丁
+  # （plugins/xterm/lib/src/ui/custom_text_edit.dart，见该文件头注释）
+  xterm:
+    path: plugins/xterm
   # webrtc_remote(optimization) 与 webrtc_remote_v3(sfu_rebuild) 各自内嵌
   # plugins/flutter_webrtc 的 path 依赖，同名插件两个 git ref 来源 pub 无解，
   # 强制统一到 optimization 版（多一处 getStats 移出主线程的 ANR 修复，
