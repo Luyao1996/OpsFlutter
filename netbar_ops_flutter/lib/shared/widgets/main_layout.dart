@@ -18,6 +18,7 @@ import '../providers/permission_provider.dart';
 import '../../features/netbar/presentation/widgets/default_win_pwd_dialog.dart';
 import '../../features/netbar/presentation/widgets/batch_reset_pwd_dialog.dart';
 import '../../features/netbar/presentation/widgets/batch_update_program_dialog.dart';
+import '../../features/netbar/presentation/widgets/update_record_dialog.dart';
 import '../../features/netbar/presentation/widgets/totp_dialog.dart';
 import 'upload_queue_overlay.dart';
 import '../../features/user/presentation/user_profile_dialog.dart';
@@ -170,6 +171,7 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     }
     if (perm.hasDetailPermission('更新')) {
       items.add(const PopupMenuItem(value: 'batchUpdate', child: Text('批量更新程序', style: TextStyle(fontSize: 14))));
+      items.add(const PopupMenuItem(value: 'updateRecord', child: Text('更新记录', style: TextStyle(fontSize: 14))));
     }
     if (perm.hasDetailPermission('生成超级密码')) {
       items.add(const PopupMenuItem(value: 'superPwd', child: Text('生成超级密码', style: TextStyle(fontSize: 14))));
@@ -192,6 +194,9 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
             break;
           case 'batchUpdate':
             showAdaptive<void>(context, (_) => const BatchUpdateProgramDialog(), routeName: '/dialog/batch-update-program');
+            break;
+          case 'updateRecord':
+            showAdaptive<void>(context, (_) => const UpdateRecordDialog(), routeName: '/dialog/update-record');
             break;
           case 'superPwd':
             showAdaptive<void>(context, (_) => const TotpDialog(), routeName: '/dialog/totp');
