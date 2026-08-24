@@ -9,6 +9,7 @@ import '../../../../shared/widgets/app_error_view.dart';
 import '../data/netbar_api.dart';
 import '../data/netbar_list_provider.dart';
 import '../data/netbar_pinyin_matcher.dart';
+import '../data/version_compare.dart';
 import 'widgets/create_netbar_modal.dart';
 import 'widgets/netbar_list_view.dart';
 import 'widgets/netbar_grid_view.dart';
@@ -23,6 +24,8 @@ class NetbarListPage extends ConsumerStatefulWidget {
 class _NetbarListPageState extends ConsumerState<NetbarListPage> {
   String _searchQuery = '';
   final String _selectedGroup = '全部分组';
+  /// 版本号筛选，null = 全部
+  String? _filterVersion;
   bool _isListView = true;
 
   @override
@@ -30,6 +33,15 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
     final netbarsAsync = ref.watch(netbarListProvider);
     final isNarrow = context.isNarrow;
     final padding = context.isPhone ? 16.0 : 24.0;
+    // 版本号选项依赖异步数据；加载中/失败时给空列表，下拉退化成只有「全部」且不可点
+    final versionOptions = netbarsAsync.maybeWhen(
+      data: _collectVersions,
+      orElse: () => const <String>[],
+    );
+    // 刷新后原先选中的版本可能已经不在数据里，统一回落到「全部」，
+    // 避免下拉显示「全部」而列表还在按一个消失了的版本过滤
+    final activeVersion =
+        versionOptions.contains(_filterVersion) ? _filterVersion : null;
 
     return Scaffold(
       backgroundColor: AppColors.iosBg,
@@ -77,6 +89,11 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
                         ),
                       ),
                       const SizedBox(width: 16),
+                      SizedBox(
+                        width: 140,
+                        child: _buildVersionFilter(versionOptions, activeVersion),
+                      ),
+                      const SizedBox(width: 16),
                       _buildViewToggle(),
                     ],
                   )
@@ -90,9 +107,15 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
                             setState(() => _searchQuery = value),
                       ),
                       const SizedBox(height: 12),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: _buildViewToggle(),
+                      Row(
+                        children: [
+                          SizedBox(
+                            width: 140,
+                            child: _buildVersionFilter(versionOptions, activeVersion),
+                          ),
+                          const Spacer(),
+                          _buildViewToggle(),
+                        ],
                       ),
                     ],
                   ),
@@ -111,7 +134,9 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
               data: (response) {
                 // Filter logic: 三级匹配 (name → pinyin_full → pinyin) + id/token/group 兜底
                 final filtered = response.merchants
-                    .where((n) => NetbarMatcher.match(n, _searchQuery))
+                    .where((n) =>
+                        NetbarMatcher.match(n, _searchQuery) &&
+                        (activeVersion == null || n.version == activeVersion))
                     .toList();
 
                 if (filtered.isEmpty) {
@@ -133,6 +158,59 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
           ),
         ],
       ),
+    );
+  }
+
+  /// 去重收集版本号，按语义化版本降序（"1.10" 要排在 "1.2" 前面，不能按字符串排）
+  List<String> _collectVersions(NetbarListResponse response) {
+    final set = <String>{};
+    for (final n in response.merchants) {
+      final v = n.version;
+      if (v != null && v.isNotEmpty) set.add(v);
+    }
+    final list = set.toList();
+    list.sort((a, b) => compareVersion(a, b, desc: true));
+    return list;
+  }
+
+  Widget _buildVersionFilter(List<String> options, String? value) {
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide.none,
+    );
+    return DropdownButtonFormField<String?>(
+      value: value,
+      isExpanded: true,
+      style: const TextStyle(fontSize: 14, color: Colors.black87),
+      decoration: InputDecoration(
+        isDense: true,
+        filled: true,
+        fillColor: Colors.grey.shade100,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        border: border,
+        enabledBorder: border,
+        disabledBorder: border,
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.iosBlue, width: 2),
+        ),
+      ),
+      items: [
+        const DropdownMenuItem<String?>(
+          value: null,
+          child: Text('全部版本', style: TextStyle(fontSize: 14)),
+        ),
+        ...options.map((v) => DropdownMenuItem<String?>(
+              value: v,
+              child: Text('v$v',
+                  style: const TextStyle(fontSize: 14),
+                  overflow: TextOverflow.ellipsis),
+            )),
+      ],
+      onChanged: options.isEmpty
+          ? null
+          : (v) => setState(() => _filterVersion = v),
     );
   }
 

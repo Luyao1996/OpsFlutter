@@ -40,6 +40,11 @@ class ResponsiveDialogScaffold extends StatelessWidget {
   /// body 区域的内边距（默认 EdgeInsets.all(20)）
   final EdgeInsetsGeometry bodyPadding;
 
+  /// 是否展示关闭按钮（窄屏 AppBar 左侧 X / 宽屏标题栏右侧 X）。
+  /// 关闭按钮直接调 `Navigator.pop`，PopScope 拦不住它，所以「进行中不许关闭」的
+  /// 弹窗必须同时把这个置 false，只靠 PopScope 只能挡住系统返回键和点遮罩。
+  final bool showCloseButton;
+
   /// 仅宽屏：Dialog 与屏幕边缘的间距。
   /// null = Flutter Dialog 默认（horizontal 40 / vertical 24）；
   /// 传 EdgeInsets.zero 配合 maxWidth/maxHeight 设为屏幕尺寸可实现全屏弹窗。
@@ -57,6 +62,7 @@ class ResponsiveDialogScaffold extends StatelessWidget {
     this.scrollableBody = true,
     this.bodyPadding = const EdgeInsets.all(20),
     this.insetPadding,
+    this.showCloseButton = true,
   });
 
   @override
@@ -75,10 +81,13 @@ class ResponsiveDialogScaffold extends StatelessWidget {
         backgroundColor: Colors.white,
         foregroundColor: Colors.black87,
         elevation: 0.5,
-        leading: IconButton(
-          icon: const Icon(LucideIcons.x, size: 20),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
+        automaticallyImplyLeading: showCloseButton,
+        leading: showCloseButton
+            ? IconButton(
+                icon: const Icon(LucideIcons.x, size: 20),
+                onPressed: () => Navigator.of(context).pop(),
+              )
+            : null,
         title: Text(
           title,
           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
@@ -129,7 +138,11 @@ class ResponsiveDialogScaffold extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _DialogHeader(title: title, actions: appBarActions),
+            _DialogHeader(
+              title: title,
+              actions: appBarActions,
+              showCloseButton: showCloseButton,
+            ),
             const Divider(height: 1, color: Color(0xFFF3F4F6)),
             Flexible(
               child: scrollableBody
@@ -155,8 +168,13 @@ class ResponsiveDialogScaffold extends StatelessWidget {
 class _DialogHeader extends StatelessWidget {
   final String title;
   final List<Widget>? actions;
+  final bool showCloseButton;
 
-  const _DialogHeader({required this.title, this.actions});
+  const _DialogHeader({
+    required this.title,
+    this.actions,
+    this.showCloseButton = true,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -177,13 +195,16 @@ class _DialogHeader extends StatelessWidget {
             ),
           ),
           if (actions != null) ...actions!,
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(LucideIcons.x, size: 18, color: Colors.grey),
-            splashRadius: 18,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
+          if (showCloseButton)
+            IconButton(
+              onPressed: () => Navigator.of(context).pop(),
+              icon: const Icon(LucideIcons.x, size: 18, color: Colors.grey),
+              splashRadius: 18,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            )
+          else
+            const SizedBox(width: 32, height: 32),
         ],
       ),
     );
