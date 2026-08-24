@@ -6,10 +6,13 @@ import '../../../core/responsive/responsive.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/utils/adaptive_show.dart';
 import '../../../shared/utils/top_notice.dart';
+import '../../../shared/providers/permission_provider.dart';
+import '../data/edition_meta.dart';
 import '../data/netbar_api.dart';
 import '../data/netbar_list_provider.dart';
 import '../data/netbar_pinyin_matcher.dart';
 import '../data/version_compare.dart';
+import 'widgets/update_edition_dialog.dart';
 import '../../../core/network/error_message.dart';
 import 'group_picker.dart';
 import 'edit_netbar_modal.dart';
@@ -39,6 +42,9 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
 
   /// 在线状态筛选，null=全部
   bool? _filterOnline;
+
+  /// 版本类型（更新通道）筛选，null=全部
+  String? _filterEdition;
   String _sortKey = 'id';
   bool _sortAsc = true;
 
@@ -105,6 +111,7 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
       if (_selectedGroup != '全部分组' && n.group != _selectedGroup) return false;
       if (activeVersion != null && n.version != activeVersion) return false;
       if (_filterOnline != null && n.isOnline != _filterOnline) return false;
+      if (_filterEdition != null && n.edition != _filterEdition) return false;
       return NetbarMatcher.match(n, _searchQuery);
     }).toList();
 
@@ -233,6 +240,8 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
           const SizedBox(width: 12),
           SizedBox(width: 108, child: _buildOnlineDropdown()),
           const SizedBox(width: 12),
+          SizedBox(width: 116, child: _buildEditionDropdown()),
+          const SizedBox(width: 12),
           _buildAddButton(),
         ],
       ),
@@ -277,6 +286,26 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
         DropdownMenuItem<bool?>(value: false, child: Text('离线', style: TextStyle(fontSize: 13))),
       ],
       onChanged: (v) => setState(() => _filterOnline = v),
+    );
+  }
+
+  Widget _buildEditionDropdown() {
+    return DropdownButtonFormField<String?>(
+      value: _filterEdition,
+      isExpanded: true,
+      style: const TextStyle(fontSize: 13, color: Colors.black87),
+      decoration: _dropdownDecoration(),
+      items: [
+        const DropdownMenuItem<String?>(
+          value: null,
+          child: Text('全部类型', style: TextStyle(fontSize: 13)),
+        ),
+        ...kEditionOptions.map((m) => DropdownMenuItem<String?>(
+              value: m.value,
+              child: Text(m.label, style: const TextStyle(fontSize: 13)),
+            )),
+      ],
+      onChanged: (v) => setState(() => _filterEdition = v),
     );
   }
 
@@ -345,6 +374,8 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
             Expanded(child: _buildVersionDropdown(merchants)),
             const SizedBox(width: 8),
             Expanded(child: _buildOnlineDropdown()),
+            const SizedBox(width: 8),
+            Expanded(child: _buildEditionDropdown()),
           ],
         ),
       ],
@@ -412,6 +443,23 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
     );
   }
 
+  /// 版本类型（更新通道）chip，紧挨版本号 chip 右侧；未知通道显示原始值防误标
+  Widget _buildEditionChip(String edition) {
+    final color = editionTagColor(edition);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        editionLabel(edition),
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: color),
+      ),
+    );
+  }
+
   Widget _buildSearchField() {
     return Container(
       height: 44,
@@ -464,6 +512,10 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
                   if (netbar.version != null && netbar.version!.isNotEmpty) ...[
                     const SizedBox(width: 6),
                     _buildVersionChip(netbar.version!),
+                  ],
+                  if (netbar.edition != null && netbar.edition!.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    _buildEditionChip(netbar.edition!),
                   ],
                 ],
               ),
@@ -603,7 +655,7 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
           _buildHeaderCell('管理员', flex: 2),
           _buildHeaderCell('创建时间', flex: 2),
           _buildHeaderCell('Token', flex: 2),
-          _buildHeaderCell('编辑', flex: 1),
+          _buildHeaderCell('操作', flex: 1),
         ],
       ),
     );
@@ -693,6 +745,10 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
                         if (netbar.version != null && netbar.version!.isNotEmpty) ...[
                           const SizedBox(width: 6),
                           _buildVersionChip(netbar.version!),
+                        ],
+                        if (netbar.edition != null && netbar.edition!.isNotEmpty) ...[
+                          const SizedBox(width: 6),
+                          _buildEditionChip(netbar.edition!),
                         ],
                       ],
                     ),
@@ -790,11 +846,34 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
               flex: 2,
               child: _buildTokenCell(netbar.code),
             ),
-            // 编辑按钮
+            // 操作：更新程序（需「更新」权限）+ 编辑
             Expanded(
               flex: 1,
-              child: Center(
-                child: _EditButton(onTap: () => _handleEdit(netbar)),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (ref.watch(permissionProvider).hasDetailPermission('更新')) ...[
+                    Tooltip(
+                      message: '更新程序',
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: () => runUpdateProgramFlow(
+                          context,
+                          netbar,
+                          isTopManager:
+                              ref.read(permissionProvider).isTopManager,
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(6),
+                          child: Icon(LucideIcons.refreshCw,
+                              size: 15, color: Colors.grey.shade600),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                  _EditButton(onTap: () => _handleEdit(netbar)),
+                ],
               ),
             ),
           ],
