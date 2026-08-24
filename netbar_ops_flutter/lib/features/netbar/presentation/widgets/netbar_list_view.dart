@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import '../../../../shared/providers/permission_provider.dart';
 import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/utils/top_notice.dart';
+import '../../data/edition_meta.dart';
 import '../../data/netbar_api.dart';
 import '../edit_netbar_modal.dart';
 import 'remote_wake_modal.dart';
+import 'update_edition_dialog.dart';
 
 class NetbarListView extends StatelessWidget {
   final List<Netbar> netbars;
@@ -81,14 +85,17 @@ class NetbarListView extends StatelessWidget {
   }
 }
 
-class _NetbarListRow extends StatelessWidget {
+// 行内需要按权限显隐「更新程序」按钮，改成 ConsumerWidget 就地 watch，
+// 免得往 NetbarListView 的公开构造里穿参
+class _NetbarListRow extends ConsumerWidget {
   final Netbar netbar;
   final Future<void> Function() onRefresh;
 
   const _NetbarListRow({required this.netbar, required this.onRefresh});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final perm = ref.watch(permissionProvider);
     return InkWell(
       onTap: () {
         // TODO: Implement Wake/Monitor action on row tap
@@ -121,7 +128,7 @@ class _NetbarListRow extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Expanded(
+                  Flexible(
                     child: Text(
                       netbar.name,
                       style: const TextStyle(
@@ -131,6 +138,22 @@ class _NetbarListRow extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                  // web 名称旁展示 vX.X；此前 Flutter 行内没有版本号，
+                  // 补上才能给版本类型徽章一个"版本号附近"的锚点
+                  if (netbar.version != null && netbar.version!.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      'v${netbar.version}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade400,
+                      ),
+                    ),
+                  ],
+                  if (netbar.edition != null && netbar.edition!.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    _editionBadge(netbar.edition),
+                  ],
                 ],
               ),
             ),
@@ -374,6 +397,19 @@ class _NetbarListRow extends StatelessWidget {
                     },
                     tooltip: '控制台',
                   ),
+                  // 权限点对齐 web canUpdate（与「批量更新程序」「更新记录」同一权限点）
+                  if (perm.hasDetailPermission('更新')) ...[
+                    const SizedBox(width: 8),
+                    _ActionButton(
+                      icon: LucideIcons.refreshCw,
+                      onTap: () => runUpdateProgramFlow(
+                        context,
+                        netbar,
+                        isTopManager: perm.isTopManager,
+                      ),
+                      tooltip: '更新程序',
+                    ),
+                  ],
                   const SizedBox(width: 8),
                   _ActionButton(
                     icon: LucideIcons.moreHorizontal,
@@ -392,6 +428,27 @@ class _NetbarListRow extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// 版本类型小徽章，画法对齐 netbar_multi_select_table 的 _statusBadge
+  Widget _editionBadge(String? edition) {
+    final color = editionTagColor(edition);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.35)),
+      ),
+      child: Text(
+        editionLabel(edition),
+        style: TextStyle(
+          fontSize: 11,
+          color: color,
+          fontWeight: FontWeight.w500,
         ),
       ),
     );

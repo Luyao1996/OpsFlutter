@@ -61,6 +61,7 @@ class Netbar {
   final NetbarServerMetrics? serverMetrics;
   final String? serverPwd; // 后端 server_pwd：服务端 Windows 当前密码（敏感字段，仅用于编辑回填）
   final String? version; // 后端 version：网吧客户端版本号（显示用，可空）
+  final String? edition; // 后端 edition：更新通道（check/debug/beta/release/gorelease），空/未知值由展示层兜底
   // 终端异常列表用：离线时间（后端可能返回 logout_at / offline_at / last_online_at 之一）
   final String? logoutAt;
   final String? offlineAt;
@@ -100,6 +101,7 @@ class Netbar {
     this.serverMetrics,
     this.serverPwd,
     this.version,
+    this.edition,
     this.logoutAt,
     this.offlineAt,
     this.lastOnlineAt,
@@ -132,6 +134,7 @@ class Netbar {
           : null,
       serverPwd: json['server_pwd']?.toString(),
       version: json['version']?.toString(),
+      edition: json['edition']?.toString(),
       logoutAt: json['logout_at']?.toString(),
       offlineAt: json['offline_at']?.toString(),
       lastOnlineAt: json['last_online_at']?.toString(),
@@ -155,6 +158,7 @@ class Netbar {
     'users': users?.map((u) => {'id': u.id, 'nickname': u.nickname}).toList(),
     'created_at': createdAt,
     'updated_at': updatedAt,
+    'edition': edition,
     if (screenshotUrl != null) 'screenshot_url': screenshotUrl,
   };
 }
@@ -413,6 +417,20 @@ class NetbarApi {
       formData.fields.add(MapEntry('type', type));
     }
     await _client.post('/socket/programBatch', data: formData);
+  }
+
+  /// 单网吧更新程序 —— `POST /socket/program`
+  ///
+  /// 与 web useNetbarDataList 的 handleUpdate 对齐：该接口是 JSON body
+  /// （批量接口 /socket/programBatch 才是 FormData，两者不能混用），
+  /// ApiClient 默认 Content-Type 即 application/json，直接传 Map。
+  /// [type] 为更新通道（''|check|debug|beta|release|gorelease），非空时服务端先把
+  /// 网吧切到该通道再下发更新；为空必须整个省略字段，传空串会被当成"切到空通道"。
+  Future<void> updateProgram({required int merchantId, String type = ''}) async {
+    await _client.post('/socket/program', data: {
+      'merchant_id': merchantId,
+      if (type.isNotEmpty) 'type': type,
+    });
   }
 
   /// 生成超级密码（TOTP）

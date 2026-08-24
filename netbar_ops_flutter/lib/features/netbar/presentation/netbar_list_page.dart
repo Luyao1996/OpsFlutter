@@ -7,6 +7,7 @@ import '../../../../shared/providers/permission_provider.dart';
 import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/widgets/search_field.dart';
 import '../../../../shared/widgets/app_error_view.dart';
+import '../data/edition_meta.dart';
 import '../data/netbar_api.dart';
 import '../data/netbar_list_provider.dart';
 import '../data/netbar_pinyin_matcher.dart';
@@ -28,6 +29,8 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
   final String _selectedGroup = '全部分组';
   /// 版本号筛选，null = 全部
   String? _filterVersion;
+  /// 版本类型（更新通道）筛选，null = 全部，对齐 web form.edition
+  String? _filterEdition;
   bool _isListView = true;
 
   @override
@@ -96,6 +99,11 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
                         child: _buildVersionFilter(versionOptions, activeVersion),
                       ),
                       const SizedBox(width: 16),
+                      SizedBox(
+                        width: 140,
+                        child: _buildEditionFilter(),
+                      ),
+                      const SizedBox(width: 16),
                       _buildViewToggle(),
                     ],
                   )
@@ -103,20 +111,30 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      SearchField(
-                        hintText: '搜索名称、ID、拼音或Token...',
-                        onChanged: (value) =>
-                            setState(() => _searchQuery = value),
+                      // 视图切换挪到搜索框同行，下一行整行让给两个筛选下拉等分，
+                      // 否则 版本号+版本类型+切换 三件套挤一行窄屏必溢出
+                      Row(
+                        children: [
+                          Expanded(
+                            child: SearchField(
+                              hintText: '搜索名称、ID、拼音或Token...',
+                              onChanged: (value) =>
+                                  setState(() => _searchQuery = value),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          _buildViewToggle(),
+                        ],
                       ),
                       const SizedBox(height: 12),
                       Row(
                         children: [
-                          SizedBox(
-                            width: 140,
-                            child: _buildVersionFilter(versionOptions, activeVersion),
+                          Expanded(
+                            child: _buildVersionFilter(
+                                versionOptions, activeVersion),
                           ),
-                          const Spacer(),
-                          _buildViewToggle(),
+                          const SizedBox(width: 12),
+                          Expanded(child: _buildEditionFilter()),
                         ],
                       ),
                     ],
@@ -138,7 +156,9 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
                 final filtered = response.merchants
                     .where((n) =>
                         NetbarMatcher.match(n, _searchQuery) &&
-                        (activeVersion == null || n.version == activeVersion))
+                        (activeVersion == null || n.version == activeVersion) &&
+                        (_filterEdition == null ||
+                            n.edition == _filterEdition))
                     .toList();
 
                 if (filtered.isEmpty) {
@@ -213,6 +233,46 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
       onChanged: options.isEmpty
           ? null
           : (v) => setState(() => _filterVersion = v),
+    );
+  }
+
+  /// 版本类型（更新通道）筛选，做法复用 _buildVersionFilter；
+  /// 选项本地写死（对齐 web EDITION_OPTIONS），不依赖异步数据，
+  /// 空值项文案带"类型"限定，避免与旁边"全部版本"混淆
+  Widget _buildEditionFilter() {
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide.none,
+    );
+    return DropdownButtonFormField<String?>(
+      value: _filterEdition,
+      isExpanded: true,
+      style: const TextStyle(fontSize: 14, color: Colors.black87),
+      decoration: InputDecoration(
+        isDense: true,
+        filled: true,
+        fillColor: Colors.grey.shade100,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        border: border,
+        enabledBorder: border,
+        disabledBorder: border,
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.iosBlue, width: 2),
+        ),
+      ),
+      items: [
+        const DropdownMenuItem<String?>(
+          value: null,
+          child: Text('全部类型', style: TextStyle(fontSize: 14)),
+        ),
+        ...kEditionOptions.map((m) => DropdownMenuItem<String?>(
+              value: m.value,
+              child: Text(m.label, style: const TextStyle(fontSize: 14)),
+            )),
+      ],
+      onChanged: (v) => setState(() => _filterEdition = v),
     );
   }
 
