@@ -125,6 +125,62 @@ class _NetbarMultiSelectTableState extends State<NetbarMultiSelectTable> {
     );
   }
 
+  Widget _buildSearchBox() {
+    return TextField(
+      onChanged: (v) => setState(() => _searchQuery = v),
+      decoration: _fieldDecoration('搜索网吧名称').copyWith(
+        prefixIcon: Icon(Icons.search, size: 18, color: Colors.grey.shade400),
+      ),
+      style: const TextStyle(fontSize: 13),
+    );
+  }
+
+  Widget _buildGroupDropdown() {
+    return DropdownButtonFormField<int?>(
+      value: _filterGroupId,
+      isExpanded: true,
+      decoration: _fieldDecoration('全部分组'),
+      items: [
+        const DropdownMenuItem<int?>(value: null, child: Text('全部分组', style: TextStyle(fontSize: 13))),
+        ...widget.groups.map((g) => DropdownMenuItem<int?>(
+              value: g.id,
+              child: Text(g.name, style: const TextStyle(fontSize: 13), overflow: TextOverflow.ellipsis),
+            )),
+      ],
+      onChanged: (v) => setState(() => _filterGroupId = v),
+    );
+  }
+
+  Widget _buildVersionDropdown() {
+    return DropdownButtonFormField<String?>(
+      value: _filterVersion,
+      isExpanded: true,
+      decoration: _fieldDecoration('全部版本'),
+      items: [
+        const DropdownMenuItem<String?>(value: null, child: Text('全部版本', style: TextStyle(fontSize: 13))),
+        ..._versionOptions.map((v) => DropdownMenuItem<String?>(
+              value: v,
+              child: Text('v$v', style: const TextStyle(fontSize: 13), overflow: TextOverflow.ellipsis),
+            )),
+      ],
+      onChanged: (v) => setState(() => _filterVersion = v),
+    );
+  }
+
+  Widget _buildOnlineDropdown() {
+    return DropdownButtonFormField<bool?>(
+      value: _filterOnline,
+      isExpanded: true,
+      decoration: _fieldDecoration('全部状态'),
+      items: const [
+        DropdownMenuItem<bool?>(value: null, child: Text('全部状态', style: TextStyle(fontSize: 13))),
+        DropdownMenuItem<bool?>(value: true, child: Text('在线', style: TextStyle(fontSize: 13))),
+        DropdownMenuItem<bool?>(value: false, child: Text('离线', style: TextStyle(fontSize: 13))),
+      ],
+      onChanged: (v) => setState(() => _filterOnline = v),
+    );
+  }
+
   Widget _headerCell(String text) => Text(
         text,
         textAlign: TextAlign.center,
@@ -155,100 +211,67 @@ class _NetbarMultiSelectTableState extends State<NetbarMultiSelectTable> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final available = constraints.maxWidth;
-        final showTerminal = available >= _kHideTerminalWidth;
+        // 手机端（全屏弹窗）走专属紧凑布局：筛选下拉等分一行、表格行改双行卡片
+        final compact = available < 500;
+        final showTerminal = !compact && available >= _kHideTerminalWidth;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // 筛选栏（对标 Vue 端 filter-bar）
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // 「共 N 家」占掉一截宽度，搜索框只能按 Wrap 自己拿到的宽度算，
-                // 直接用外层 available 会横向溢出
-                Expanded(
-                  child: LayoutBuilder(builder: (context, barConstraints) {
-                    final barWidth = barConstraints.maxWidth;
-                    // 手机端弹窗是全屏页，筛选栏必须能换行；搜索框在 Wrap 里拿不到
-                    // 弹性宽度，只能显式给：窄屏独占一行，宽屏留 200 让三个下拉排同一行
-                    final searchWidth = barWidth < 500 ? barWidth : 200.0;
-                    return Wrap(
-                      spacing: 8,
-                      runSpacing: 10,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        // 名称搜索
-                        SizedBox(
-                          width: searchWidth,
-                          child: TextField(
-                            onChanged: (v) => setState(() => _searchQuery = v),
-                            decoration: _fieldDecoration('搜索网吧名称').copyWith(
-                              prefixIcon: Icon(Icons.search, size: 18, color: Colors.grey.shade400),
-                            ),
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                        ),
-                        // 分组筛选
-                        SizedBox(
-                          width: 130,
-                          child: DropdownButtonFormField<int?>(
-                            value: _filterGroupId,
-                            isExpanded: true,
-                            decoration: _fieldDecoration('全部分组'),
-                            items: [
-                              const DropdownMenuItem<int?>(value: null, child: Text('全部分组', style: TextStyle(fontSize: 13))),
-                              ...widget.groups.map((g) => DropdownMenuItem<int?>(
-                                    value: g.id,
-                                    child: Text(g.name, style: const TextStyle(fontSize: 13), overflow: TextOverflow.ellipsis),
-                                  )),
-                            ],
-                            onChanged: (v) => setState(() => _filterGroupId = v),
-                          ),
-                        ),
-                        // 版本号筛选
-                        SizedBox(
-                          width: 120,
-                          child: DropdownButtonFormField<String?>(
-                            value: _filterVersion,
-                            isExpanded: true,
-                            decoration: _fieldDecoration('全部版本'),
-                            items: [
-                              const DropdownMenuItem<String?>(value: null, child: Text('全部版本', style: TextStyle(fontSize: 13))),
-                              ..._versionOptions.map((v) => DropdownMenuItem<String?>(
-                                    value: v,
-                                    child: Text('v$v', style: const TextStyle(fontSize: 13), overflow: TextOverflow.ellipsis),
-                                  )),
-                            ],
-                            onChanged: (v) => setState(() => _filterVersion = v),
-                          ),
-                        ),
-                        // 在线状态筛选
-                        SizedBox(
-                          width: 110,
-                          child: DropdownButtonFormField<bool?>(
-                            value: _filterOnline,
-                            isExpanded: true,
-                            decoration: _fieldDecoration('全部状态'),
-                            items: const [
-                              DropdownMenuItem<bool?>(value: null, child: Text('全部状态', style: TextStyle(fontSize: 13))),
-                              DropdownMenuItem<bool?>(value: true, child: Text('在线', style: TextStyle(fontSize: 13))),
-                              DropdownMenuItem<bool?>(value: false, child: Text('离线', style: TextStyle(fontSize: 13))),
-                            ],
-                            onChanged: (v) => setState(() => _filterOnline = v),
-                          ),
-                        ),
-                      ],
-                    );
-                  }),
-                ),
-                const SizedBox(width: 8),
-                Text(
+            if (compact) ...[
+              _buildSearchBox(),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(child: _buildGroupDropdown()),
+                  const SizedBox(width: 8),
+                  Expanded(child: _buildVersionDropdown()),
+                  const SizedBox(width: 8),
+                  Expanded(child: _buildOnlineDropdown()),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text(
                   '共 ${filtered.length} 家',
                   style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
                 ),
-              ],
-            ),
-            const SizedBox(height: 12),
+              ),
+              const SizedBox(height: 6),
+            ] else ...[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  // 「共 N 家」占掉一截宽度，搜索框只能按 Wrap 自己拿到的宽度算，
+                  // 直接用外层 available 会横向溢出
+                  Expanded(
+                    child: LayoutBuilder(builder: (context, barConstraints) {
+                      final barWidth = barConstraints.maxWidth;
+                      final searchWidth = barWidth < 500 ? barWidth : 200.0;
+                      return Wrap(
+                        spacing: 8,
+                        runSpacing: 10,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          SizedBox(width: searchWidth, child: _buildSearchBox()),
+                          SizedBox(width: 130, child: _buildGroupDropdown()),
+                          SizedBox(width: 120, child: _buildVersionDropdown()),
+                          SizedBox(width: 110, child: _buildOnlineDropdown()),
+                        ],
+                      );
+                    }),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '共 ${filtered.length} 家',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+            ],
             // 表格（对标 Vue 端 el-table）— 用 Expanded 填充剩余高度
             Expanded(
               child: Container(
@@ -276,21 +299,23 @@ class _NetbarMultiSelectTableState extends State<NetbarMultiSelectTable> {
                               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             ),
                           ),
-                          Expanded(
-                            flex: 3,
+                          const Expanded(
                             child: Text('网吧名称',
-                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF909399)),
+                                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF909399)),
                                 overflow: TextOverflow.ellipsis),
                           ),
-                          Expanded(
-                            flex: 3,
-                            child: Text('所属分组',
-                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF909399)),
-                                overflow: TextOverflow.ellipsis),
-                          ),
-                          SizedBox(width: _kVersionColW, child: _headerCell('版本号')),
-                          SizedBox(width: _kStatusColW, child: _headerCell('状态')),
-                          if (showTerminal) SizedBox(width: _kTerminalColW, child: _headerCell('终端数')),
+                          if (compact)
+                            SizedBox(width: _kStatusColW, child: _headerCell('状态'))
+                          else ...[
+                            const Expanded(
+                              child: Text('所属分组',
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF909399)),
+                                  overflow: TextOverflow.ellipsis),
+                            ),
+                            SizedBox(width: _kVersionColW, child: _headerCell('版本号')),
+                            SizedBox(width: _kStatusColW, child: _headerCell('状态')),
+                            if (showTerminal) SizedBox(width: _kTerminalColW, child: _headerCell('终端数')),
+                          ],
                         ],
                       ),
                     ),
@@ -307,21 +332,64 @@ class _NetbarMultiSelectTableState extends State<NetbarMultiSelectTable> {
                                 final checked = _selectedIds.contains(n.id);
                                 final groupNames = n.groups?.map((g) => g.name).join('、') ?? '-';
                                 final version = (n.version != null && n.version!.isNotEmpty) ? 'v${n.version}' : '-';
+                                final checkbox = SizedBox(
+                                  width: _kCheckColW,
+                                  child: Checkbox(
+                                    value: checked,
+                                    onChanged: (v) => _toggleItem(n.id, v),
+                                    activeColor: AppColors.iosBlue,
+                                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                );
+                                // 手机端双行卡片：名称+状态一行，分组+版本一行，
+                                // 避免五列挤一行时名称与分组黏连、各列截断到不可读
+                                if (compact) {
+                                  return InkWell(
+                                    onTap: () => _toggleItem(n.id, !checked),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                      child: Row(
+                                        crossAxisAlignment: CrossAxisAlignment.center,
+                                        children: [
+                                          checkbox,
+                                          const SizedBox(width: 4),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(n.name,
+                                                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                                    overflow: TextOverflow.ellipsis),
+                                                const SizedBox(height: 3),
+                                                Row(
+                                                  children: [
+                                                    Expanded(
+                                                      child: Text(groupNames,
+                                                          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                                                          overflow: TextOverflow.ellipsis),
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    Text(version,
+                                                        style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                                                  ],
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          _statusBadge(n.isOnline),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }
                                 return InkWell(
                                   onTap: () => _toggleItem(n.id, !checked),
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                     child: Row(
                                       children: [
-                                        SizedBox(
-                                          width: _kCheckColW,
-                                          child: Checkbox(
-                                            value: checked,
-                                            onChanged: (v) => _toggleItem(n.id, v),
-                                            activeColor: AppColors.iosBlue,
-                                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                          ),
-                                        ),
+                                        checkbox,
                                         Expanded(
                                           flex: 3,
                                           child: Text(n.name, style: const TextStyle(fontSize: 13), overflow: TextOverflow.ellipsis),

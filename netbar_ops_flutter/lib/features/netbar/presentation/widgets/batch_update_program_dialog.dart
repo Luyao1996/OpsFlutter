@@ -375,49 +375,73 @@ class _BatchUpdateProgramDialogState extends State<BatchUpdateProgramDialog> {
   }
 
   Widget _buildIdleFooter() {
-    return Wrap(
-      alignment: WrapAlignment.spaceBetween,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: 12,
-      runSpacing: 8,
+    final intervalControls = Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Wrap(
-          crossAxisAlignment: WrapCrossAlignment.center,
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            _buildUpdateTypeSegment(),
-            Text('间隔（$_kMinInterval~$_kMaxInterval秒）',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-            _buildIntervalStepper(),
-            Text('秒/家', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-          ],
+        Text('间隔（$_kMinInterval~$_kMaxInterval秒）',
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+        const SizedBox(width: 8),
+        _buildIntervalStepper(),
+        const SizedBox(width: 8),
+        Text('秒/家', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+      ],
+    );
+    final actions = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
         ),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('取消'),
-            ),
-            const SizedBox(width: 8),
-            ElevatedButton(
-              onPressed: (_submitting || _selectedIds.isEmpty) ? null : _handleConfirm,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.iosBlue,
-                foregroundColor: Colors.white,
-              ),
-              child: _submitting
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Text('确认更新'),
-            ),
-          ],
+        const SizedBox(width: 8),
+        ElevatedButton(
+          onPressed: (_submitting || _selectedIds.isEmpty) ? null : _handleConfirm,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.iosBlue,
+            foregroundColor: Colors.white,
+          ),
+          child: _submitting
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Text('确认更新'),
         ),
       ],
     );
+
+    return LayoutBuilder(builder: (context, constraints) {
+      // 手机端 footer 固定三段：通道 → 间隔 → 操作按钮右对齐，
+      // Wrap 折行会把各段挤成参差的两三行，排布不可控
+      if (constraints.maxWidth < 500) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildUpdateTypeSegment(),
+            const SizedBox(height: 10),
+            intervalControls,
+            const SizedBox(height: 12),
+            Align(alignment: Alignment.centerRight, child: actions),
+          ],
+        );
+      }
+      return Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 12,
+        runSpacing: 8,
+        children: [
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
+            children: [_buildUpdateTypeSegment(), intervalControls],
+          ),
+          actions,
+        ],
+      );
+    });
   }
 
   Widget _buildUpdateTypeSegment() {
