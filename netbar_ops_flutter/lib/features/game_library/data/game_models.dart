@@ -48,11 +48,14 @@ class GameItem {
     return cloudVersion == 0xFFFFFFFF;
   }
 
-  /// 是否系统/补丁/资源类（仅 icafe8）
+  /// 是否系统类：按平台受保护分类表全等匹配（仅用于列表项系统类高亮展示）。
+  /// 旧版子串匹配（含「系统」/「补丁」/「资源」）会误伤「资源管理」等正常游戏。
+  /// 与 [isProtectedCategory] 的区别：不含跨平台的「网吧本地应用」。
   bool get isSystemCategory {
-    if (platform != kPlatformIcafe8 || category == null) return false;
-    final c = category!;
-    return c.contains('系统') || c.contains('补丁') || c.contains('资源');
+    final c = category;
+    if (c == null || c.isEmpty) return false;
+    final list = kProtectedCatsByPlatform[platform];
+    return list != null && list.contains(c);
   }
 
   /// 是否可更新：已安装 + cloud_version > local_version 且都 > 0 且未废弃
