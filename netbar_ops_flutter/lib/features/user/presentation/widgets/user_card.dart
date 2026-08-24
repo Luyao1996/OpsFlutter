@@ -68,6 +68,51 @@ class _UserCardState extends State<UserCard> {
     widget.onRefreshTtlChanged?.call(widget.user, hours);
   }
 
+  /// 角色标签文案（role_tag → 文案）。成员列表接口不带 roleMap，
+  /// 这里用兜底字典，取不到就不显示该标签。
+  String get _roleTagLabel {
+    final tag = widget.user.roleTag;
+    if (tag == null) return '';
+    return kDefaultRoleTagLabels[tag] ?? '';
+  }
+
+  /// 所属权限组名（后端 roles[0].name）
+  String get _roleGroupName =>
+      widget.user.roleObjects.isNotEmpty ? widget.user.roleObjects.first.name : '';
+
+  /// 权限点 chips，与 hasDetailPermission 同语义：
+  /// 有权限组且下发了嵌套权限点 → 合并去重 roles[].permissions[]；
+  /// 否则回退平铺 permissions（旧个人权限模型 / 接口未带嵌套）
+  List<PermissionObject> get _permissionChips {
+    final roles = widget.user.roleObjects;
+    if (roles.isNotEmpty && roles.any((r) => r.permissions != null)) {
+      final seen = <int>{};
+      final list = <PermissionObject>[];
+      for (final r in roles) {
+        for (final p in r.permissions ?? const <PermissionObject>[]) {
+          if (p.id > 0 && seen.add(p.id)) list.add(p);
+        }
+      }
+      return list;
+    }
+    return widget.user.permissionObjects;
+  }
+
+  Widget _tag(String text, Color bg, Color border, Color fg) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: border),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: fg),
+      ),
+    );
+  }
+
   Color _getAvatarColor(String name) {
     final colors = [
       Colors.blue.shade500,
@@ -168,53 +213,22 @@ class _UserCardState extends State<UserCard> {
               ],
             ),
             const SizedBox(height: 12),
-            // Roles + Permissions（对标 Vue 端 UserPage.vue 第 106-111 行）
+            // 管理员 + 角色标签 + 权限组名 + 权限点（对标 Vue 端 UserPage.vue 第 106-112 行）
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
-                // 角色标签
-                ...widget.user.roles.map((role) {
-                  final isAdmin = role == UserRole.admin;
-                  final label = roleLabels[role] ?? role.name;
-                  return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: isAdmin ? const Color(0xFFFEF2F2) : const Color(0xFFEFF6FF), // bg-red-50 : bg-blue-50
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(
-                        color: isAdmin ? const Color(0xFFFEE2E2) : const Color(0xFFDBEAFE), // border-red-100 : border-blue-100
-                      ),
-                    ),
-                    child: Text(
-                      label,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: isAdmin ? const Color(0xFFB91C1C) : const Color(0xFF1D4ED8), // text-red-700 : text-blue-700
-                      ),
-                    ),
-                  );
-                }),
-                // 细分权限标签（对标 Vue 端 tag-perm 样式）
-                ...widget.user.permissionObjects.map((perm) {
-                  return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF0FDF4), // bg-green-50
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: const Color(0xFFDCFCE7)), // border-green-100
-                    ),
-                    child: Text(
-                      perm.name,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: Color(0xFF15803D), // text-green-700
-                      ),
-                    ),
-                  );
-                }),
+                if (widget.user.isManager)
+                  _tag('管理员', const Color(0xFFFEF2F2), const Color(0xFFFEE2E2),
+                      const Color(0xFFB91C1C)),
+                if (_roleTagLabel.isNotEmpty)
+                  _tag(_roleTagLabel, const Color(0xFFF0FDF4), const Color(0xFFDCFCE7),
+                      const Color(0xFF15803D)),
+                if (_roleGroupName.isNotEmpty)
+                  _tag(_roleGroupName, const Color(0xFFEFF6FF), const Color(0xFFDBEAFE),
+                      const Color(0xFF1D4ED8)),
+                ..._permissionChips.map((perm) => _tag(perm.name, const Color(0xFFFAF5FF),
+                    const Color(0xFFF3E8FF), const Color(0xFF7E22CE))),
               ],
             ),
             const Spacer(),

@@ -5,24 +5,76 @@ import '../../../core/network/api_client.dart';
 import 'user_mock_data.dart';
 
 // 重新导出 User 和 UserGroup，确保其他文件只需导入 user_api.dart
-export 'user_mock_data.dart' show User, UserGroup, UserRole, RoleObject, PermissionObject, roleLabels;
+export 'user_mock_data.dart'
+    show User, UserGroup, UserRole, RoleObject, PermissionObject, roleLabels, kDefaultRoleTagLabels;
 
 final userApiProvider = Provider((ref) => UserApi());
 final groupApiProvider = Provider((ref) => GroupApi());
 
-/// 角色模型
-class Role {
+/// 权限组（后端术语 role = 权限组）。
+/// 列表接口 GET /role 只给基础字段；详情接口 GET /role/{id} 额外带平铺 permissions。
+class RoleGroup {
   final int id;
   final String name;
+  final String description;
 
-  Role({required this.id, required this.name});
+  /// 系统内置组（is_system == 1）：不可删除，仅可编辑
+  final bool isSystem;
 
-  factory Role.fromJson(Map<String, dynamic> json) {
-    return Role(
-      id: json['id'] ?? 0,
-      name: json['name'] ?? '',
+  /// 平铺权限点。null = 该来源未下发（列表项），与"空数组=没有权限点"区分
+  final List<PermissionObject>? permissions;
+
+  RoleGroup({
+    required this.id,
+    required this.name,
+    this.description = '',
+    this.isSystem = false,
+    this.permissions,
+  });
+
+  factory RoleGroup.fromJson(Map<String, dynamic> json) {
+    return RoleGroup(
+      id: int.tryParse((json['id'] ?? 0).toString()) ?? 0,
+      name: (json['name'] ?? '').toString(),
+      description: (json['description'] ?? '').toString(),
+      isSystem: (int.tryParse((json['is_system'] ?? 0).toString()) ?? 0) == 1,
+      permissions: (json['permissions'] as List?)
+          ?.whereType<Map>()
+          .map((e) => PermissionObject.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
     );
   }
+}
+
+/// 权限树节点（GET /role/permissions 返回嵌套结构：模块[] → children 权限点[]）
+class PermissionNode {
+  final int id;
+  final String name;
+  final List<PermissionNode> children;
+
+  PermissionNode({required this.id, required this.name, this.children = const []});
+
+  factory PermissionNode.fromJson(Map<String, dynamic> json) {
+    return PermissionNode(
+      id: int.tryParse((json['id'] ?? 0).toString()) ?? 0,
+      name: (json['name'] ?? '').toString(),
+      children: (json['children'] as List?)
+              ?.whereType<Map>()
+              .map((e) => PermissionNode.fromJson(Map<String, dynamic>.from(e)))
+              .toList() ??
+          const [],
+    );
+  }
+}
+
+/// 成员详情返回（GET /user/{id}）：user 之外还带 roleMap（角色标签字典）
+class UserDetail {
+  final User user;
+
+  /// role_tag 数值 → 文案；接口没给时为空 Map，调用方回退 kDefaultRoleTagLabels
+  final Map<int, String> roleTagLabels;
+
+  UserDetail({required this.user, this.roleTagLabels = const {}});
 }
 
 /// 双因素认证响应
@@ -38,13 +90,6 @@ class TwoFactorAuthResponse {
       qrCode: json['qrCode'] ?? '',
     );
   }
-}
-
-/// 角色+权限列表的统一返回（对应 GET /role 的完整响应）
-class RolePermissionResponse {
-  final List<Role> roles;
-  final List<PermissionObject> permissions;
-  RolePermissionResponse({required this.roles, required this.permissions});
 }
 
 /// 小程序绑定响应
@@ -155,13 +200,27 @@ class UserApi {
   final ApiClient _client = ApiClient.instance;
 
   /// 获取用户详情
-  Future<User> getById(int id) async {
+  Future<User> getById(int id) async => (await getDetail(id)).user;
+
+  /// 获取用户详情（连同同级返回的 roleMap 角色标签字典一起带出）
+  Future<UserDetail> getDetail(int id) async {
     final response = await _client.get('/user/$id');
     final data = response.data;
-    if (data is Map<String, dynamic> && data.containsKey('user')) {
-      return User.fromJson(data['user']);
+    if (data is Map<String, dynamic>) {
+      final userJson = data['user'] is Map ? data['user'] : data;
+      final labels = <int, String>{};
+      if (data['roleMap'] is Map) {
+        (data['roleMap'] as Map).forEach((k, v) {
+          final key = int.tryParse(k.toString());
+          if (key != null) labels[key] = v.toString();
+        });
+      }
+      return UserDetail(
+        user: User.fromJson(Map<String, dynamic>.from(userJson as Map)),
+        roleTagLabels: labels,
+      );
     }
-    return User.fromJson(data ?? {});
+    return UserDetail(user: User.fromJson({}));
   }
 
   /// 创建用户
@@ -172,6 +231,8 @@ class UserApi {
     int? groupId,
     bool isManager = false,
     List<int>? roleIds,
+    int? roleId,
+    int? roleTag,
     List<int>? permissionIds,
     List<int>? merchantIds,
   }) async {
@@ -182,6 +243,13 @@ class UserApi {
     formData.fields.add(MapEntry('is_manager', isManager ? '1' : '0'));
     if (groupId != null) {
       formData.fields.add(MapEntry('group_id', groupId.toString()));
+    }
+    // 权限组：单选，为空则不提交 role_ids[]（与 web 一致，表示不绑定）
+    if (roleId != null) {
+      formData.fields.add(MapEntry('role_ids[]', roleId.toString()));
+    }
+    if (roleTag != null) {
+      formData.fields.add(MapEntry('role_tag', roleTag.toString()));
     }
     if (roleIds != null) {
       for (final id in roleIds) {
@@ -211,6 +279,8 @@ class UserApi {
     int? groupId,
     bool? isManager,
     List<int>? roleIds,
+    int? roleId,
+    int? roleTag,
     List<int>? permissionIds,
     List<int>? merchantIds,
   }) async {
@@ -225,6 +295,13 @@ class UserApi {
     }
     if (isManager != null) {
       formData.fields.add(MapEntry('is_manager', isManager ? '1' : '0'));
+    }
+    // 权限组：单选，为空则不提交 role_ids[]（与 web 一致，表示不绑定）
+    if (roleId != null) {
+      formData.fields.add(MapEntry('role_ids[]', roleId.toString()));
+    }
+    if (roleTag != null) {
+      formData.fields.add(MapEntry('role_tag', roleTag.toString()));
     }
     if (roleIds != null) {
       for (final id in roleIds) {
@@ -250,37 +327,92 @@ class UserApi {
     await _client.delete('/user/$id');
   }
 
-  /// 获取角色列表
-  Future<List<Role>> getRoleList() async {
+  // ===== 权限组（后端 role）=====
+
+  /// 权限组列表 GET /role → data.roles（只有基础字段，permissions 为 null）
+  Future<List<RoleGroup>> getRoleList() async {
     final response = await _client.get('/role');
     final data = response.data;
-    if (data is Map<String, dynamic> && data.containsKey('roles')) {
+    if (data is Map<String, dynamic> && data['roles'] is List) {
       return (data['roles'] as List)
-          .map((e) => Role.fromJson(e as Map<String, dynamic>))
+          .whereType<Map>()
+          .map((e) => RoleGroup.fromJson(Map<String, dynamic>.from(e)))
           .toList();
     }
     return [];
   }
 
-  /// 获取角色和细分权限列表（对应 GET /role，同时返回 roles + permissions）
-  Future<RolePermissionResponse> getRoleAndPermissionList() async {
-    final response = await _client.get('/role');
+  /// 权限树 GET /role/permissions → data.permissions[].children[]（编辑权限组时勾选用）
+  Future<List<PermissionNode>> getRolePermissionTree() async {
+    final response = await _client.get('/role/permissions');
     final data = response.data;
-    List<Role> roles = [];
-    List<PermissionObject> permissions = [];
-    if (data is Map<String, dynamic>) {
-      if (data.containsKey('roles')) {
-        roles = (data['roles'] as List)
-            .map((e) => Role.fromJson(e as Map<String, dynamic>))
-            .toList();
-      }
-      if (data.containsKey('permissions')) {
-        permissions = (data['permissions'] as List)
-            .map((e) => PermissionObject.fromJson(e as Map<String, dynamic>))
-            .toList();
-      }
+    if (data is Map<String, dynamic> && data['permissions'] is List) {
+      return (data['permissions'] as List)
+          .whereType<Map>()
+          .map((e) => PermissionNode.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
     }
-    return RolePermissionResponse(roles: roles, permissions: permissions);
+    return [];
+  }
+
+  /// 权限组详情 GET /role/{id} → data.role（基础字段 + 平铺 permissions，带 parent_id）
+  Future<RoleGroup> getRoleDetail(int id) async {
+    final response = await _client.get('/role/$id');
+    final data = response.data;
+    if (data is Map<String, dynamic>) {
+      final roleJson = data['role'] is Map ? data['role'] : data;
+      return RoleGroup.fromJson(Map<String, dynamic>.from(roleJson as Map));
+    }
+    return RoleGroup(id: id, name: '');
+  }
+
+  /// name/description 为空时不提交该字段；permission_ids[] 去重后逐个 append
+  FormData _buildRoleFormData({
+    required String name,
+    String? description,
+    List<int>? permissionIds,
+  }) {
+    final formData = FormData();
+    if (name.isNotEmpty) formData.fields.add(MapEntry('name', name));
+    if (description != null && description.isNotEmpty) {
+      formData.fields.add(MapEntry('description', description));
+    }
+    for (final id in {...?permissionIds}) {
+      formData.fields.add(MapEntry('permission_ids[]', id.toString()));
+    }
+    return formData;
+  }
+
+  /// 新增权限组 POST /role
+  Future<void> createRole({
+    required String name,
+    String? description,
+    List<int>? permissionIds,
+  }) async {
+    await _client.post(
+      '/role',
+      data: _buildRoleFormData(
+          name: name, description: description, permissionIds: permissionIds),
+    );
+  }
+
+  /// 编辑权限组 POST /role/{id}
+  Future<void> updateRole(
+    int id, {
+    required String name,
+    String? description,
+    List<int>? permissionIds,
+  }) async {
+    await _client.post(
+      '/role/$id',
+      data: _buildRoleFormData(
+          name: name, description: description, permissionIds: permissionIds),
+    );
+  }
+
+  /// 删除权限组 DELETE /role/{id}
+  Future<void> deleteRole(int id) async {
+    await _client.delete('/role/$id');
   }
 
   /// 获取双因素认证密钥

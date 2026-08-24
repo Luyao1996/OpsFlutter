@@ -19,10 +19,17 @@ const int kPermNetbarAppConfig = 23;
 class PermissionService {
   final int? groupId;
   final bool isManager;
-  /// 用户的细分权限列表（后端返回的 permissions 数组）
+  /// 用户的细分权限列表（后端返回的平铺 permissions 数组）
   final List<Role> permissions;
+  /// 用户绑定的权限组（后端 roles[]，每个组内嵌 permissions[] 权限点）
+  final List<Role> roles;
 
-  PermissionService({required this.groupId, required this.isManager, this.permissions = const []});
+  PermissionService({
+    required this.groupId,
+    required this.isManager,
+    this.permissions = const [],
+    this.roles = const [],
+  });
 
   /// 总部管理员：group_id 为空（0 或 null）且 is_manager 为 true
   /// （对齐 toolboxPage permissions.js isHeadquartersAdmin = 总部人员 && is_manager；
@@ -46,21 +53,35 @@ class PermissionService {
 
   int get userGroupId => groupId ?? 0;
 
-  /// 检查用户是否拥有指定的细分权限
-  /// 对标 Vue 端 usePermission.js 的 hasDetailPermission 方法
-  /// 总部管理员拥有所有权限，否则检查 permissions 列表
-  bool hasDetailPermission(String permName) {
+  /// 细分权限判定，对标 Vue 端 usePermission.js 的 hasDetailPermission：
+  /// 1. 总部管理员放行全部；
+  /// 2. 有权限组且组内下发了权限点 → 只认 roles[].permissions[]，匹配不到即无权限
+  ///    （后端平铺 permissions 会做"父展开"，直接用会把父模块误判成已授权）；
+  /// 3. 否则回退平铺 permissions。
+  bool _match(bool Function(Role p) matcher) {
     if (isTopManager) return true;
-    return permissions.any((p) => p.name == permName);
+
+    // 只要任一权限组带回了嵌套权限点，就以权限组为唯一依据
+    if (roles.isNotEmpty && roles.any((r) => r.permissions != null)) {
+      for (final r in roles) {
+        final list = r.permissions;
+        if (list != null && list.any(matcher)) return true;
+      }
+      return false;
+    }
+
+    // 防御回退：roles 为空（旧个人权限模型），或版本升级后首次冷启动读到的旧缓存
+    // ——roles 有值但没有嵌套 permissions。此时若直接判 false，用户权限会整体归零，
+    // 所以退回平铺 permissions，等联网刷新到带嵌套的数据后再走上面的精确分支。
+    return permissions.any(matcher);
   }
+
+  /// 按权限名称检查细分权限
+  bool hasDetailPermission(String permName) => _match((p) => p.name == permName);
 
   /// 按权限 id 检查细分权限（推荐，对齐 Web 端 hasDetailPermission 传
   /// PERMISSION_IDS 数字 id 的形态；后端改文案不影响判断）。
-  /// 总部管理员拥有所有权限。
-  bool hasDetailPermissionById(int permId) {
-    if (isTopManager) return true;
-    return permissions.any((p) => p.id == permId);
-  }
+  bool hasDetailPermissionById(int permId) => _match((p) => p.id == permId);
 
   /// zone: PUBLIC/HEADQUARTERS/BRANCH
   /// netbarId: 当前网吧 id（仅 PUBLIC 需要）
@@ -83,5 +104,6 @@ final permissionProvider = Provider<PermissionService>((ref) {
     groupId: user?.groupId,
     isManager: user?.isManager ?? false,
     permissions: user?.permissions ?? const [],
+    roles: user?.roles ?? const [],
   );
 });

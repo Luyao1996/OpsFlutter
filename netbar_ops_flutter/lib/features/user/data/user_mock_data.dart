@@ -9,17 +9,36 @@ const roleLabels = {
   UserRole.user: '普通用户',
 };
 
-/// 角色对象模型 - 适配后端返回的 roles 数组中的对象 {id, name}
+/// 角色标签（role_tag）兜底字典，对齐 web MemberDialog DEFAULT_ROLE_TAG_OPTIONS。
+/// 接口下发 roleMap 时以接口为准，这里只在拿不到 roleMap 时使用。
+const Map<int, String> kDefaultRoleTagLabels = {
+  1: '网维',
+  2: '网吧老板',
+  3: '网吧技术',
+  4: '网吧店长',
+  5: '网吧收银员',
+  6: '网吧服务员',
+};
+
+/// 角色对象模型 - 适配后端返回的 roles 数组中的对象 {id, name, permissions?}
 class RoleObject {
   final int id;
   final String name;
 
-  RoleObject({required this.id, required this.name});
+  /// 权限组内嵌的权限点。null = 后端未下发该字段（与"空数组=确实没有权限点"区分），
+  /// 成员卡片据此决定是否回退展示平铺 permissions。
+  final List<PermissionObject>? permissions;
+
+  RoleObject({required this.id, required this.name, this.permissions});
 
   factory RoleObject.fromJson(Map<String, dynamic> json) {
     return RoleObject(
       id: int.tryParse((json['id'] ?? 0).toString()) ?? 0,
       name: (json['name'] ?? '').toString(),
+      permissions: (json['permissions'] as List?)
+          ?.whereType<Map>()
+          .map((e) => PermissionObject.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
     );
   }
 }
@@ -60,6 +79,8 @@ class User {
   final int? groupId;
   final String? phoneNumber;
   final bool isManager;
+  /// 角色标签（后端 role_tag，数值 → kDefaultRoleTagLabels / 接口 roleMap 取文案）
+  final int? roleTag;
   final int? tokenRefreshTtl;
   final bool isBindWx;
   final bool isBind2fa;
@@ -89,6 +110,7 @@ class User {
     this.groupId,
     this.phoneNumber,
     this.isManager = false,
+    this.roleTag,
     this.tokenRefreshTtl,
     this.isBindWx = false,
     this.isBind2fa = false,
@@ -190,6 +212,9 @@ class User {
       groupId: json['group_id'] != null ? int.tryParse(json['group_id'].toString()) : null,
       phoneNumber: json['phone_number']?.toString(),
       isManager: isManager,
+      roleTag: json['role_tag'] != null && json['role_tag'].toString().isNotEmpty
+          ? int.tryParse(json['role_tag'].toString())
+          : null,
       tokenRefreshTtl: json['token_refresh_ttl'] != null
           ? int.tryParse(json['token_refresh_ttl'].toString())
           : null,

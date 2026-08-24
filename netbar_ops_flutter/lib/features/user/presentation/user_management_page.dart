@@ -16,6 +16,7 @@ import 'widgets/group_sidebar.dart';
 import 'widgets/user_grid.dart';
 import 'widgets/add_member_dialog.dart';
 import 'widgets/edit_user_dialog.dart';
+import 'widgets/permission_group_dialog.dart';
 import 'widgets/two_factor_dialog.dart';
 
 class UserManagementPage extends ConsumerStatefulWidget {
@@ -233,6 +234,18 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
     if (changed == true) {
       _loadData(); // Reload after add
     }
+  }
+
+  /// 权限组设置（仅总部管理员）：弹窗内发生过增删改就刷新成员列表，
+  /// 走 onChanged 兜底是因为 X/返回键关闭时拿不到弹窗返回值
+  void _handlePermissionGroups() async {
+    bool changed = false;
+    final result = await showAdaptive<bool>(
+      context,
+      (context) => PermissionGroupDialog(onChanged: () => changed = true),
+      routeName: '/dialog/permission-group',
+    );
+    if (result == true || changed) _loadData();
   }
 
   Future<void> _handleDeleteGroup(UserGroup group) async {
@@ -551,6 +564,10 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
                 SizedBox(width: 260, child: _buildSearchField()),
                 const SizedBox(width: 12),
                 _buildAddUserButton(),
+                if (_isSuperAdmin) ...[
+                  const SizedBox(width: 8),
+                  _buildPermissionGroupButton(),
+                ],
               ],
             ],
           ),
@@ -561,6 +578,10 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
                 Expanded(child: _buildSearchField()),
                 const SizedBox(width: 12),
                 _buildAddUserButton(compact: true),
+                if (_isSuperAdmin) ...[
+                  const SizedBox(width: 8),
+                  _buildPermissionGroupButton(compact: true),
+                ],
               ],
             ),
           ],
@@ -608,6 +629,30 @@ class _UserManagementPageState extends ConsumerState<UserManagementPage> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         elevation: 0,
+      ),
+    );
+  }
+
+  /// 权限组设置入口（仅总部管理员可见）。窄屏收成图标按钮，避免和「添加」挤成两行
+  Widget _buildPermissionGroupButton({bool compact = false}) {
+    if (compact) {
+      return IconButton(
+        onPressed: _handlePermissionGroups,
+        icon: const Icon(LucideIcons.shieldCheck, size: 20),
+        tooltip: '权限组设置',
+        color: AppColors.iosBlue,
+      );
+    }
+    return OutlinedButton.icon(
+      onPressed: _handlePermissionGroups,
+      icon: const Icon(LucideIcons.shieldCheck, size: 16),
+      label: const Text('权限组设置',
+          style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: AppColors.iosBlue,
+        side: BorderSide(color: AppColors.iosBlue.withOpacity(0.4)),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }

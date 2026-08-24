@@ -12,21 +12,37 @@ class LoginRequest {
   Map<String, dynamic> toJson() => {'username': username, 'password': password};
 }
 
-/// 角色模型
+/// 角色模型（既用于权限组 roles[]，也用于权限点 permissions[]）
 class Role {
   final int id;
   final String name;
 
-  Role({required this.id, required this.name});
+  /// 权限组下挂的权限点（后端 roles[].permissions[]）。
+  /// null 与空数组语义不同：null = 该来源未下发此字段（旧缓存/旧接口），
+  /// 空数组 = 该权限组确实没有权限点。permission_provider 的回退判定依赖这个区分。
+  final List<Role>? permissions;
+
+  Role({required this.id, required this.name, this.permissions});
 
   factory Role.fromJson(Map<String, dynamic> json) {
     return Role(
       id: json['id'] ?? 0,
       name: json['name'] ?? '',
+      permissions: (json['permissions'] as List?)
+          ?.whereType<Map>()
+          .map((e) => Role.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
     );
   }
 
-  Map<String, dynamic> toJson() => {'id': id, 'name': name};
+  /// permissions 为 null 时整个 key 省略，保证 toJson→落盘→fromJson 后仍是 null，
+  /// 否则冷启动会把"未下发"误读成"无权限"，导致权限判定塌方。
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        if (permissions != null)
+          'permissions': permissions!.map((p) => p.toJson()).toList(),
+      };
 }
 
 /// 用户模型 - 适配后端字段
