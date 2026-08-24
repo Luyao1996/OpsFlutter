@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/providers/app_providers.dart';
+import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../data/user_api.dart';
 import 'merchant_transfer.dart';
@@ -43,6 +45,11 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
   List<PermissionObject> _permissionList = [];
   bool _saving = false;
   bool _loadingUser = true;
+  List<UserApiToken> _tokens = [];
+  bool _tokensLoading = true;
+  bool _tokenCreating = false;
+  // 正在改名/启停/删除的 Token id，用于逐条禁用交互并显示 loading
+  final Set<int> _busyTokenIds = {};
 
   @override
   void initState() {
@@ -53,6 +60,7 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
     _selectedGroupId = widget.user.groupId;
     _isManager = widget.user.isManager;
     _loadUserDetails();
+    _loadTokens();
   }
 
   bool get _isSuperAdmin {
@@ -242,6 +250,135 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
     }
   }
 
+  // ===== API Token：查询 / 创建 / 改名 / 启停 / 删除 =====
+
+  Future<void> _loadTokens() async {
+    if (!_tokensLoading) setState(() => _tokensLoading = true);
+    try {
+      final list = await ref.read(userApiProvider).getUserApiTokens(widget.user.id);
+      if (!mounted) return;
+      setState(() {
+        _tokens = list;
+        _tokensLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _tokensLoading = false);
+      showTopNotice(context, '获取 Token 列表失败：$e', level: NoticeLevel.error);
+    }
+  }
+
+  Future<void> _copyToken(UserApiToken t) async {
+    if (t.token.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: t.token));
+    if (!mounted) return;
+    showTopNotice(context, 'Token 已复制到剪贴板', level: NoticeLevel.success);
+  }
+
+  Future<void> _createToken() async {
+    final name = await showAdaptive<String>(
+      context,
+      (_) => const _TokenNameDialog(
+        title: '新增 API Token',
+        description: '请输入 Token 名称（用于区分用途，例如：对接系统A）',
+        confirmText: '创建',
+      ),
+      routeName: '/dialog/api-token-name',
+    );
+    if (name == null || !mounted) return;
+    setState(() => _tokenCreating = true);
+    try {
+      await ref.read(userApiProvider).createUserApiToken(widget.user.id, name: name);
+      if (!mounted) return;
+      showTopNotice(context, 'Token 创建成功', level: NoticeLevel.success);
+      await _loadTokens();
+    } catch (e) {
+      if (mounted) showTopNotice(context, '创建失败：$e', level: NoticeLevel.error);
+    } finally {
+      if (mounted) setState(() => _tokenCreating = false);
+    }
+  }
+
+  Future<void> _renameToken(UserApiToken t) async {
+    final name = await showAdaptive<String>(
+      context,
+      (_) => _TokenNameDialog(
+        title: '修改 Token 名称',
+        description: '请输入新的 Token 名称',
+        confirmText: '保存',
+        initialValue: t.name,
+      ),
+      routeName: '/dialog/api-token-name',
+    );
+    if (name == null || !mounted) return;
+    setState(() => _busyTokenIds.add(t.id));
+    try {
+      await ref.read(userApiProvider).updateUserApiToken(widget.user.id, t.id, name: name);
+      if (!mounted) return;
+      showTopNotice(context, '修改成功', level: NoticeLevel.success);
+      await _loadTokens();
+    } catch (e) {
+      if (mounted) showTopNotice(context, '修改失败：$e', level: NoticeLevel.error);
+    } finally {
+      if (mounted) setState(() => _busyTokenIds.remove(t.id));
+    }
+  }
+
+  Future<void> _toggleToken(UserApiToken t, bool enabled) async {
+    setState(() => _busyTokenIds.add(t.id));
+    try {
+      await ref.read(userApiProvider).updateUserApiToken(widget.user.id, t.id, isEnabled: enabled);
+      if (!mounted) return;
+      showTopNotice(context, enabled ? '已启用' : '已停用', level: NoticeLevel.success);
+      await _loadTokens();
+    } catch (e) {
+      // 失败不本地翻转开关，直接按服务端实际状态重拉，避免 UI 与后端不一致
+      if (mounted) {
+        showTopNotice(context, '操作失败：$e', level: NoticeLevel.error);
+        await _loadTokens();
+      }
+    } finally {
+      if (mounted) setState(() => _busyTokenIds.remove(t.id));
+    }
+  }
+
+  Future<void> _deleteToken(UserApiToken t) async {
+    final displayName = t.name.isEmpty ? '未命名 Token' : t.name;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除 Token'),
+        content: Text('确认删除 Token「$displayName」？删除后使用该 Token 的调用将立即失效。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _busyTokenIds.add(t.id));
+    try {
+      await ref.read(userApiProvider).deleteUserApiToken(widget.user.id, t.id);
+      if (!mounted) return;
+      showTopNotice(context, '删除成功', level: NoticeLevel.success);
+      await _loadTokens();
+    } catch (e) {
+      if (mounted) showTopNotice(context, '删除失败：$e', level: NoticeLevel.error);
+    } finally {
+      if (mounted) setState(() => _busyTokenIds.remove(t.id));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ResponsiveDialogScaffold(
@@ -379,6 +516,10 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
         ),
         const SizedBox(height: 16),
 
+        // API Token（对标 Vue 端 MemberDialog.vue，仅编辑态提供）
+        _buildTokenSection(),
+        const SizedBox(height: 16),
+
         // 可控网吧（对标 Vue 端 UserPage.vue 第 263-339 行的穿梭框）
         _buildLabel('可控网吧'),
         const SizedBox(height: 6),
@@ -387,6 +528,156 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
           onChanged: (ids) => setState(() => _selectedMerchantIds = ids),
         ),
       ],
+    );
+  }
+
+  /// API Token 区块。后端限制每个会员同时只能有一条 Token，
+  /// 因此列表非空时不给「新增 Token」入口（与 Web 端一致）。
+  Widget _buildTokenSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'API Token',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+              if (!_tokensLoading && _tokens.isEmpty)
+                TextButton.icon(
+                  onPressed: _tokenCreating ? null : _createToken,
+                  icon: _tokenCreating
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(LucideIcons.plus, size: 14),
+                  label: const Text('新增 Token'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.iosBlue,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    minimumSize: const Size(0, 32),
+                  ),
+                ),
+            ],
+          ),
+          if (_tokensLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text('加载中...', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            )
+          else if (_tokens.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text('该成员暂无 API Token',
+                  style: TextStyle(fontSize: 12, color: Colors.grey)),
+            )
+          else
+            for (final t in _tokens) _buildTokenItem(t),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTokenItem(UserApiToken t) {
+    final busy = _busyTokenIds.contains(t.id);
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  t.name.isEmpty ? '未命名 Token' : t.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                ),
+              ),
+              IconButton(
+                onPressed: busy ? null : () => _renameToken(t),
+                icon: const Icon(LucideIcons.pencil, size: 14),
+                tooltip: '修改名称',
+                color: Colors.grey.shade600,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+              const SizedBox(width: 4),
+              if (busy)
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                Switch.adaptive(
+                  value: t.isEnabled,
+                  activeColor: AppColors.iosBlue,
+                  onChanged: (v) => _toggleToken(t, v),
+                ),
+              IconButton(
+                onPressed: busy ? null : () => _deleteToken(t),
+                icon: const Icon(LucideIcons.trash2, size: 15),
+                tooltip: '删除 Token',
+                color: Colors.red,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          // 窄屏一行放不下时省略中间，点击仍复制完整 token
+          InkWell(
+            onTap: () => _copyToken(t),
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      t.token,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                        color: Colors.grey.shade800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Icon(LucideIcons.copy, size: 13, color: Colors.grey.shade500),
+                ],
+              ),
+            ),
+          ),
+          if (t.createdAt.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '创建于 ${t.createdAt}',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -533,6 +824,93 @@ class _EditUserDialogState extends ConsumerState<EditUserDialog> {
               : const Text('保存修改'),
         ),
       ],
+    );
+  }
+}
+
+/// Token 名称输入弹窗（新增 / 改名共用）。
+/// 确认时 `pop(trim 后的名称)`，取消/关闭 `pop(null)`，调用方以 null 判断放弃。
+class _TokenNameDialog extends StatefulWidget {
+  final String title;
+  final String description;
+  final String confirmText;
+  final String initialValue;
+
+  const _TokenNameDialog({
+    required this.title,
+    required this.description,
+    required this.confirmText,
+    this.initialValue = '',
+  });
+
+  @override
+  State<_TokenNameDialog> createState() => _TokenNameDialogState();
+}
+
+class _TokenNameDialogState extends State<_TokenNameDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _ctrl =
+      TextEditingController(text: widget.initialValue);
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (!_formKey.currentState!.validate()) return;
+    Navigator.pop(context, _ctrl.text.trim());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ResponsiveDialogScaffold(
+      title: widget.title,
+      maxWidth: 400,
+      bodyPadding: const EdgeInsets.all(24),
+      body: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.description,
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _ctrl,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Token 名称',
+                hintText: 'Token 名称',
+              ),
+              validator: (v) =>
+                  (v == null || v.trim().isEmpty) ? '请输入 Token 名称' : null,
+              onFieldSubmitted: (_) => _submit(),
+            ),
+          ],
+        ),
+      ),
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton(
+            onPressed: _submit,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.iosBlue,
+              foregroundColor: Colors.white,
+            ),
+            child: Text(widget.confirmText),
+          ),
+        ],
+      ),
     );
   }
 }

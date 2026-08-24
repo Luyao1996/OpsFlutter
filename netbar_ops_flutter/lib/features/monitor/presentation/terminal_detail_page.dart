@@ -4,7 +4,7 @@ import 'dart:io' show Platform, Process;
 import 'dart:typed_data';
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart' show kIsWeb, immutable;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb, immutable;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1516,7 +1516,7 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
   }
 
   /// 服务管理按钮区（mode∈{1,2} 的主/副服务器终端展示，见 build 中 1296 行门槛）。
-  /// 4 个按钮：重启反代/协助/路由 + 断开远程服务。
+  /// 常规项：重启反代/协助/路由/游戏库；debug 包追加 P2P/应用商店/HTTP/主程序。
   /// 与电源管理同款卡片样式；点击后弹简单确认对话框（"确认X吗？"）再发 WS。
   Widget _buildServiceGrid(Terminal terminal, {required bool isNarrow}) {
     final perm = ref.watch(permissionProvider);
@@ -1529,7 +1529,19 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
       const _ServiceItem(label: '重启反代服务', name: '反代服务', type: 'frpc'),
       const _ServiceItem(label: '重启协助服务', name: '协助服务', type: 'client'),
       const _ServiceItem(label: '重启路由服务', name: '路由服务', type: 'router'),
-      const _ServiceItem(label: '重启游戏库服务', name: '游戏库服务', type: 'gamelibray'),
+      const _ServiceItem(label: '重启游戏库服务', name: '游戏库服务', type: 'gamelibrary'),
+      const _ServiceItem(label: '重启P2P服务', name: 'P2P服务', type: 'p2p'),
+      const _ServiceItem(label: '重启应用商店服务', name: '应用商店服务', type: 'appstore'),
+      const _ServiceItem(label: '重启HTTP服务', name: 'HTTP服务', type: 'httpserver'),
+      // 'main' 会重启服务端主程序自身，触发期间整机短暂离线，风险最高——
+      // Web 端以 ?debug=1 隐藏该项，Flutter 以 kDebugMode 等价：release 包不暴露入口。
+      if (kDebugMode)
+        const _ServiceItem(
+          label: '重启主程序',
+          name: '主程序',
+          type: 'main',
+          icon: LucideIcons.power,
+        ),
       // 特殊 type 标记：路由到 _openWindowsPasswordDialog（HTTP set/reset/clear）
       // 区块本身仅 mode∈{1,2}（主/副服务器）显示，再叠加 canWinPwd 权限过滤
       if (canWinPwd)
@@ -1604,7 +1616,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
   ///   - `__windows_pwd__` → 直接弹自定义 dialog（不走简单确认）
   ///   - `__2fa_manage__` → 弹出 [_TwoFactorManageDialog]（复制 2FA + 2FA 锁屏开关）
   ///   - `__disconnect_remote__` → 简单确认 → [_disconnectRemoteService]
-  ///   - 其它（frpc/client/router） → 简单确认 → [_restartService]
+  ///   - 其它（frpc/client/router/gamelibrary + debug 的 p2p/appstore/httpserver/main）
+  ///     → 简单确认 → [_restartService]
   void _confirmRestartService(Terminal terminal, _ServiceItem item) {
     // Windows 密码自有完整 dialog（设置/重置/清除），跳过简单确认直接打开
     if (item.type == '__windows_pwd__') {
@@ -2970,8 +2983,9 @@ class _ManageItem {
 class _ServiceItem {
   final String label; // 按钮文字 / 弹窗标题（如 "重启反代服务"）
   final String name; // 服务中文名（如 "反代服务"，用于 toast / operationLog 文案）
-  final String type; // WS data.type（'frpc' / 'client' / 'router' /
-  // '__disconnect_remote__' 特殊值：路由到断开远程逻辑）
+  final String type; // WS data.type（'frpc' / 'client' / 'router' / 'gamelibrary' /
+  // 'p2p' / 'appstore' / 'httpserver' / 'main'；
+  // '__disconnect_remote__' 等 '__xx__' 特殊值：路由到非重启逻辑）
   final IconData icon;
   const _ServiceItem({
     required this.label,

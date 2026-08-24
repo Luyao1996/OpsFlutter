@@ -611,8 +611,11 @@ class TerminalApi {
     return TerminalMockData.commandOutput(id, command);
   }
 
-  /// 重启远端服务（反代/协助/路由）—— 走 WebSocket **裸 event 帧**（非 peer 包装）。
-  /// [type] = 'frpc'（反代）/ 'client'（协助）/ 'router'（路由）
+  /// 重启远端服务 —— 走 WebSocket **裸 event 帧**（非 peer 包装）。
+  /// [type] 常规项：'frpc'（反代）/ 'client'（协助）/ 'router'（路由）/
+  ///        'gamelibrary'（游戏库）/ 'p2p' / 'appstore'（应用商店）/ 'httpserver'；
+  /// 调试项（Web 端 ?debug=1、Flutter 端 kDebugMode 才暴露入口）：
+  ///        'main'（重启服务端主程序自身，期间整机短暂离线）
   /// 协议：`{event:'sys.restart', id:<auto>, merchant_id, data:{type}}`
   /// mode∈{1,2} 的主/副服务器终端展示该入口；后端按 merchant_id 路由。
   Future<void> restartService(String type, {required int merchantId}) async {
