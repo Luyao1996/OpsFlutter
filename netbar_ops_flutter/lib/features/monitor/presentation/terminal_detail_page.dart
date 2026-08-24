@@ -4,7 +4,7 @@ import 'dart:io' show Platform, Process;
 import 'dart:typed_data';
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb, immutable;
+import 'package:flutter/foundation.dart' show kIsWeb, immutable;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -58,6 +58,7 @@ import '../../netbar/data/netbar_api.dart' as netbar_api;
 
 import '../data/ptyshell/pty_controller.dart';
 import 'widgets/edit_name_modal.dart';
+import 'widgets/restart_service_dialog.dart';
 import 'widgets/file_manager_tab.dart';
 import 'widgets/process_manager_tab.dart';
 import 'widgets/console_manager_tab.dart';
@@ -1516,8 +1517,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
   }
 
   /// 服务管理按钮区（mode∈{1,2} 的主/副服务器终端展示，见 build 中 1296 行门槛）。
-  /// 常规项：重启反代/协助/路由/游戏库；debug 包追加 P2P/应用商店/HTTP/主程序。
-  /// 与电源管理同款卡片样式；点击后弹简单确认对话框（"确认X吗？"）再发 WS。
+  /// 「重启服务」是统一入口，具体服务在二级弹窗 [RestartServiceDialog] 里选。
+  /// 与电源管理同款卡片样式。
   Widget _buildServiceGrid(Terminal terminal, {required bool isNarrow}) {
     final perm = ref.watch(permissionProvider);
     // 与 Web 端(toolboxPage NetbarPage.vue / usePermission.js)对齐：仅受 '服务端Windows密码'
@@ -1526,22 +1527,13 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     final canWinPwd = perm.hasDetailPermission('服务端Windows密码');
 
     final items = <_ServiceItem>[
-      const _ServiceItem(label: '重启反代服务', name: '反代服务', type: 'frpc'),
-      const _ServiceItem(label: '重启协助服务', name: '协助服务', type: 'client'),
-      const _ServiceItem(label: '重启路由服务', name: '路由服务', type: 'router'),
-      const _ServiceItem(label: '重启游戏库服务', name: '游戏库服务', type: 'gamelibrary'),
-      const _ServiceItem(label: '重启P2P服务', name: 'P2P服务', type: 'p2p'),
-      const _ServiceItem(label: '重启应用商店服务', name: '应用商店服务', type: 'appstore'),
-      const _ServiceItem(label: '重启HTTP服务', name: 'HTTP服务', type: 'httpserver'),
-      // 'main' 会重启服务端主程序自身，触发期间整机短暂离线，风险最高——
-      // Web 端以 ?debug=1 隐藏该项，Flutter 以 kDebugMode 等价：release 包不暴露入口。
-      if (kDebugMode)
-        const _ServiceItem(
-          label: '重启主程序',
-          name: '主程序',
-          type: 'main',
-          icon: LucideIcons.power,
-        ),
+      // 各服务的重启入口收拢为一个按钮，具体服务在二级弹窗
+      // [RestartServiceDialog] 里选择（服务清单/图标/描述也维护在那边）
+      const _ServiceItem(
+        label: '重启服务',
+        name: '重启服务',
+        type: '__restart_menu__',
+      ),
       // 特殊 type 标记：路由到 _openWindowsPasswordDialog（HTTP set/reset/clear）
       // 区块本身仅 mode∈{1,2}（主/副服务器）显示，再叠加 canWinPwd 权限过滤
       if (canWinPwd)
@@ -1613,12 +1605,16 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
   /// 简单确认对话框（"确认X吗？"），与电源管理的强校验对话框不同：
   /// 服务管理操作明确选用了简单 AlertDialog，避免每次让用户打字（用户决策 selection B）。
   /// 路由：
+  ///   - `__restart_menu__` → 弹出 [RestartServiceDialog] 二级选择（确认在弹窗内做）
   ///   - `__windows_pwd__` → 直接弹自定义 dialog（不走简单确认）
   ///   - `__2fa_manage__` → 弹出 [_TwoFactorManageDialog]（复制 2FA + 2FA 锁屏开关）
   ///   - `__disconnect_remote__` → 简单确认 → [_disconnectRemoteService]
-  ///   - 其它（frpc/client/router/gamelibrary + debug 的 p2p/appstore/httpserver/main）
-  ///     → 简单确认 → [_restartService]
   void _confirmRestartService(Terminal terminal, _ServiceItem item) {
+    // 重启服务统一入口：二级弹窗里选服务并确认，返回后直接下发
+    if (item.type == '__restart_menu__') {
+      _openRestartServiceDialog(terminal);
+      return;
+    }
     // Windows 密码自有完整 dialog（设置/重置/清除），跳过简单确认直接打开
     if (item.type == '__windows_pwd__') {
       _openWindowsPasswordDialog(terminal);
@@ -1658,6 +1654,18 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
         _restartService(terminal, item.type, item.name);
       }
     });
+  }
+
+  /// 打开重启服务二级选择弹窗；选中并确认后返回该服务，走既有下发链路
+  /// （同网吧校验、WS sys.restart、操作日志都在 [_restartService] 里）
+  Future<void> _openRestartServiceDialog(Terminal terminal) async {
+    final svc = await showAdaptive<RestartServiceOption>(
+      context,
+      (_) => const RestartServiceDialog(),
+      routeName: '/dialog/restart-service',
+    );
+    if (svc == null || !mounted) return;
+    _restartService(terminal, svc.type, svc.name);
   }
 
   /// 打开应用中心弹窗（服务管理 → 策略管理）。
