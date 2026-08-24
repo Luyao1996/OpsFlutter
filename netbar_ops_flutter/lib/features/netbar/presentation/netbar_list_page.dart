@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/responsive/responsive.dart';
+import '../../../../shared/providers/permission_provider.dart';
 import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/widgets/search_field.dart';
 import '../../../../shared/widgets/app_error_view.dart';
@@ -13,6 +14,7 @@ import '../data/version_compare.dart';
 import 'widgets/create_netbar_modal.dart';
 import 'widgets/netbar_list_view.dart';
 import 'widgets/netbar_grid_view.dart';
+import 'widgets/update_record_dialog.dart';
 
 class NetbarListPage extends ConsumerStatefulWidget {
   const NetbarListPage({super.key});
@@ -250,9 +252,34 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
   }
 
   Widget _buildHeaderActions() {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+    final perm = ref.watch(permissionProvider);
+    // 三个按钮窄屏一行放不下，Row 不折行会溢出，改 Wrap 自动换行
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
       children: [
+        // 权限条件对齐 web NetbarPage 的 canUpdate（与「批量更新程序」入口同一权限点）
+        if (perm.hasDetailPermission('更新'))
+          ElevatedButton.icon(
+            onPressed: () {
+              showAdaptive<void>(
+                context,
+                (context) => const UpdateRecordDialog(),
+                routeName: '/dialog/update-record',
+              );
+            },
+            icon: const Icon(LucideIcons.history, size: 16),
+            label: const Text('更新记录'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.grey.shade100,
+              foregroundColor: Colors.black87,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          ),
         ElevatedButton.icon(
           onPressed: () {
             // TODO: Implement Export
@@ -269,7 +296,6 @@ class _NetbarListPageState extends ConsumerState<NetbarListPage> {
             ),
           ),
         ),
-        const SizedBox(width: 12),
         ElevatedButton.icon(
           onPressed: () {
             showAdaptive<bool>(

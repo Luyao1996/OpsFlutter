@@ -397,7 +397,8 @@ class NetbarApi {
 
   /// 批量更新程序
   ///
-  /// [type] 为更新通道：`''` 表示不改变网吧现有通道，`'debug'` 内测版，`'release'` 正式版。
+  /// [type] 为更新通道：`''` 表示不改变网吧现有通道，`'debug'` 内测版，
+  /// `'release'` 正式版，`'gorelease'` Go 版。
   /// 非空时服务端会先把网吧切到该通道再下发更新；为空必须整个省略该字段，
   /// 传空串会被服务端当成"切到一个空通道"处理。
   Future<void> batchProgramUpdate({

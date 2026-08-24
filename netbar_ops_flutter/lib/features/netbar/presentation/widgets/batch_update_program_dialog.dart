@@ -11,6 +11,7 @@ const Map<String, String> _kUpdateTypeOptions = {
   '': '不改变',
   'debug': '内测版',
   'release': '正式版',
+  'gorelease': 'Go版',
 };
 
 const int _kMinInterval = 0;
