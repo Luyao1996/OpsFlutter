@@ -84,8 +84,8 @@ class _BatchResetPwdDialogState extends State<BatchResetPwdDialog> {
   Widget build(BuildContext context) {
     return ResponsiveDialogScaffold(
       title: '批量重置Windows登录密码',
-      maxWidth: 640,
-      maxHeight: 560,
+      maxWidth: 960,
+      maxHeight: 840,
       scrollableBody: false,
       bodyPadding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
       body: _loading

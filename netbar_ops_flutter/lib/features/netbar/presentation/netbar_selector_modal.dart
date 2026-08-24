@@ -9,6 +9,7 @@ import '../../../shared/utils/top_notice.dart';
 import '../data/netbar_api.dart';
 import '../data/netbar_list_provider.dart';
 import '../data/netbar_pinyin_matcher.dart';
+import '../data/version_compare.dart';
 import '../../../core/network/error_message.dart';
 import 'group_picker.dart';
 import 'edit_netbar_modal.dart';
@@ -31,6 +32,13 @@ class NetbarSelectorModal extends ConsumerStatefulWidget {
 class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
   String _searchQuery = '';
   String _selectedGroup = '全部分组';
+
+  /// 版本号筛选，null=全部；列表刷新后选中值可能已不在数据里，
+  /// 使用处一律先经 [_activeVersion] 回落，避免下拉 value 匹配不到 item 断言失败
+  String? _filterVersion;
+
+  /// 在线状态筛选，null=全部
+  bool? _filterOnline;
   String _sortKey = 'id';
   bool _sortAsc = true;
 
@@ -73,9 +81,30 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
     }
   }
 
+  /// 版本号选项：去重后按语义化版本降序（"1.10" 要排在 "1.2" 前面，不能按字符串排）
+  List<String> _versionOptions(List<Netbar> netbars) {
+    final set = <String>{};
+    for (final n in netbars) {
+      final v = n.version;
+      if (v != null && v.isNotEmpty) set.add(v);
+    }
+    final list = set.toList();
+    list.sort((a, b) => compareVersion(a, b, desc: true));
+    return list;
+  }
+
+  /// 选中版本已不在当前数据里时回落 null（当作「全部」），下拉与过滤共用同一回落值
+  String? _activeVersion(List<Netbar> netbars) {
+    if (_filterVersion == null) return null;
+    return netbars.any((n) => n.version == _filterVersion) ? _filterVersion : null;
+  }
+
   List<Netbar> _filterAndSort(List<Netbar> netbars) {
+    final activeVersion = _activeVersion(netbars);
     var result = netbars.where((n) {
       if (_selectedGroup != '全部分组' && n.group != _selectedGroup) return false;
+      if (activeVersion != null && n.version != activeVersion) return false;
+      if (_filterOnline != null && n.isOnline != _filterOnline) return false;
       return NetbarMatcher.match(n, _searchQuery);
     }).toList();
 
@@ -140,7 +169,7 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
         child: Column(
           children: [
             _buildHeader(),
-            _buildToolbar(),
+            _buildToolbar(responseAsync),
             Expanded(child: _buildContent(netbarsAsync)),
             _buildFooter(),
           ],
@@ -183,7 +212,11 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
     );
   }
 
-  Widget _buildToolbar() {
+  Widget _buildToolbar(AsyncValue<NetbarListResponse> responseAsync) {
+    final merchants = responseAsync.maybeWhen(
+      data: (r) => r.merchants,
+      orElse: () => const <Netbar>[],
+    );
     return Container(
       padding: const EdgeInsets.all(16),
       child: Row(
@@ -196,8 +229,74 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
             label: '分组',
           ),
           const SizedBox(width: 12),
+          SizedBox(width: 132, child: _buildVersionDropdown(merchants)),
+          const SizedBox(width: 12),
+          SizedBox(width: 108, child: _buildOnlineDropdown()),
+          const SizedBox(width: 12),
           _buildAddButton(),
         ],
+      ),
+    );
+  }
+
+  /// 版本号筛选下拉。加载中/失败时 merchants 为空，退化为仅「全部版本」且禁用
+  Widget _buildVersionDropdown(List<Netbar> merchants) {
+    final options = _versionOptions(merchants);
+    return DropdownButtonFormField<String?>(
+      value: _activeVersion(merchants),
+      isExpanded: true,
+      style: const TextStyle(fontSize: 13, color: Colors.black87),
+      decoration: _dropdownDecoration(),
+      items: [
+        const DropdownMenuItem<String?>(
+          value: null,
+          child: Text('全部版本', style: TextStyle(fontSize: 13)),
+        ),
+        ...options.map((v) => DropdownMenuItem<String?>(
+              value: v,
+              child: Text('v$v',
+                  style: const TextStyle(fontSize: 13),
+                  overflow: TextOverflow.ellipsis),
+            )),
+      ],
+      onChanged: options.isEmpty
+          ? null
+          : (v) => setState(() => _filterVersion = v),
+    );
+  }
+
+  Widget _buildOnlineDropdown() {
+    return DropdownButtonFormField<bool?>(
+      value: _filterOnline,
+      isExpanded: true,
+      style: const TextStyle(fontSize: 13, color: Colors.black87),
+      decoration: _dropdownDecoration(),
+      items: const [
+        DropdownMenuItem<bool?>(value: null, child: Text('全部状态', style: TextStyle(fontSize: 13))),
+        DropdownMenuItem<bool?>(value: true, child: Text('在线', style: TextStyle(fontSize: 13))),
+        DropdownMenuItem<bool?>(value: false, child: Text('离线', style: TextStyle(fontSize: 13))),
+      ],
+      onChanged: (v) => setState(() => _filterOnline = v),
+    );
+  }
+
+  /// 与工具栏搜索框/GroupPicker 同视觉：白底 + E5E7EB 描边 + 圆角 12
+  InputDecoration _dropdownDecoration() {
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+    );
+    return InputDecoration(
+      isDense: true,
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+      border: border,
+      enabledBorder: border,
+      disabledBorder: border,
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: AppColors.iosBlue, width: 1.5),
       ),
     );
   }
@@ -230,12 +329,24 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
   }
 
   Widget _buildMobileFilter(AsyncValue<NetbarListResponse> responseAsync) {
+    final merchants = responseAsync.maybeWhen(
+      data: (r) => r.merchants,
+      orElse: () => const <Netbar>[],
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildSearchField(),
         const SizedBox(height: 8),
         _buildGroupChips(responseAsync),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(child: _buildVersionDropdown(merchants)),
+            const SizedBox(width: 8),
+            Expanded(child: _buildOnlineDropdown()),
+          ],
+        ),
       ],
     );
   }

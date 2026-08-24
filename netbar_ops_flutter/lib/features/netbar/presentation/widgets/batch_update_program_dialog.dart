@@ -237,8 +237,8 @@ class _BatchUpdateProgramDialogState extends State<BatchUpdateProgramDialog> {
       },
       child: ResponsiveDialogScaffold(
         title: '批量更新程序',
-        maxWidth: 720,
-        maxHeight: 600,
+        maxWidth: 1080,
+        maxHeight: 900,
         scrollableBody: false,
         showCloseButton: !_sending,
         // scrollableBody=false 时骨架不会套 bodyPadding，内边距得自己加，
