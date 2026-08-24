@@ -2118,18 +2118,19 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     if (!isNarrow) {
       return Row(
         children: [
-          Expanded(
-            flex: 2,
-            child: _buildBigActionButton(
-              '笨鸟远程',
-              'WebRTC低延迟',
-              LucideIcons.video,
-              const Color(0xFF10B981),  // 绿色
-              Colors.white,
-              () => _handleWebRTCButtonTap(terminal),
-            ),
-          ),
-          const SizedBox(width: 12),
+          // 老版「笨鸟远程」入口暂时隐藏（V3 已稳定，保留代码便于回滚）
+          // Expanded(
+          //   flex: 2,
+          //   child: _buildBigActionButton(
+          //     '笨鸟远程',
+          //     'WebRTC低延迟',
+          //     LucideIcons.video,
+          //     const Color(0xFF10B981),  // 绿色
+          //     Colors.white,
+          //     () => _handleWebRTCButtonTap(terminal),
+          //   ),
+          // ),
+          // const SizedBox(width: 12),
           Expanded(
             flex: 2,
             child: _buildBigActionButton(
@@ -2159,15 +2160,16 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
 
     return Column(
       children: [
-        _buildBigActionButton(
-          '笨鸟远程',
-          'WebRTC低延迟',
-          LucideIcons.video,
-          const Color(0xFF10B981),  // 绿色
-          Colors.white,
-          () => _handleWebRTCButtonTap(terminal),
-        ),
-        const SizedBox(height: 12),
+        // 老版「笨鸟远程」入口暂时隐藏（V3 已稳定，保留代码便于回滚）
+        // _buildBigActionButton(
+        //   '笨鸟远程',
+        //   'WebRTC低延迟',
+        //   LucideIcons.video,
+        //   const Color(0xFF10B981),  // 绿色
+        //   Colors.white,
+        //   () => _handleWebRTCButtonTap(terminal),
+        // ),
+        // const SizedBox(height: 12),
         _buildBigActionButton(
           'webrtc远程【V3】',
           'SFU 新架构',
