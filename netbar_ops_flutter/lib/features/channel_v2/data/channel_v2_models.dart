@@ -103,6 +103,17 @@ class V2File {
   /// 下发树路径还原用键：delivery_id ?? id（对齐 useDistributionFiles.js:42,79）
   int? get deliveryPathKey => deliveryNodeId ?? id;
 
+  /// **源** group_files.id 的语义别名。
+  ///
+  /// 【命名陷阱，第一天定死】`id` 在两个 id 空间里都出现过，读代码时极易搞混：
+  ///   - 资源区文件：id = group_files.id（源文件）
+  ///   - 下发节点：  id = group_files.id（源文件），deliveryNodeId = delivery_nodes.id
+  /// 凡是喂给 /file/* 系列（destroy/rename/extract/hide/move/attribute）的必须是本字段；
+  /// 凡是喂给 /delivery/* 系列（DELETE /delivery/{id}、POST /delivery/move）的必须是
+  /// [deliveryNodeId]，且**禁止 `deliveryNodeId ?? id` 兜底**——两个 id 空间会串，
+  /// 把源文件 id 当下发节点 id 发出去会删掉别人的下发记录（见 v2FileActions 内的拒绝分支）。
+  int? get groupFileId => id;
+
   String get extension {
     final idx = name.lastIndexOf('.');
     if (idx <= 0 || idx == name.length - 1) return '';

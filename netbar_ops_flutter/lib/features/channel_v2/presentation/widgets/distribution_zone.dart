@@ -27,6 +27,13 @@ class DistributionZone extends ConsumerStatefulWidget {
   /// 宽屏：树内联在左侧；窄屏：改为顶部条 + 全屏弹窗选择（showAdaptive）
   final bool showTreeInline;
 
+  /// 'grid' | 'list'，透传给内部文件区（对齐 DistributionZone.vue props.viewMode）
+  final String viewMode;
+
+  /// 顶栏搜索词（三区联动）。命中集合在本组件内算，
+  /// 与资源区各算各的（对齐 DistributionZone.vue:160-164 matchedIds）
+  final String searchQuery;
+
   final void Function(V2File file, Offset globalPosition)? onFileContextMenu;
   final void Function(Offset globalPosition)? onBlankContextMenu;
 
@@ -38,6 +45,8 @@ class DistributionZone extends ConsumerStatefulWidget {
     required this.controller,
     required this.isHqUser,
     this.showTreeInline = true,
+    this.viewMode = 'grid',
+    this.searchQuery = '',
     this.onFileContextMenu,
     this.onBlankContextMenu,
     this.onZoneActivate,
@@ -215,6 +224,13 @@ class _DistributionZoneState extends ConsumerState<DistributionZone> {
     final path = ctrl.filesCtrl.path
         .map((n) => ZonePathItem(id: n.id, name: n.name))
         .toList();
+    final q = widget.searchQuery.trim().toLowerCase();
+    final matched = q.isEmpty
+        ? const <String>{}
+        : ctrl.files
+            .where((f) => f.name.toLowerCase().contains(q))
+            .map((f) => f.selectionKey)
+            .toSet();
     return ResourceZone(
       zoneKey: 'distribution',
       title: _zoneTitle,
@@ -222,6 +238,9 @@ class _DistributionZoneState extends ConsumerState<DistributionZone> {
       path: path,
       loading: ctrl.filesCtrl.loading,
       emptyText: '此目录为空',
+      viewMode: widget.viewMode,
+      searchActive: q.isNotEmpty,
+      matchedKeys: matched,
       selectedKeys: ctrl.selectedIds,
       onFileTap: (file, {bool ctrl = false, bool shift = false}) {
         // 先通知父层清其他区选中，再落本区选中（对齐 onDistFileClick）
@@ -238,6 +257,10 @@ class _DistributionZoneState extends ConsumerState<DistributionZone> {
         ctrl.selection.clear();
       },
       onBlankTap: () => ctrl.selection.onBlankClick(),
+      onBoxSelect: (keys) {
+        widget.onZoneActivate?.call();
+        ctrl.selection.onBoxSelect(keys);
+      },
       onFileContextMenu: widget.onFileContextMenu,
       onBlankContextMenu: widget.onBlankContextMenu,
     );

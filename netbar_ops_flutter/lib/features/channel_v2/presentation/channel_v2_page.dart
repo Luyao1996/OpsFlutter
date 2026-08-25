@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -14,11 +15,14 @@ import '../data/channel_v2_api.dart';
 import '../data/channel_v2_models.dart';
 import '../data/v2_upload_service.dart';
 import 'channel_v2_controllers.dart';
+import 'channel_v2_file_actions.dart';
 import 'widgets/distribution_zone.dart';
 import 'widgets/resource_zone.dart';
+import 'widgets/v2_file_props_dialog.dart';
+import 'widgets/v2_move_target_dialog.dart';
 import 'widgets/v2_upload_dialog.dart';
 
-/// 通道管理 V2（T8a：双区只读浏览 + 可扩展骨架，对齐 web ChannelV2Page.vue）。
+/// 通道管理 V2（T8b-2：文件操作层，对齐 web ChannelV2Page.vue）。
 /// 与旧 channel feature 新旧并存，互不 import。
 class ChannelV2Page extends ConsumerStatefulWidget {
   const ChannelV2Page({super.key});
@@ -30,7 +34,7 @@ class ChannelV2Page extends ConsumerStatefulWidget {
 class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
   late final ChannelV2PageController _ctrl;
 
-  /// inline 重命名入口预埋（T8b 经此调 startEditing，对齐 vue hqZoneRef/groupZoneRef）
+  /// inline 重命名入口（对齐 vue hqZoneRef/groupZoneRef）
   final _hqZoneKey = GlobalKey<ResourceZoneState>();
   final _groupZoneKey = GlobalKey<ResourceZoneState>();
 
@@ -39,6 +43,27 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
 
   /// 窄屏分段：'distribution' | 'hq' | 'group'
   String _narrowSegment = 'distribution';
+
+  /// 顶栏视图模式（右键「视图切换」与工具栏按钮共用同一份状态）
+  String _viewMode = 'grid';
+
+  /// 顶栏搜索（三区联动，原地过滤，不改后端查询）
+  final TextEditingController _searchCtrl = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+  String _searchQuery = '';
+
+  /// 快捷键宿主
+  final FocusNode _pageFocus = FocusNode(debugLabel: 'channel_v2_page');
+
+  /// 【统一「是否有弹窗打开」标志位】
+  /// web 是 document 级监听 + 逐个弹窗 visible 判空（ChannelV2Page.vue:793-801），
+  /// 弹窗一多就会漏判。这里改为计数器：任何弹窗/右键菜单打开期间自增，关闭自减，
+  /// 快捷键只需判 `_anyDialogOpen`。T8c/T8d 新增弹窗必须走 [_guardDialog]。
+  int _dialogDepth = 0;
+  bool get _anyDialogOpen => _dialogDepth > 0;
+
+  /// 解压防重复点击（同一文件连点会向后端投多份任务）
+  bool _unzipping = false;
 
   @override
   void initState() {
@@ -116,10 +141,31 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
     _ctrl.hqSel.removeListener(_onCtrlChanged);
     _ctrl.groupSel.removeListener(_onCtrlChanged);
     _ctrl.dispose();
+    _searchCtrl.dispose();
+    _searchFocus.dispose();
+    _pageFocus.dispose();
     super.dispose();
   }
 
-  // ====== 右键菜单（T8a 只挂 刷新/属性占位） ======
+  // ====== 通用出口 ======
+
+  void _notice(String message, NoticeLevel level) {
+    if (mounted) showTopNotice(context, message, level: level);
+  }
+
+  /// 所有弹窗/菜单必须经此包裹：维护 [_dialogDepth]，快捷键据此让路
+  Future<T> _guardDialog<T>(Future<T> Function() run) async {
+    _dialogDepth++;
+    try {
+      return await run();
+    } finally {
+      _dialogDepth--;
+    }
+  }
+
+  ChannelV2Api get _api => ref.read(channelV2ApiProvider);
+
+  // ====== 权限 ======
 
   /// 当前区是否可写（空白菜单用；对齐 ChannelV2Page.vue:447-451 canWriteHere）
   bool _canWriteHere(String zoneKey) {
@@ -130,14 +176,35 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
   }
 
   /// 文件级写权限（对齐 ChannelV2Page.vue:460-467 canWriteForFile：
-  /// 非管理员拒绝；继承节点只读；canOperateGroupConfig 判组归属）
+  /// 非管理员拒绝；继承节点只读；canOperateGroupConfig 判组归属）。
+  ///
+  /// 注意：这里的 inherited 判断只管**被右键的这一个文件**（决定菜单置灰），
+  /// 批量集合里混进继承项要靠 [_blockIfInherited] 再拦一层，两者不是冗余。
   bool _canWriteForFile(String zoneKey, V2File? file) {
     final perm = ref.read(permissionProvider);
     if (!perm.isManager) return false;
     if (file == null) return _canWriteHere(zoneKey);
     if (file.inherited) return false;
+    // 【S12 刻意偏离，留痕】下发节点的 groupId 实际是 source_id：
+    // sourceScope=='merchant' 时它是 merchant_id，喂给 canOperateGroupConfig
+    // 比的却是 group_id（跨 id 空间，判定结果无意义）。本期直接置灰该类节点的写操作，
+    // 待 T8c 拿到「网吧 → 所属组」映射后按真实归属判权。
+    if (zoneKey == 'distribution' && file.sourceScope == 'merchant') {
+      return false;
+    }
     return perm.canOperateGroupConfig(file.groupId);
   }
+
+  /// 继承节点批量守卫（移植 ChannelV2Page.vue:469-485），move/delete/unzip 三处调用
+  bool _blockIfInherited(List<V2File> files, String action) {
+    return v2BlockIfInherited(
+      files,
+      action: action,
+      warn: (m) => _notice(m, NoticeLevel.warning),
+    );
+  }
+
+  // ====== 选中集 ======
 
   List<V2File> _getSelectedFiles(String zoneKey, V2File? rightClicked) {
     if (zoneKey == 'hq') return _ctrl.hqSel.expandFromRightClick(rightClicked);
@@ -147,6 +214,18 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
     return _ctrl.distribution.expandFromRightClick(rightClicked);
   }
 
+  void _clearSelection(String zoneKey) {
+    if (zoneKey == 'hq') {
+      _ctrl.hqSel.clear();
+    } else if (zoneKey == 'group') {
+      _ctrl.groupSel.clear();
+    } else {
+      _ctrl.distribution.clearSelection();
+    }
+  }
+
+  // ====== 右键菜单 ======
+
   Future<void> _openFileMenu(String zoneKey, V2File file, Offset pos) async {
     final items = buildContextMenuItems(
       zoneKey: zoneKey,
@@ -154,11 +233,12 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
       isBlank: false,
       writableHere: _canWriteHere(zoneKey),
       writableFile: _canWriteForFile(zoneKey, file),
+      // 右键项已在选中集合里 → 批量；否则只它本身
       batchFiles: _getSelectedFiles(zoneKey, file),
-      viewMode: 'grid',
+      viewMode: _viewMode,
     );
     final key = await _showContextMenu(pos, items);
-    _handleMenuAction(zoneKey, key);
+    await _handleMenuAction(zoneKey, key, file);
   }
 
   Future<void> _openBlankMenu(String zoneKey, Offset pos) async {
@@ -169,22 +249,51 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
       writableHere: _canWriteHere(zoneKey),
       writableFile: false,
       batchFiles: const [],
-      viewMode: 'grid',
+      viewMode: _viewMode,
     );
     final key = await _showContextMenu(pos, items);
-    _handleMenuAction(zoneKey, key);
+    await _handleMenuAction(zoneKey, key, null);
   }
 
-  void _handleMenuAction(String zoneKey, String? key) {
+  Future<void> _handleMenuAction(
+      String zoneKey, String? key, V2File? file) async {
     if (key == null) return;
     switch (key) {
       case 'refresh':
         _ctrl.refreshZone(zoneKey);
         break;
+
+      case 'view-toggle':
+        setState(() => _viewMode = _viewMode == 'grid' ? 'list' : 'grid');
+        break;
+
       case 'upload':
         _openUploadDialog(zoneKey: zoneKey);
         break;
-      // 'properties' 仍置灰不可达；T8b-2 起在此接 PropsDialogSlot
+
+      case 'distribute':
+        await _distribute(_getSelectedFiles(zoneKey, file));
+        break;
+
+      case 'rename':
+        if (file != null) _triggerInlineRename(file, zoneKey);
+        break;
+
+      case 'move':
+        await _openMoveDialog(zoneKey, file);
+        break;
+
+      case 'delete':
+        await _deleteFlow(zoneKey, file);
+        break;
+
+      case 'properties':
+        if (file != null) await _openPropsDialog(file);
+        break;
+
+      case 'unzip':
+        if (file != null) await _unzip(zoneKey, file);
+        break;
     }
   }
 
@@ -192,50 +301,265 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
       Offset globalPos, List<V2ContextMenuItem> items) {
     final overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox;
-    return showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        globalPos.dx,
-        globalPos.dy,
-        overlay.size.width - globalPos.dx,
-        overlay.size.height - globalPos.dy,
-      ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      items: [
-        for (final it in items)
-          if (it.divider)
-            const PopupMenuDivider(height: 1)
-          else
-            PopupMenuItem<String>(
-              value: it.key,
-              enabled: !it.disabled,
-              height: 36,
-              child: Row(
-                children: [
-                  if (it.icon != null) ...[
-                    Icon(
-                      it.icon,
-                      size: 15,
-                      color: it.disabled
-                          ? Colors.grey.shade400
-                          : (it.danger ? AppColors.red : Colors.grey.shade700),
-                    ),
-                    const SizedBox(width: 10),
-                  ],
-                  Text(
-                    it.label,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: it.disabled
-                          ? Colors.grey.shade400
-                          : (it.danger ? AppColors.red : const Color(0xFF1F2937)),
-                    ),
+    return _guardDialog<String?>(() => showMenu<String>(
+          context: context,
+          position: RelativeRect.fromLTRB(
+            globalPos.dx,
+            globalPos.dy,
+            overlay.size.width - globalPos.dx,
+            overlay.size.height - globalPos.dy,
+          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          items: [
+            for (final it in items)
+              if (it.divider)
+                const PopupMenuDivider(height: 1)
+              else
+                PopupMenuItem<String>(
+                  value: it.key,
+                  enabled: !it.disabled,
+                  height: 36,
+                  child: Row(
+                    children: [
+                      if (it.icon != null) ...[
+                        Icon(
+                          it.icon,
+                          size: 15,
+                          color: it.disabled
+                              ? Colors.grey.shade400
+                              : (it.danger ? AppColors.red : Colors.grey.shade700),
+                        ),
+                        const SizedBox(width: 10),
+                      ],
+                      Text(
+                        it.label,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: it.disabled
+                              ? Colors.grey.shade400
+                              : (it.danger
+                                  ? AppColors.red
+                                  : const Color(0xFF1F2937)),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
-      ],
+                ),
+          ],
+        ));
+  }
+
+  // ====== 删除 ======
+
+  Future<void> _deleteFlow(String zoneKey, V2File? file) async {
+    final files = _getSelectedFiles(zoneKey, file);
+    if (files.isEmpty) return;
+    if (_blockIfInherited(files, '删除')) return;
+    final ok = await _guardDialog<bool>(() async {
+      if (files.length > 1) {
+        return v2ConfirmAndBatchDelete(
+          context,
+          api: _api,
+          files: files,
+          zoneKey: zoneKey,
+          notice: _notice,
+        );
+      }
+      return v2ConfirmAndDelete(
+        context,
+        api: _api,
+        file: files.first,
+        zoneKey: zoneKey,
+        notice: _notice,
+      );
+    });
+    if (ok) {
+      // S5：必须先清选中再刷新，否则被删项还留在 keys 里，
+      // 下一次批量操作的 selectedFiles 会静默变短（用户以为还选着 N 项）
+      _clearSelection(zoneKey);
+      // 删除只刷本区（下发区的引用由后端 missing 标记表达，不必整页刷）
+      _ctrl.refreshZone(zoneKey);
+    }
+  }
+
+  // ====== 移动 ======
+
+  Future<void> _openMoveDialog(String zoneKey, V2File? file) async {
+    final files = _getSelectedFiles(zoneKey, file);
+    if (files.isEmpty) return;
+    if (_blockIfInherited(files, '移动')) return;
+    final moved = await _guardDialog<bool?>(() => showAdaptive<bool>(
+          context,
+          (_) => V2MoveTargetDialog(
+            api: _api,
+            files: files,
+            zoneKey: zoneKey,
+            groupId: _effectiveGroupId,
+            deliveryScope: zoneKey == 'distribution'
+                ? _ctrl.distribution.selectedNode
+                : null,
+          ),
+          routeName: '/dialog/channel-v2-move',
+          barrierDismissible: false,
+        ));
+    if (moved == true) {
+      // 【对 web 的小幅偏离，留痕】web 的 onMoved 只 refreshAll，不清选中
+      // （ChannelV2Page.vue:775-778）；这里按 S5 统一口径先清再刷，
+      // 否则移走的文件仍留在选中键集合里，后续批量操作会少算项数。
+      _clearSelection(zoneKey);
+      // 移动可能跨区影响（资源区改 parent / 下发区改父节点）→ 三区全刷
+      _ctrl.refreshAll();
+    }
+  }
+
+  // ====== 属性 / 隐藏 ======
+
+  Future<void> _openPropsDialog(V2File file) async {
+    await _guardDialog<void>(() async => showAdaptive<void>(
+          context,
+          (_) => V2FilePropsDialog(
+            api: _api,
+            file: file,
+            // 隐藏状态变化后三区都可能含此文件的引用 → 全刷（对齐 :770-773）
+            onHideChanged: () => _ctrl.refreshAll(),
+          ),
+          routeName: '/dialog/channel-v2-props',
+        ));
+  }
+
+  // ====== 下发（复制到下发区） ======
+
+  Future<void> _distribute(List<V2File> files) async {
+    if (files.isEmpty) return;
+    final ok = await v2DistributeMany(
+      api: _api,
+      files: files,
+      target: _ctrl.distribution.selectedNode,
+      notice: _notice,
     );
+    if (ok) _ctrl.distribution.refresh();
+  }
+
+  // ====== 解压 ======
+
+  Future<void> _unzip(String zoneKey, V2File file) async {
+    if (_blockIfInherited([file], '解压')) return;
+    if (_unzipping) return; // 防重复点击：连点会向后端投多份解压任务
+    final gid = file.groupFileId;
+    if (gid == null) return;
+    setState(() => _unzipping = true);
+    try {
+      await _api.extractResource(gid);
+      // 【对 web 的刻意偏离，留痕】web 用 `res.message || '已解压'`（:567），
+      // 但本端 ApiClient 在 code==0 时把 message 丢弃（只把 data 透出），
+      // 无法照抄后端文案 → 改用中性文案。
+      // ⚠ 待验证：/file/extract 是同步解压完再返回，还是只投递 /task 异步任务；
+      //   若是异步，刷新本区当下看不到结果，需要改成提示去任务列表看进度（T8d）。
+      _notice('已提交解压请求', NoticeLevel.success);
+      _ctrl.refreshZone(zoneKey);
+    } catch (e) {
+      _notice(v2ErrMessage(e, '解压失败'), NoticeLevel.error);
+    } finally {
+      if (mounted) setState(() => _unzipping = false);
+    }
+  }
+
+  // ====== 重命名 ======
+
+  /// 触发资源区文件的 inline 编辑（下发区不支持：/file/rename 改的是源文件名）
+  void _triggerInlineRename(V2File file, String zoneKey) {
+    if (zoneKey == 'distribution') return;
+    final key = zoneKey == 'hq' ? _hqZoneKey : _groupZoneKey;
+    key.currentState?.startEditing(file.selectionKey);
+  }
+
+  Future<void> _onRenameCommit(
+      V2File file, String newName, String zoneKey) async {
+    final gid = file.groupFileId;
+    if (gid == null) return;
+    try {
+      await _api.renameResource(gid, newName);
+      _notice('已重命名', NoticeLevel.success);
+      _ctrl.refreshZone(zoneKey);
+    } catch (e) {
+      _notice(v2ErrMessage(e, '重命名失败'), NoticeLevel.error);
+    }
+  }
+
+  // ====== 快捷键（Delete 删除选中 / F2 重命名） ======
+
+  /// 输入中（顶栏搜索框 / inline 重命名框）不接管按键：
+  /// 编辑框里的 Delete 是删字符
+  bool get _isTyping =>
+      _searchFocus.hasFocus ||
+      (_hqZoneKey.currentState?.isEditing ?? false) ||
+      (_groupZoneKey.currentState?.isEditing ?? false);
+
+  KeyEventResult _onPageKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final k = event.logicalKey;
+    if (k != LogicalKeyboardKey.delete && k != LogicalKeyboardKey.f2) {
+      return KeyEventResult.ignored;
+    }
+    if (_anyDialogOpen || _isTyping) return KeyEventResult.ignored;
+
+    // 按固定顺序 hq → group → distribution 找有选中的区
+    // （三区选中互斥由 activateZone 保证，这里的顺序只在互斥失效时兜底）
+    String? zoneKey;
+    List<V2File> files = const [];
+    if (_ctrl.hqSel.keys.isNotEmpty) {
+      zoneKey = 'hq';
+      files = _ctrl.hqSel.selectedFiles;
+    } else if (_ctrl.groupSel.keys.isNotEmpty) {
+      zoneKey = 'group';
+      files = _ctrl.groupSel.selectedFiles;
+    } else if (_ctrl.distribution.selectedIds.isNotEmpty) {
+      zoneKey = 'distribution';
+      files = _ctrl.distribution.selectedFiles;
+    }
+    if (zoneKey == null || files.isEmpty) return KeyEventResult.ignored;
+
+    if (k == LogicalKeyboardKey.delete) {
+      _triggerDeleteSelected(files, zoneKey);
+      return KeyEventResult.handled;
+    }
+    // F2：仅单选、下发区不支持、且与右键菜单同一权限门槛
+    if (files.length != 1) return KeyEventResult.ignored;
+    if (zoneKey == 'distribution') return KeyEventResult.ignored;
+    if (!_canWriteForFile(zoneKey, files.first)) return KeyEventResult.ignored;
+    _triggerInlineRename(files.first, zoneKey);
+    return KeyEventResult.handled;
+  }
+
+  Future<void> _triggerDeleteSelected(
+      List<V2File> files, String zoneKey) async {
+    // 继承节点单独提示：否则按 Delete 无任何反馈，用户不知道为什么删不掉
+    if (_blockIfInherited(files, '删除')) return;
+    // 快捷键路径的整体门槛：任一文件不可写则整体拒绝
+    // （菜单里删除会置灰，快捷键同样不放行；对齐 :836 的 every）
+    if (!files.every((f) => _canWriteForFile(zoneKey, f))) return;
+    final ok = await _guardDialog<bool>(() async {
+      if (files.length == 1) {
+        return v2ConfirmAndDelete(
+          context,
+          api: _api,
+          file: files.first,
+          zoneKey: zoneKey,
+          notice: _notice,
+        );
+      }
+      return v2ConfirmAndBatchDelete(
+        context,
+        api: _api,
+        files: files,
+        zoneKey: zoneKey,
+        notice: _notice,
+      );
+    });
+    if (ok) {
+      _clearSelection(zoneKey);
+      _ctrl.refreshZone(zoneKey);
+    }
   }
 
   // ====== 上传 ======
@@ -243,8 +567,7 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
   /// 打开上传弹窗。
   ///
   /// [zoneKey] 为 null = 工具栏入口：落根目录、不带归属字段，由后端按账号身份
-  /// 决定落点（对齐 web ChannelV2Page.vue:368-372 —— 工具栏 @click 传进来的是
-  /// 事件对象，类型守卫后回退 '0' + 空 extra）。
+  /// 决定落点（对齐 web ChannelV2Page.vue:368-372）。
   /// 有 zoneKey = 空白右键入口：上传到当前浏览目录；小组区根目录后端无法从父目录
   /// 推断归属，必须显式带 group_id（对齐 ChannelV2Page.vue:502-509）。
   ///
@@ -264,18 +587,18 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
           : buildV2UploadExtra('hq');
     }
 
-    showAdaptive<void>(
-      context,
-      (_) => V2UploadDialog(
-        service: ref.read(v2UploadServiceProvider),
-        folderId: folderId,
-        extraParams: extra,
-        // 全部跑完只回调一次；web:392-394 同样只刷资源区（下发区未变）
-        onUploaded: () => _ctrl.refreshResourceZones(),
-      ),
-      // 上传中禁止关窗：点遮罩关闭会让串行队列成孤儿
-      barrierDismissible: false,
-    );
+    _guardDialog<void>(() async => showAdaptive<void>(
+          context,
+          (_) => V2UploadDialog(
+            service: ref.read(v2UploadServiceProvider),
+            folderId: folderId,
+            extraParams: extra,
+            // 全部跑完只回调一次；web:392-394 同样只刷资源区（下发区未变）
+            onUploaded: () => _ctrl.refreshResourceZones(),
+          ),
+          // 上传中禁止关窗：点遮罩关闭会让串行队列成孤儿
+          barrierDismissible: false,
+        ));
   }
 
   // ====== 权限/账号派生 ======
@@ -284,6 +607,16 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
     final perm = ref.read(permissionProvider);
     if (perm.isHQUser) return _selectedGroupId;
     return perm.groupId;
+  }
+
+  /// 搜索命中键集合（原地过滤；与 web 一致按文件名子串匹配）
+  Set<String> _matchedKeys(List<V2File> files) {
+    final q = _searchQuery.trim().toLowerCase();
+    if (q.isEmpty) return const <String>{};
+    return files
+        .where((f) => f.name.toLowerCase().contains(q))
+        .map((f) => f.selectionKey)
+        .toSet();
   }
 
   @override
@@ -296,63 +629,166 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
     _ctrl.canSeeHqZone = canSeeHqZone;
     final isNarrow = context.isNarrow;
 
-    return Container(
-      color: const Color(0xFFF0F2F5),
-      padding: const EdgeInsets.all(10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildToolbar(context, isNarrow, canSeeHqZone, perm.isManager),
-          const SizedBox(height: 8),
-          Expanded(
-            child: isNarrow
-                ? _buildNarrowBody(
-                    context, perm, canSeeHqZone, canWriteHqZone, canWriteGroupZone)
-                : _buildWideBody(
-                    context, perm, canSeeHqZone, canWriteHqZone, canWriteGroupZone),
-          ),
-        ],
+    return Focus(
+      focusNode: _pageFocus,
+      autofocus: true,
+      onKeyEvent: _onPageKey,
+      child: Container(
+        color: const Color(0xFFF0F2F5),
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildToolbar(context, isNarrow, canSeeHqZone, perm.isManager),
+            const SizedBox(height: 8),
+            Expanded(
+              child: isNarrow
+                  ? _buildNarrowBody(context, perm, canSeeHqZone, canWriteHqZone,
+                      canWriteGroupZone)
+                  : _buildWideBody(context, perm, canSeeHqZone, canWriteHqZone,
+                      canWriteGroupZone),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildToolbar(
       BuildContext context, bool isNarrow, bool canSeeHqZone, bool canUpload) {
+    final actions = <Widget>[
+      // 对齐 web ChannelV2Page.vue:24 `v-if=isManagerUser`
+      if (canUpload)
+        TextButton.icon(
+          onPressed: () => _openUploadDialog(),
+          icon: const Icon(LucideIcons.upload, size: 14),
+          label: const Text('上传', style: TextStyle(fontSize: 13)),
+        ),
+      IconButton(
+        tooltip: _viewMode == 'grid' ? '切换到列表视图' : '切换到图标视图',
+        onPressed: () =>
+            setState(() => _viewMode = _viewMode == 'grid' ? 'list' : 'grid'),
+        icon: Icon(_viewMode == 'grid' ? LucideIcons.list : LucideIcons.grid,
+            size: 16, color: Colors.grey.shade600),
+      ),
+      IconButton(
+        tooltip: '刷新',
+        onPressed: _ctrl.refreshAll,
+        icon: Icon(LucideIcons.refreshCw, size: 16, color: Colors.grey.shade600),
+      ),
+    ];
+
+    final searchField = SizedBox(
+      height: 32,
+      child: TextField(
+        controller: _searchCtrl,
+        focusNode: _searchFocus,
+        onChanged: (v) => setState(() => _searchQuery = v),
+        style: const TextStyle(fontSize: 13),
+        decoration: InputDecoration(
+          hintText: '搜索文件（三区联动）',
+          hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+          prefixIcon:
+              Icon(LucideIcons.search, size: 14, color: Colors.grey.shade400),
+          prefixIconConstraints:
+              const BoxConstraints(minWidth: 30, minHeight: 30),
+          suffixIcon: _searchQuery.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(LucideIcons.x, size: 13),
+                  onPressed: () {
+                    _searchCtrl.clear();
+                    setState(() => _searchQuery = '');
+                  },
+                ),
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(6),
+            borderSide: const BorderSide(color: Color(0xFFEEF0F4)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(6),
+            borderSide: const BorderSide(color: Color(0xFFEEF0F4)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(6),
+            borderSide: const BorderSide(color: Color(0xFF007AFF)),
+          ),
+        ),
+      ),
+    );
+
     return _card(
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Icon(LucideIcons.layers, size: 16, color: Color(0xFF007AFF)),
-            const SizedBox(width: 8),
-            const Text(
-              '通道管理V2',
-              style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF1F2937)),
+            Row(
+              children: [
+                const Icon(LucideIcons.layers, size: 16, color: Color(0xFF007AFF)),
+                const SizedBox(width: 8),
+                const Text(
+                  '通道管理V2',
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1F2937)),
+                ),
+                // T8c/T8d 预留按钮位：网吧私有策略 / 程序公共策略 / 桌标管理 / 任务列表
+                // （对齐 web ChannelV2Page.vue:6-8,22）。本期渲染为 disabled 占位，
+                // 接线点见 [_placeholderButtons]；窄屏不渲染以免挤压标题。
+                // 外包 Flexible+横向滚动：中等宽度（~900px）下四个占位按钮 + 搜索框
+                // 会把 Row 撑爆成 RenderFlex overflow，这里让它退化为可横滚
+                if (!isNarrow)
+                  Flexible(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(width: 16),
+                          ..._placeholderButtons(),
+                        ],
+                      ),
+                    ),
+                  ),
+                const Spacer(),
+                if (!isNarrow) ...[
+                  SizedBox(width: 220, child: searchField),
+                  const SizedBox(width: 8),
+                ],
+                ...actions,
+              ],
             ),
-            const Spacer(),
-            // 对齐 web ChannelV2Page.vue:24 `v-if=isManagerUser`：
-            // 等价于 _canWriteHere('hq')（该函数只在 group 区额外要求已选组）
-            if (canUpload)
-              TextButton.icon(
-                onPressed: () => _openUploadDialog(),
-                icon: const Icon(LucideIcons.upload, size: 14),
-                label: const Text('上传', style: TextStyle(fontSize: 13)),
-              ),
-            // 搜索框与 grid/list 切换 T8a 不做（ResourceZone props 已预留
-            // searchActive/matchedKeys；viewMode 待 T8b）
-            IconButton(
-              tooltip: '刷新',
-              onPressed: _ctrl.refreshAll,
-              icon: Icon(LucideIcons.refreshCw,
-                  size: 16, color: Colors.grey.shade600),
-            ),
+            if (isNarrow) ...[
+              const SizedBox(height: 6),
+              searchField,
+            ],
           ],
         ),
       ),
     );
+  }
+
+  List<Widget> _placeholderButtons() {
+    const labels = ['网吧私有策略', '程序公共策略', '桌标管理', '任务列表'];
+    return [
+      for (final l in labels)
+        Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: TextButton(
+            onPressed: null, // T8c/T8d 接入
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 28),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(l, style: const TextStyle(fontSize: 12)),
+          ),
+        ),
+    ];
   }
 
   // ====== 宽屏：左下发复合面板 + 右列（HQ 上 / Group 下） ======
@@ -368,18 +804,7 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
         return Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              child: _card(DistributionZone(
-                controller: _ctrl.distribution,
-                isHqUser: perm.isHQUser,
-                showTreeInline: true,
-                onZoneActivate: () => _ctrl.activateZone('distribution'),
-                onFileContextMenu: (f, pos) =>
-                    _openFileMenu('distribution', f, pos),
-                onBlankContextMenu: (pos) =>
-                    _openBlankMenu('distribution', pos),
-              )),
-            ),
+            Expanded(child: _card(_buildDistributionZone(perm, true))),
             const SizedBox(width: 8),
             SizedBox(
               width: rightW,
@@ -419,14 +844,7 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
     } else if (seg == 'group') {
       body = _buildGroupZone(perm, canWriteGroupZone);
     } else {
-      body = DistributionZone(
-        controller: _ctrl.distribution,
-        isHqUser: perm.isHQUser,
-        showTreeInline: false,
-        onZoneActivate: () => _ctrl.activateZone('distribution'),
-        onFileContextMenu: (f, pos) => _openFileMenu('distribution', f, pos),
-        onBlankContextMenu: (pos) => _openBlankMenu('distribution', pos),
-      );
+      body = _buildDistributionZone(perm, false);
     }
 
     return Column(
@@ -477,6 +895,19 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
 
   // ====== 三个区 ======
 
+  Widget _buildDistributionZone(PermissionService perm, bool showTreeInline) {
+    return DistributionZone(
+      controller: _ctrl.distribution,
+      isHqUser: perm.isHQUser,
+      showTreeInline: showTreeInline,
+      viewMode: _viewMode,
+      searchQuery: _searchQuery,
+      onZoneActivate: () => _ctrl.activateZone('distribution'),
+      onFileContextMenu: (f, pos) => _openFileMenu('distribution', f, pos),
+      onBlankContextMenu: (pos) => _openBlankMenu('distribution', pos),
+    );
+  }
+
   Widget _buildHqZone(bool canWriteHqZone) {
     return ResourceZone(
       key: _hqZoneKey,
@@ -487,6 +918,9 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
       path: _ctrl.hq.path,
       readonly: !canWriteHqZone,
       emptyText: '总部资源区为空',
+      viewMode: _viewMode,
+      searchActive: _searchQuery.trim().isNotEmpty,
+      matchedKeys: _matchedKeys(_ctrl.hq.files),
       selectedKeys: _ctrl.hqSel.keys,
       onFileTap: (f, {bool ctrl = false, bool shift = false}) {
         _ctrl.activateZone('hq');
@@ -499,6 +933,11 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
       },
       onBreadcrumbTap: _ctrl.hq.goTo,
       onBlankTap: _ctrl.hqSel.onBlankClick,
+      onBoxSelect: (keys) {
+        _ctrl.activateZone('hq');
+        _ctrl.hqSel.onBoxSelect(keys);
+      },
+      onRenameCommit: (f, n) => _onRenameCommit(f, n, 'hq'),
       onFileContextMenu: (f, pos) => _openFileMenu('hq', f, pos),
       onBlankContextMenu: (pos) => _openBlankMenu('hq', pos),
     );
@@ -555,6 +994,9 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
       path: _ctrl.group.path,
       readonly: !canWriteGroupZone,
       emptyText: groupEmptyText,
+      viewMode: _viewMode,
+      searchActive: _searchQuery.trim().isNotEmpty,
+      matchedKeys: _matchedKeys(_ctrl.group.files),
       selectedKeys: _ctrl.groupSel.keys,
       onFileTap: (f, {bool ctrl = false, bool shift = false}) {
         _ctrl.activateZone('group');
@@ -567,6 +1009,11 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
       },
       onBreadcrumbTap: _ctrl.group.goTo,
       onBlankTap: _ctrl.groupSel.onBlankClick,
+      onBoxSelect: (keys) {
+        _ctrl.activateZone('group');
+        _ctrl.groupSel.onBoxSelect(keys);
+      },
+      onRenameCommit: (f, n) => _onRenameCommit(f, n, 'group'),
       onFileContextMenu: (f, pos) => _openFileMenu('group', f, pos),
       onBlankContextMenu: (pos) => _openBlankMenu('group', pos),
     );

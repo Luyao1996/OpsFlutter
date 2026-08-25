@@ -115,6 +115,11 @@ class V2FileCard extends StatelessWidget {
   /// 长按（触屏）— 与右键同语义
   final void Function(Offset globalPosition)? onLongPress;
 
+  /// inline 重命名编辑器：非空时**替换**文件名文本渲染。
+  /// 由 ResourceZone 传入（编辑态、焦点、提交/取消都归 ResourceZone 管），
+  /// 卡片本身不持有编辑状态，避免列表重建时编辑框被丢弃。
+  final Widget? nameEditor;
+
   const V2FileCard({
     super.key,
     required this.file,
@@ -123,6 +128,7 @@ class V2FileCard extends StatelessWidget {
     this.onDoubleTap,
     this.onSecondaryTap,
     this.onLongPress,
+    this.nameEditor,
   });
 
   @override
@@ -193,24 +199,145 @@ class V2FileCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 4),
-            Text(
-              file.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 11,
-                height: 1.2,
-                // 源文件已被删除的下发节点红显（对齐规格 missing 红显）
-                color: file.missing ? const Color(0xFFDC2626) : const Color(0xFF333333),
+            if (nameEditor != null)
+              nameEditor!
+            else
+              Text(
+                file.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1.2,
+                  // 源文件已被删除的下发节点红显（对齐规格 missing 红显）
+                  color:
+                      file.missing ? const Color(0xFFDC2626) : const Color(0xFF333333),
+                ),
               ),
-            ),
             if (sizeText.isNotEmpty)
               Text(
                 sizeText,
                 maxLines: 1,
                 style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 列表视图行（对照 ResourceZone.vue:894-960 `.view-list` 的 CSS 覆盖：
+/// 同一套卡片语义换成横向单行 + 缩小角标，不是另一套数据结构）。
+class V2FileRow extends StatelessWidget {
+  final V2File file;
+  final bool selected;
+  final VoidCallback? onTap;
+  final VoidCallback? onDoubleTap;
+  final void Function(Offset globalPosition)? onSecondaryTap;
+  final void Function(Offset globalPosition)? onLongPress;
+  final Widget? nameEditor;
+
+  const V2FileRow({
+    super.key,
+    required this.file,
+    this.selected = false,
+    this.onTap,
+    this.onDoubleTap,
+    this.onSecondaryTap,
+    this.onLongPress,
+    this.nameEditor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final iconColor = v2FileIconColor(file);
+    final sizeText = file.isFolder ? '' : v2FormatSize(file.size);
+    return GestureDetector(
+      onTap: onTap,
+      onDoubleTap: onDoubleTap,
+      onSecondaryTapUp: onSecondaryTap == null
+          ? null
+          : (d) => onSecondaryTap!(d.globalPosition),
+      onLongPressStart:
+          onLongPress == null ? null : (d) => onLongPress!(d.globalPosition),
+      child: Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: selected
+              ? const Color(0xFF007AFF).withValues(alpha: 0.06)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: selected
+                ? const Color(0xFF007AFF).withValues(alpha: 0.35)
+                : Colors.transparent,
+          ),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 26,
+              height: 26,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color:
+                          file.isFolder ? null : iconColor.withValues(alpha: 0.14),
+                      gradient: file.isFolder
+                          ? const LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [Color(0xFFFFD54F), Color(0xFFFFB300)],
+                            )
+                          : null,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Icon(
+                      v2FileIcon(file),
+                      size: 14,
+                      color: file.isFolder ? Colors.white : iconColor,
+                    ),
+                  ),
+                  Positioned(
+                    top: -3,
+                    left: -3,
+                    // 列表视图角标缩到 0.65（对齐 .view-list 的 transform: scale(0.65)）
+                    child: Transform.scale(
+                      scale: 0.65,
+                      alignment: Alignment.topLeft,
+                      child: _BadgeRow(file: file),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: nameEditor ??
+                  Text(
+                    file.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: file.missing
+                          ? const Color(0xFFDC2626)
+                          : const Color(0xFF333333),
+                    ),
+                  ),
+            ),
+            if (sizeText.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              Text(sizeText,
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+            ],
           ],
         ),
       ),

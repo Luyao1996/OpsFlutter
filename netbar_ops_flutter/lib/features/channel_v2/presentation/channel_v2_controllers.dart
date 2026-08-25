@@ -380,23 +380,7 @@ class ChannelV2PageController {
 
 // ============ 弹窗状态槽（T8a 只定义类型，UI 在 T8b+ 实现） ============
 
-/// 上传弹窗参数（对齐 ChannelV2Page.vue:366 uploadDialog 结构）
-class UploadDialogSlot {
-  /// 上传目标目录 id（'0' = 根目录；web 侧为字符串语义）
-  final String folderId;
-
-  /// 外部拖入预填充的文件（平台差异大，先用 Object 占位，T8b 定具体类型）
-  final List<Object> initialFiles;
-
-  /// 额外表单参数（小组区根目录必须显式带 group_id，后端无法从父目录推断归属）
-  final Map<String, String> extraParams;
-
-  const UploadDialogSlot({
-    this.folderId = '0',
-    this.initialFiles = const [],
-    this.extraParams = const {},
-  });
-}
+// 上传弹窗参数槽（T8a 预埋）已被 V2UploadDialog 的实参取代，随 T8b-1 落地删除。
 
 /// 文件属性弹窗参数（对齐 ChannelV2Page.vue:488 propsDialog）
 class PropsDialogSlot {
@@ -449,10 +433,23 @@ class V2ContextMenuItem {
         divider = true;
 }
 
+/// 可解压扩展名（对齐 useContextMenuItems.js:14 COMPRESSED）
+const List<String> kV2CompressedExts = ['zip', 'rar', '7z'];
+
+/// 视图切换项：文案随当前 viewMode 反转（对齐 useContextMenuItems.js:86-92）
+V2ContextMenuItem _viewToggle(String viewMode) => V2ContextMenuItem(
+      key: 'view-toggle',
+      label: viewMode == 'grid' ? '列表视图' : '图标视图',
+      icon: viewMode == 'grid' ? LucideIcons.list : LucideIcons.grid,
+    );
+
 /// 根据「区域 + 文件 + 权限 + 批量」决定右键菜单项。
-/// 签名对齐 useContextMenuItems.js:16-24，后续阶段只往里补 item，不改签名。
-/// 已挂：刷新 / 上传（空白区）/ 属性(disabled 占位)；
-/// 其余项（复制到下发区/解压/重命名/移动/删除/视图切换）T8b-2 按 web 全集补齐。
+/// 逐条对齐 useContextMenuItems.js:16-92（含项的顺序与分隔线位置）。
+///
+/// 权限口径三条，互不等价，勿合并：
+///   - `writableHere`：当前区可写（只用于空白菜单的「上传」）
+///   - `writableFile`：被右键的那一个文件可写（用于 解压/重命名/移动/删除）
+///   - `isBatch`：批量模式（用于 重命名/属性 的置灰，与权限无关）
 List<V2ContextMenuItem> buildContextMenuItems({
   required String zoneKey,
   V2File? file,
@@ -462,13 +459,14 @@ List<V2ContextMenuItem> buildContextMenuItems({
   required List<V2File> batchFiles,
   required String viewMode,
 }) {
+  final isDist = zoneKey == 'distribution';
+
   if (isBlank) {
-    final isDist = zoneKey == 'distribution';
     return [
       const V2ContextMenuItem(
           key: 'refresh', label: '刷新', icon: LucideIcons.refreshCw),
       const V2ContextMenuItem.divider(),
-      // 下发区"上传"实际仍走资源区（后端按账号身份决定落点）→ 该区恒可上传，
+      // 下发区"上传"实际仍走资源区（后端按账号身份决定落点）→ 该区**恒可上传**，
       // 不参与 writableHere 判定（对齐 useContextMenuItems.js:32-33）
       V2ContextMenuItem(
         key: 'upload',
@@ -476,19 +474,73 @@ List<V2ContextMenuItem> buildContextMenuItems({
         icon: LucideIcons.upload,
         disabled: !isDist && !writableHere,
       ),
-      // 视图切换（grid/list）T8b-2 补
+      const V2ContextMenuItem.divider(),
+      _viewToggle(viewMode),
     ];
   }
-  return const [
-    V2ContextMenuItem(key: 'refresh', label: '刷新', icon: LucideIcons.refreshCw),
-    V2ContextMenuItem.divider(),
-    // T8a 占位恒置灰；属性弹窗 T8b 落地后改回 `disabled: batchFiles.length > 1`
-    // （批量时 web 同样置灰，useContextMenuItems.js:72）
-    V2ContextMenuItem(
-      key: 'properties',
-      label: '属性',
-      icon: LucideIcons.info,
-      disabled: true,
-    ),
-  ];
+
+  final isBatch = batchFiles.length > 1;
+  final isFile = file != null && !file.isFolder;
+  final isCompressed =
+      file != null && kV2CompressedExts.contains(file.extension);
+  final items = <V2ContextMenuItem>[];
+
+  // 资源区文件可下发到下发区。
+  // 【留痕】本项**无 disabled**：下发是"复制一份引用到别的 scope"，不改源文件，
+  // 故不受 writableFile 约束（对齐 useContextMenuItems.js:46-53 无 disabled 字段）。
+  if (zoneKey == 'hq' || zoneKey == 'group') {
+    items.add(V2ContextMenuItem(
+      key: 'distribute',
+      label: isBatch ? '复制 ${batchFiles.length} 项到下发区' : '复制到下发区',
+      icon: LucideIcons.share2,
+    ));
+    items.add(const V2ContextMenuItem.divider());
+  }
+
+  // 解压：仅单选 + 非文件夹 + 压缩包扩展名才渲染
+  if (!isBatch && isFile && isCompressed) {
+    items.add(V2ContextMenuItem(
+      key: 'unzip',
+      label: '解压',
+      icon: LucideIcons.fileArchive,
+      disabled: !writableFile,
+    ));
+    items.add(const V2ContextMenuItem.divider());
+  }
+
+  // 重命名：下发区**整项不渲染**（不是置灰）——
+  // /file/rename 改的是源文件名，下发区没有对应接口（对齐 useContextMenuItems.js:61-64）
+  if (!isDist) {
+    items.add(V2ContextMenuItem(
+      key: 'rename',
+      label: '重命名',
+      icon: LucideIcons.edit3,
+      disabled: !writableFile || isBatch,
+    ));
+  }
+  items.add(V2ContextMenuItem(
+    key: 'move',
+    label: isBatch ? '移动 ${batchFiles.length} 项' : '移动到',
+    icon: LucideIcons.move,
+    disabled: !writableFile,
+  ));
+  items.add(const V2ContextMenuItem.divider());
+  // 属性：置灰条件是 isBatch（批量看不了单文件属性），**与权限无关**
+  items.add(V2ContextMenuItem(
+    key: 'properties',
+    label: '属性',
+    icon: LucideIcons.info,
+    disabled: isBatch,
+  ));
+  items.add(V2ContextMenuItem(
+    key: 'delete',
+    label: isBatch ? '删除 ${batchFiles.length} 项' : '删除',
+    icon: LucideIcons.trash2,
+    danger: true,
+    disabled: !writableFile,
+  ));
+  items.add(const V2ContextMenuItem.divider());
+  items.add(_viewToggle(viewMode));
+
+  return items;
 }
