@@ -21,9 +21,6 @@ class ImageManageView extends ConsumerStatefulWidget {
   final String subdomainFull;
   final String netbarName;
 
-  /// 进入时预填的机号筛选（终端详情页传当前终端机号）
-  final String? initialKeyword;
-
   final bool isFullscreen;
   final VoidCallback? onToggleFullscreen;
 
@@ -32,7 +29,6 @@ class ImageManageView extends ConsumerStatefulWidget {
     required this.merchantId,
     required this.subdomainFull,
     required this.netbarName,
-    this.initialKeyword,
     this.isFullscreen = false,
     this.onToggleFullscreen,
   });
@@ -90,11 +86,6 @@ class _ImageManageViewState extends ConsumerState<ImageManageView> {
   @override
   void initState() {
     super.initState();
-    final kw = widget.initialKeyword?.trim() ?? '';
-    if (kw.isNotEmpty) {
-      _searchCtrl.text = kw;
-      _keywordApplied = kw.toLowerCase();
-    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _refreshAll());
   }
 

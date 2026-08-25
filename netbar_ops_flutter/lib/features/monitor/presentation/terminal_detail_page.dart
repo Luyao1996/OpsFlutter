@@ -210,6 +210,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
   /// 镜像管理 Tab 的"应用内全屏"，机制同 [_gameManageFullscreen]
   bool _imageManageFullscreen = false;
 
+  /// 见 [_buildImageManageView]：跨全屏/Tab 两个挂载位置保活 State
+  final GlobalKey _imageManageViewKey = GlobalKey();
+
   /// 终端命令（ptyshell）Tab 的"应用内全屏"，机制同 [_gameManageFullscreen]：
   /// 仅布局重排，PtyConsoleTab 的 controller 不变 ⇒ 会话保活；
   /// 尺寸变化由 TerminalView autoResize 自动上报 ptyResize。
@@ -1423,15 +1426,17 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
     );
   }
 
-  /// 构建"镜像管理"Tab 内容，机制与游戏管理完全一致；
-  /// initialKeyword 传当前终端机号，进入即筛到本机
+  /// 构建"镜像管理"Tab 内容，机制与游戏管理完全一致。
+  /// GlobalKey 让全屏/还原时 State 跨树位置迁移保活——全屏分支（build 顶层）
+  /// 与 Tab 内容区是两个不同的挂载位置，无 key 切换会销毁重建 State、
+  /// 重新拉取全部数据。
   Widget _buildImageManageView(Terminal terminal) {
     final netbar = ref.read(currentNetbarProvider);
     return ImageManageView(
+      key: _imageManageViewKey,
       merchantId: netbar.id ?? 0,
       subdomainFull: netbar.subdomainFull ?? '',
       netbarName: netbar.name ?? '',
-      initialKeyword: terminal.seatId,
       isFullscreen: _imageManageFullscreen,
       onToggleFullscreen: () =>
           setState(() => _imageManageFullscreen = !_imageManageFullscreen),
