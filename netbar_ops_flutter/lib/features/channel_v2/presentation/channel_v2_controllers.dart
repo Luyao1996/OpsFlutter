@@ -67,8 +67,12 @@ class ZoneSelectionController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 框选结果整体替换（T8a 无框选 UI，签名预埋供 T8b 挂接）
+  /// 框选结果**整体替换**。
+  /// 【语义归属】Ctrl 并集在区侧（ResourceZone._startBox）算好后整份传进来，
+  /// 控制器不再判修饰键——框选过程中的既有选中基线只有区侧知道。
   void onBoxSelect(Set<String> newKeys) {
+    // 拖拽过程中每帧都会调进来，集合没变就别通知：否则整区无谓重建
+    if (setEquals(_keys, newKeys)) return;
     _keys
       ..clear()
       ..addAll(newKeys);

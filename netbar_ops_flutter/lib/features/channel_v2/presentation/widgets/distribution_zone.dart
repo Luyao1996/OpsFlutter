@@ -30,8 +30,9 @@ class DistributionZone extends ConsumerStatefulWidget {
   /// 'grid' | 'list'，透传给内部文件区（对齐 DistributionZone.vue props.viewMode）
   final String viewMode;
 
-  /// 顶栏搜索词（三区联动）。命中集合在本组件内算，
-  /// 与资源区各算各的（对齐 DistributionZone.vue:160-164 matchedIds）
+  /// 顶栏搜索词（三区联动），直接透传给文件区自行逐项判定。
+  /// 【偏离 web 留痕】web 在本组件里先算 matchedIds（DistributionZone.vue:160-164），
+  /// 那是每帧对全量文件跑一次 toSet()；这里改成把 query 传下去，虚拟化后只算可见项。
   final String searchQuery;
 
   final void Function(V2File file, Offset globalPosition)? onFileContextMenu;
@@ -224,13 +225,6 @@ class _DistributionZoneState extends ConsumerState<DistributionZone> {
     final path = ctrl.filesCtrl.path
         .map((n) => ZonePathItem(id: n.id, name: n.name))
         .toList();
-    final q = widget.searchQuery.trim().toLowerCase();
-    final matched = q.isEmpty
-        ? const <String>{}
-        : ctrl.files
-            .where((f) => f.name.toLowerCase().contains(q))
-            .map((f) => f.selectionKey)
-            .toSet();
     return ResourceZone(
       zoneKey: 'distribution',
       title: _zoneTitle,
@@ -239,8 +233,7 @@ class _DistributionZoneState extends ConsumerState<DistributionZone> {
       loading: ctrl.filesCtrl.loading,
       emptyText: '此目录为空',
       viewMode: widget.viewMode,
-      searchActive: q.isNotEmpty,
-      matchedKeys: matched,
+      searchQuery: widget.searchQuery,
       selectedKeys: ctrl.selectedIds,
       onFileTap: (file, {bool ctrl = false, bool shift = false}) {
         // 先通知父层清其他区选中，再落本区选中（对齐 onDistFileClick）

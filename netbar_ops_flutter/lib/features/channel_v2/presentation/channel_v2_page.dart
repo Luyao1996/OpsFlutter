@@ -10,6 +10,7 @@ import '../../../shared/providers/app_providers.dart';
 import '../../../shared/providers/permission_provider.dart';
 import '../../../shared/utils/adaptive_show.dart';
 import '../../../shared/utils/top_notice.dart';
+import '../../netbar/data/netbar_api.dart';
 import '../../netbar/data/netbar_list_provider.dart';
 import '../data/channel_v2_api.dart';
 import '../data/channel_v2_models.dart';
@@ -33,6 +34,10 @@ class ChannelV2Page extends ConsumerStatefulWidget {
 
 class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
   late final ChannelV2PageController _ctrl;
+
+  /// 各区独立的重建触发源（见 initState 注释）
+  late final Listenable _hqListenable;
+  late final Listenable _groupListenable;
 
   /// inline 重命名入口（对齐 vue hqZoneRef/groupZoneRef）
   final _hqZoneKey = GlobalKey<ResourceZoneState>();
@@ -78,16 +83,13 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
     _ctrl.group.onError = showErr;
     _ctrl.distribution.filesCtrl.onError = showErr;
 
-    _ctrl.hq.addListener(_onCtrlChanged);
-    _ctrl.group.addListener(_onCtrlChanged);
-    _ctrl.hqSel.addListener(_onCtrlChanged);
-    _ctrl.groupSel.addListener(_onCtrlChanged);
+    // 【重建范围收窄】原先四个控制器都挂页面级 setState：任一区的选中/加载态变化
+    // 都会重建整页（含另外两个区的全部文件卡）。改为各区只监听自己的两个控制器，
+    // 由 ListenableBuilder 把重建圈在本区内。
+    _hqListenable = Listenable.merge([_ctrl.hq, _ctrl.hqSel]);
+    _groupListenable = Listenable.merge([_ctrl.group, _ctrl.groupSel]);
 
     WidgetsBinding.instance.addPostFrameCallback((_) => _initZones());
-  }
-
-  void _onCtrlChanged() {
-    if (mounted) setState(() {});
   }
 
   /// 初次加载（对齐 ChannelV2Page.vue onMounted:262-270,301-305）
@@ -136,10 +138,6 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
 
   @override
   void dispose() {
-    _ctrl.hq.removeListener(_onCtrlChanged);
-    _ctrl.group.removeListener(_onCtrlChanged);
-    _ctrl.hqSel.removeListener(_onCtrlChanged);
-    _ctrl.groupSel.removeListener(_onCtrlChanged);
     _ctrl.dispose();
     _searchCtrl.dispose();
     _searchFocus.dispose();
@@ -609,16 +607,6 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
     return perm.groupId;
   }
 
-  /// 搜索命中键集合（原地过滤；与 web 一致按文件名子串匹配）
-  Set<String> _matchedKeys(List<V2File> files) {
-    final q = _searchQuery.trim().toLowerCase();
-    if (q.isEmpty) return const <String>{};
-    return files
-        .where((f) => f.name.toLowerCase().contains(q))
-        .map((f) => f.selectionKey)
-        .toSet();
-  }
-
   @override
   Widget build(BuildContext context) {
     final perm = ref.watch(permissionProvider);
@@ -909,6 +897,13 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
   }
 
   Widget _buildHqZone(bool canWriteHqZone) {
+    return ListenableBuilder(
+      listenable: _hqListenable,
+      builder: (context, _) => _hqZone(canWriteHqZone),
+    );
+  }
+
+  Widget _hqZone(bool canWriteHqZone) {
     return ResourceZone(
       key: _hqZoneKey,
       zoneKey: 'hq',
@@ -919,8 +914,7 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
       readonly: !canWriteHqZone,
       emptyText: '总部资源区为空',
       viewMode: _viewMode,
-      searchActive: _searchQuery.trim().isNotEmpty,
-      matchedKeys: _matchedKeys(_ctrl.hq.files),
+      searchQuery: _searchQuery,
       selectedKeys: _ctrl.hqSel.keys,
       onFileTap: (f, {bool ctrl = false, bool shift = false}) {
         _ctrl.activateZone('hq');
@@ -944,8 +938,18 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
   }
 
   Widget _buildGroupZone(PermissionService perm, bool canWriteGroupZone) {
-    final isHq = perm.isHQUser;
+    // ref.watch 必须在页面 build 里求值：ListenableBuilder 的 builder 会在页面
+    // build 之外被控制器触发，watch 不能放进去
     final groups = ref.watch(netbarListProvider).valueOrNull?.groups ?? const [];
+    return ListenableBuilder(
+      listenable: _groupListenable,
+      builder: (context, _) => _groupZone(perm, canWriteGroupZone, groups),
+    );
+  }
+
+  Widget _groupZone(
+      PermissionService perm, bool canWriteGroupZone, List<GroupBrief> groups) {
+    final isHq = perm.isHQUser;
     final groupEmptyText =
         (isHq && _selectedGroupId == null) ? '请选择小组' : '小组资源区为空';
 
@@ -995,8 +999,7 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
       readonly: !canWriteGroupZone,
       emptyText: groupEmptyText,
       viewMode: _viewMode,
-      searchActive: _searchQuery.trim().isNotEmpty,
-      matchedKeys: _matchedKeys(_ctrl.group.files),
+      searchQuery: _searchQuery,
       selectedKeys: _ctrl.groupSel.keys,
       onFileTap: (f, {bool ctrl = false, bool shift = false}) {
         _ctrl.activateZone('group');

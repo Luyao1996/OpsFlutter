@@ -6,6 +6,75 @@ import '../../data/channel_v2_models.dart';
 /// V2 文件卡：资源区与下发区共用（对齐 ResourceZone.vue 文件卡 + 角标区），
 /// 抽成独立组件避免两区样式漂移。
 
+// ===== 虚拟化布局常量（GridView / ListView 的固定尺寸） =====
+// 【约束】列表虚拟化靠固定尺寸生效：GridView 用 mainAxisExtent、ListView 用
+// itemExtent，Flutter 才能跳过逐项测量。因此下面每个数字都必须与 V2FileCard /
+// V2FileRow 的实际布局一致——改卡片布局必须同步改这里，否则溢出或留白。
+
+/// V2FileCard 外层 Container.width
+const double kV2CardWidth = 92;
+
+/// 卡片间距（与改造前 Wrap 的 spacing / runSpacing 一致）
+const double kV2GridSpacing = 6;
+
+/// 列表视图行间距（改造前 Column 里的 SizedBox(height: 2)）
+const double kV2RowGap = 2;
+
+/// V2FileRow 固定高
+const double kV2RowContentHeight = 34;
+
+/// ListView.itemExtent = 行高 + 行间距
+const double kV2RowHeight = kV2RowContentHeight + kV2RowGap;
+
+/// 文件区四周留白（改造前 SingleChildScrollView.padding）
+const EdgeInsets kV2ZonePadding = EdgeInsets.fromLTRB(16, 12, 16, 12);
+
+/// 卡片高度。随系统字号缩放，否则「放大文字」的机器上会溢出固定格高。
+/// 组成：8+6 padding + 2 边框（Border.all 宽 1，未选中也占位）+ 44 图标区
+/// + 4 间隔 = 64 固定部分；再加文件名 1 行（fontSize 11 × height 1.2）
+/// 与大小行（fontSize 10，未覆盖 height，按行距 1.25 取上界）。
+/// inline 编辑态用 1 行 TextField（约 21.2 高）替换文件名并隐藏大小行，仍在此高度内。
+double v2CardHeightFor(TextScaler scaler) =>
+    (64 + scaler.scale(11) * 1.2 + scaler.scale(10) * 1.25).ceilToDouble();
+
+/// 网格度量：GridView 的 delegate 与框选命中判定**必须**共用本类算出的
+/// crossAxisCount / cellWidth——两处算法一旦分叉，框选命中的项就和屏幕上
+/// 看到的位置对不上。
+@immutable
+class V2GridMetrics {
+  /// 每行卡片数
+  final int crossAxisCount;
+
+  /// 单格宽（>= kV2CardWidth；多出的余量由卡片居中均分，视觉等价于 Wrap 的等距排列）
+  final double cellWidth;
+
+  final double cardHeight;
+
+  const V2GridMetrics._(this.crossAxisCount, this.cellWidth, this.cardHeight);
+
+  /// [viewportWidth]：文件区可用宽度（含 [kV2ZonePadding]）
+  factory V2GridMetrics.of(double viewportWidth, double cardHeight) {
+    final inner = viewportWidth - kV2ZonePadding.horizontal;
+    // 换行口径照抄改造前的 Wrap：一行 n 张卡片 + (n-1) 个间距
+    var n = ((inner + kV2GridSpacing) / (kV2CardWidth + kV2GridSpacing)).floor();
+    if (n < 1) n = 1;
+    final cell = (inner - kV2GridSpacing * (n - 1)) / n;
+    return V2GridMetrics._(
+        n, cell < kV2CardWidth ? kV2CardWidth : cell, cardHeight);
+  }
+
+  /// 第 [index] 张卡片在**内容坐标系**（含 padding、不含滚动偏移）中的矩形
+  Rect cardRect(int index) {
+    final row = index ~/ crossAxisCount;
+    final col = index % crossAxisCount;
+    final left = kV2ZonePadding.left +
+        col * (cellWidth + kV2GridSpacing) +
+        (cellWidth - kV2CardWidth) / 2;
+    final top = kV2ZonePadding.top + row * (cardHeight + kV2GridSpacing);
+    return Rect.fromLTWH(left, top, kV2CardWidth, cardHeight);
+  }
+}
+
 /// 扩展名 → 图标底色（对照 ResourceZone.vue:825-835 file-{ext} 配色）
 Color v2FileIconColor(V2File file) {
   if (file.isFolder) return const Color(0xFFFFB300);
@@ -215,7 +284,9 @@ class V2FileCard extends StatelessWidget {
                       file.missing ? const Color(0xFFDC2626) : const Color(0xFF333333),
                 ),
               ),
-            if (sizeText.isNotEmpty)
+            // 编辑态隐藏大小行：网格用固定 mainAxisExtent，
+            // 编辑框比文件名文本高，大小行留着会顶破格高
+            if (sizeText.isNotEmpty && nameEditor == null)
               Text(
                 sizeText,
                 maxLines: 1,
