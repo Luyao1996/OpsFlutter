@@ -304,6 +304,42 @@ class ChannelV2Api {
     await _client.post('/file/unhide', data: {'group_file_id': groupFileId});
   }
 
+  // ==================== 任务列表（T8d） ====================
+
+  /// 后台任务分页 → GET /task（对齐 web api/task.js:3 `request.get('/task', {params})`，
+  /// 参数名就是 page / per_page，见 TaskListDialog.vue:165-168）。
+  ///
+  /// 响应取 `data.paginator`（data/current_page/total/per_page）；
+  /// ApiClient 已剥掉 {code,message,data} 外壳，故这里的 response.data 就是 data。
+  /// paginator 缺失一律返回空页，不抛——任务列表是只读视图，报错弹窗价值不如空态。
+  Future<V2TaskPage> listTasks({int page = 1, int perPage = 20}) async {
+    final response = await _client.get('/task', queryParameters: {
+      'page': page,
+      'per_page': perPage,
+    });
+    final data = response.data;
+    final paginator = (data is Map<String, dynamic>) ? data['paginator'] : null;
+    if (paginator is! Map) return V2TaskPage.empty;
+
+    int pick(String key, int fallback) {
+      final v = paginator[key];
+      if (v is int) return v;
+      return int.tryParse(v?.toString() ?? '') ?? fallback;
+    }
+
+    final list = paginator['data'];
+    final items = (list is List ? list : const [])
+        .whereType<Map>()
+        .map((e) => V2Task.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+    return V2TaskPage(
+      items: items,
+      total: pick('total', items.length),
+      currentPage: pick('current_page', page),
+      perPage: pick('per_page', perPage),
+    );
+  }
+
   /// 移动资源文件 → POST /file/move，**JSON body**。
   ///
   /// 【留痕】api/file.js:53-58 的 docblock 写的是 FormData，那是过期注释：

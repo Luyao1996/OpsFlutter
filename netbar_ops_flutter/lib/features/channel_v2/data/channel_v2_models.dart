@@ -272,3 +272,70 @@ class V2FileAttribute {
     );
   }
 }
+
+// ===========================================================================
+// 任务列表（T8d，对齐 web dialogs/TaskListDialog.vue）
+// ===========================================================================
+
+/// 后台任务（GET /task 的 paginator.data 元素）。
+///
+/// 目前后端只投递一种任务：type=100「文件解压缩」（/file/extract 的异步产物）。
+class V2Task {
+  /// 任务 id：web 列宽给到 300 且 show-overflow-tooltip，判定为长字符串（uuid 类），
+  /// 因此**不解析成 int**，原样保留字符串。
+  final String id;
+
+  /// 任务类型码；未知码原样显示数字（对齐 web getTypeName 的 `map[type] || type`）
+  final int? type;
+  final String name;
+
+  /// 0=等待中 1=解压中 2=成功 3=失败
+  final int? status;
+
+  /// 执行次数（后端 attempt）
+  final int? attempt;
+
+  /// 失败原因：仅 status==3 时后端才填，UI 用 tooltip 展示（web:19-30）
+  final String message;
+  final String createdAt;
+  final String updatedAt;
+
+  const V2Task({
+    required this.id,
+    this.type,
+    this.name = '',
+    this.status,
+    this.attempt,
+    this.message = '',
+    this.createdAt = '',
+    this.updatedAt = '',
+  });
+
+  factory V2Task.fromJson(Map<String, dynamic> json) => V2Task(
+        id: _toStr(json['id']),
+        type: _toIntOrNull(json['type']),
+        name: _toStr(json['name']),
+        status: _toIntOrNull(json['status']),
+        attempt: _toIntOrNull(json['attempt']),
+        message: _toStr(json['message']),
+        createdAt: _toStr(json['created_at']),
+        updatedAt: _toStr(json['updated_at']),
+      );
+}
+
+/// GET /task 的分页结果壳（对齐 strategy 侧 TacticListResult 的写法）
+class V2TaskPage {
+  final List<V2Task> items;
+  final int total;
+  final int currentPage;
+  final int perPage;
+
+  const V2TaskPage({
+    required this.items,
+    required this.total,
+    this.currentPage = 1,
+    this.perPage = 20,
+  });
+
+  static const empty = V2TaskPage(items: [], total: 0);
+}

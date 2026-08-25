@@ -60,12 +60,20 @@ class ResourceZone extends StatefulWidget {
   /// Ctrl/Cmd 起手时的并集已在本区算好（见 [_startBox]），控制器侧只管照单全收。
   final void Function(Set<String> keys)? onBoxSelect;
 
-  /// 区内拖拽到文件夹卡片 → 区内移动（本期不做拖拽，只留签名）
-  /// TODO(T8c): 桌面用 Draggable/DragTarget，接 v2MoveFilesSerially(destId=文件夹 id)
+  /// 区内拖拽到文件夹卡片 → 区内移动。
+  ///
+  /// 【未接线，留痕】拖拽整体不在 T8a-T8d 范围内：本组件内部**没有任何**
+  /// Draggable/DragTarget，因此该回调永远不会被触发，调用点也没有一处传值。
+  /// 保留签名是为了将来接拖拽时不改 ResourceZone 的公开 API。
+  /// 接的时候：桌面用 Draggable/DragTarget，回调里走
+  /// v2MoveFilesSerially(destId = 目标文件夹 id)；移动端不接。
   final void Function(V2File targetFolder)? onFolderDrop;
 
-  /// 外部文件拖入本区 → 静默上传（本期不做拖拽，只留签名）
-  /// TODO(T8c): 接 desktop_drop，路径同 V2UploadService；移动端无此入口
+  /// 外部文件拖入本区 → 静默上传。
+  ///
+  /// 【未接线，留痕】同上，本组件未监听任何外部拖放事件，回调恒不触发。
+  /// 接的时候：桌面用 desktop_drop 插件，上传路径同 V2UploadService；
+  /// Web/移动端无此入口。参数用 Object 是为了不把 dart:io File 泄进共享层签名。
   final void Function(List<Object> files)? onExternalFilesDrop;
 
   const ResourceZone({

@@ -31,7 +31,6 @@ import '../../channel/presentation/widgets/context_menu.dart';
 import '../../strategy/presentation/widgets/file_editor_modal.dart';
 import '../../channel/presentation/widgets/file_icon.dart';
 import '../../../shared/utils/resource_path_display.dart';
-import '../../strategy/presentation/widgets/disable_startup_modal.dart';
 import '../../strategy/presentation/widgets/startup_config_modal.dart';
 import '../../channel/presentation/widgets/upload_modal.dart';
 import '../../../shared/providers/upload_queue_provider.dart';

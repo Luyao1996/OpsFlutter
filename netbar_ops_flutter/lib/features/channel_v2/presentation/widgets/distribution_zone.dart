@@ -41,6 +41,12 @@ class DistributionZone extends ConsumerStatefulWidget {
   /// 本区产生选中 → 页面据此清空其他区选中（对齐 zone-activate 事件）
   final VoidCallback? onZoneActivate;
 
+  /// 弹窗计数守卫（页面的 `_guardDialog`）。
+  /// 本组件自己会弹窄屏 scope 选择弹窗，不经页面 → 不注入的话页面
+  /// `_anyDialogOpen` 判不到，Delete/F2 快捷键不会为该弹窗让路。
+  /// 不传则退化为直接执行（组件可独立使用，行为与注入前一致）。
+  final Future<T> Function<T>(Future<T> Function())? dialogGuard;
+
   const DistributionZone({
     super.key,
     required this.controller,
@@ -51,6 +57,7 @@ class DistributionZone extends ConsumerStatefulWidget {
     this.onFileContextMenu,
     this.onBlankContextMenu,
     this.onZoneActivate,
+    this.dialogGuard,
   });
 
   @override
@@ -185,16 +192,19 @@ class _DistributionZoneState extends ConsumerState<DistributionZone> {
     final node = widget.controller.selectedNode;
     return InkWell(
       onTap: () async {
-        final picked = await showAdaptive<DistributionScope>(
-          context,
-          (_) => _ScopePickerDialog(
-            groups: groups,
-            merchants: merchants,
-            isHqUser: widget.isHqUser,
-            selectedKey: widget.controller.selectedTreeKey,
-          ),
-          routeName: '/dialog/channel-v2-scope-picker',
-        );
+        Future<DistributionScope?> open() => showAdaptive<DistributionScope>(
+              context,
+              (_) => _ScopePickerDialog(
+                groups: groups,
+                merchants: merchants,
+                isHqUser: widget.isHqUser,
+                selectedKey: widget.controller.selectedTreeKey,
+              ),
+              routeName: '/dialog/channel-v2-scope-picker',
+            );
+        final guard = widget.dialogGuard;
+        final picked =
+            guard == null ? await open() : await guard<DistributionScope?>(open);
         if (picked != null) _selectScope(picked);
       },
       child: Padding(

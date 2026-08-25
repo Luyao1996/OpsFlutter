@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -9,6 +10,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/providers/permission_provider.dart';
 import '../../../shared/utils/adaptive_show.dart';
+import '../../../shared/utils/platform_utils.dart';
 import '../../../shared/utils/top_notice.dart';
 import '../../netbar/data/netbar_api.dart';
 import '../../netbar/data/netbar_list_provider.dart';
@@ -22,6 +24,7 @@ import 'widgets/resource_zone.dart';
 import 'widgets/v2_file_props_dialog.dart';
 import 'widgets/v2_move_target_dialog.dart';
 import 'widgets/v2_strategy_list_dialog.dart';
+import 'widgets/v2_task_list_dialog.dart';
 import 'widgets/v2_upload_dialog.dart';
 
 /// 通道管理 V2（T8b-2：文件操作层，对齐 web ChannelV2Page.vue）。
@@ -471,9 +474,10 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
       // 【对 web 的刻意偏离，留痕】web 用 `res.message || '已解压'`（:567），
       // 但本端 ApiClient 在 code==0 时把 message 丢弃（只把 data 透出），
       // 无法照抄后端文案 → 改用中性文案。
-      // ⚠ 待验证：/file/extract 是同步解压完再返回，还是只投递 /task 异步任务；
-      //   若是异步，刷新本区当下看不到结果，需要改成提示去任务列表看进度（T8d）。
-      _notice('已提交解压请求', NoticeLevel.success);
+      // T8d：/file/extract 判定为**异步投递**——任务列表的类型码只有一个
+      //（100=文件解压缩，TaskListDialog.vue:133-138），状态里还有「解压中」，
+      // 说明解压是后台任务，刷新本区当下大概率看不到解压结果 → 文案指向任务列表。
+      _notice('已提交解压请求，可在「任务列表」查看进度', NoticeLevel.success);
       _ctrl.refreshZone(zoneKey);
     } catch (e) {
       _notice(v2ErrMessage(e, '解压失败'), NoticeLevel.error);
@@ -684,14 +688,14 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
         onPressed: _ctrl.refreshAll,
         icon: Icon(LucideIcons.refreshCw, size: 16, color: Colors.grey.shade600),
       ),
-      // 窄屏不渲染 [_placeholderButtons]（会挤爆标题行），策略入口在这里收进菜单，
-      // 否则手机端根本进不去策略弹窗
+      // 窄屏不渲染 [_extraToolbarButtons]（会挤爆标题行），这些入口在这里收进菜单，
+      // 否则手机端根本进不去策略/任务列表弹窗
       if (isNarrow)
         Builder(
           builder: (btnCtx) => IconButton(
-            tooltip: '策略',
-            onPressed: () => _openStrategyMenu(btnCtx),
-            icon: Icon(LucideIcons.settings,
+            tooltip: '更多',
+            onPressed: () => _openMoreMenu(btnCtx),
+            icon: Icon(LucideIcons.moreHorizontal,
                 size: 16, color: Colors.grey.shade600),
           ),
         ),
@@ -755,10 +759,9 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
                       fontWeight: FontWeight.w600,
                       color: Color(0xFF1F2937)),
                 ),
-                // T8c/T8d 预留按钮位：网吧私有策略 / 程序公共策略 / 桌标管理 / 任务列表
-                // （对齐 web ChannelV2Page.vue:6-8,22）。本期渲染为 disabled 占位，
-                // 接线点见 [_placeholderButtons]；窄屏不渲染以免挤压标题。
-                // 外包 Flexible+横向滚动：中等宽度（~900px）下四个占位按钮 + 搜索框
+                // 功能入口按钮（见 [_extraToolbarButtons]）；窄屏不渲染以免挤压标题，
+                // 改由 actions 里的「更多」菜单进入（[_openMoreMenu]）。
+                // 外包 Flexible+横向滚动：中等宽度（~900px）下四个按钮 + 搜索框
                 // 会把 Row 撑爆成 RenderFlex overflow，这里让它退化为可横滚
                 if (!isNarrow)
                   Flexible(
@@ -768,7 +771,7 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           const SizedBox(width: 16),
-                          ..._placeholderButtons(),
+                          ..._extraToolbarButtons(),
                         ],
                       ),
                     ),
@@ -791,13 +794,15 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
     );
   }
 
-  List<Widget> _placeholderButtons() {
-    // T8c-1 已接：前两个策略弹窗；桌标管理 / 任务列表仍为 T8d 占位
+  /// 工具栏功能入口（对齐 web ChannelV2Page.vue:6-8,22）。T8d 起四个全部接通。
+  List<Widget> _extraToolbarButtons() {
     final entries = <(String, VoidCallback?)>[
       ('网吧私有策略', () => _openStrategyDialog(V2StrategyVariant.private)),
       ('程序公共策略', () => _openStrategyDialog(V2StrategyVariant.public)),
-      ('桌标管理', null),
-      ('任务列表', null),
+      // 桌标管理在移动端整体不提供（与主菜单同口径，见 main_layout.dart:495
+      // `if (!platformHelper.isMobile)`），故移动端直接不渲染入口
+      if (!isMobilePlatform) ('桌标管理', _openDesktopIcon),
+      ('任务列表', _openTaskListDialog),
     ];
     return [
       for (final e in entries)
@@ -816,36 +821,68 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
     ];
   }
 
+  /// 窄屏功能入口菜单（走 [_showContextMenu] → 已包 [_guardDialog]）。
+  /// 项集合必须与 [_extraToolbarButtons] 保持一致（含移动端隐藏桌标管理）。
+  Future<void> _openMoreMenu(BuildContext btnCtx) async {
+    final box = btnCtx.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final pos = box.localToGlobal(box.size.bottomLeft(Offset.zero));
+    final key = await _showContextMenu(pos, [
+      const V2ContextMenuItem(
+          key: 'strategy_private',
+          label: '网吧私有策略',
+          icon: LucideIcons.shieldCheck),
+      const V2ContextMenuItem(
+          key: 'strategy_public', label: '程序公共策略', icon: LucideIcons.globe),
+      if (!isMobilePlatform)
+        const V2ContextMenuItem(
+            key: 'desktop_icon', label: '桌标管理', icon: LucideIcons.layoutGrid),
+      const V2ContextMenuItem(
+          key: 'task_list', label: '任务列表', icon: LucideIcons.listChecks),
+    ]);
+    switch (key) {
+      case 'strategy_private':
+        _openStrategyDialog(V2StrategyVariant.private);
+        break;
+      case 'strategy_public':
+        _openStrategyDialog(V2StrategyVariant.public);
+        break;
+      case 'desktop_icon':
+        _openDesktopIcon();
+        break;
+      case 'task_list':
+        _openTaskListDialog();
+        break;
+    }
+  }
+
   /// 打开策略列表弹窗。
   /// 工具栏入口是**全局策略**（不带 group_file_id），对齐 web 工具栏
   /// `currentDialogFile=null`（ChannelV2Page.vue:6-8）。
   /// web 另有右键「策略」入口带文件过滤，但那条路径在 web 从未被激活，本期不做。
-  /// 窄屏策略入口菜单（走 [_showContextMenu] → 已包 [_guardDialog]）
-  Future<void> _openStrategyMenu(BuildContext btnCtx) async {
-    final box = btnCtx.findRenderObject() as RenderBox?;
-    if (box == null) return;
-    final pos = box.localToGlobal(box.size.bottomLeft(Offset.zero));
-    final key = await _showContextMenu(pos, const [
-      V2ContextMenuItem(
-          key: 'strategy_private',
-          label: '网吧私有策略',
-          icon: LucideIcons.shieldCheck),
-      V2ContextMenuItem(
-          key: 'strategy_public', label: '程序公共策略', icon: LucideIcons.globe),
-    ]);
-    if (key == 'strategy_private') {
-      _openStrategyDialog(V2StrategyVariant.private);
-    } else if (key == 'strategy_public') {
-      _openStrategyDialog(V2StrategyVariant.public);
-    }
-  }
-
   void _openStrategyDialog(V2StrategyVariant variant) {
     _guardDialog<void>(() async => showAdaptive<void>(
           context,
           (_) => V2StrategyListDialog(variant: variant),
           routeName: '/dialog/channel-v2-strategy',
         ));
+  }
+
+  /// 任务列表（对齐 web TaskListDialog）
+  void _openTaskListDialog() {
+    _guardDialog<void>(() async => showAdaptive<void>(
+          context,
+          (_) => V2TaskListDialog(api: _api),
+          routeName: '/dialog/channel-v2-task-list',
+        ));
+  }
+
+  /// 桌标管理：web 是 `router.push('/desktopIcon')`（ChannelV2Page.vue:219），
+  /// Flutter 对应已有的桌面管理页路由 /desktop-management（router.dart:91）。
+  /// 移动端不提供入口（见 [_extraToolbarButtons] 注释），这里再兜一层。
+  void _openDesktopIcon() {
+    if (isMobilePlatform) return;
+    context.go('/desktop-management');
   }
 
   // ====== 宽屏：左下发复合面板 + 右列（HQ 上 / Group 下） ======
@@ -962,6 +999,8 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
       onZoneActivate: () => _ctrl.activateZone('distribution'),
       onFileContextMenu: (f, pos) => _openFileMenu('distribution', f, pos),
       onBlankContextMenu: (pos) => _openBlankMenu('distribution', pos),
+      // 窄屏 scope 选择弹窗由本组件自己弹，注入守卫让它也计入 _dialogDepth
+      dialogGuard: _guardDialog,
     );
   }
 
