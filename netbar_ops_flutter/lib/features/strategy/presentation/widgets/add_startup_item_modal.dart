@@ -10,8 +10,8 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/utils/top_notice.dart';
-import '../../data/startup_item_api.dart';
-import '../../data/resource_api.dart' as res;
+import '../../data/strategy_api.dart';
+import '../../../channel/data/resource_api.dart' as res;
 import '../../../netbar/data/area_api.dart';
 import 'exe_picker_dialog.dart';
 import 'executable_path_picker_field.dart';
@@ -218,6 +218,9 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
                 content: f.mode == 'text' ? f.contentController.text : null,
                 fileBytes: f.mode == 'upload' ? f.fileBytes : null,
                 fileName: f.mode == 'upload' ? f.fileName : null,
+                // T8c-0 行为变更 d：上传模式要发 group_file_id=0
+                // （新增态没有已存在的 file_id，只需标记模式）
+                isUploadMode: f.mode == 'upload',
               ))
           .toList();
 

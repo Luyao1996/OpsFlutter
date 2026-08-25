@@ -22,7 +22,7 @@ import 'package:re_highlight/styles/atom-one-light.dart';
 
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
-import '../../data/resource_api.dart';
+import '../../../channel/data/resource_api.dart';
 
 class FileEditorModal extends StatefulWidget {
   final Resource file;

@@ -5,7 +5,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/utils/resource_path_display.dart';
-import '../../data/resource_api.dart' as res;
+import '../../../channel/data/resource_api.dart' as res;
 import 'exe_picker_dialog.dart';
 
 class ExecutablePathPickerField extends ConsumerStatefulWidget {

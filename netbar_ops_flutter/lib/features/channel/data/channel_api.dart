@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_client.dart';
 import 'channel_models.dart';
+import '../../strategy/data/strategy_models.dart'; // T8c-0：MerchantBrief/StartupItem 已搬到策略共享层
 
 final channelApiProvider = Provider((ref) => ChannelApi());
 

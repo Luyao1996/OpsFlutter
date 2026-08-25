@@ -22,16 +22,16 @@ import '../../../shared/utils/resource_path_display.dart';
 import '../../../shared/utils/top_notice.dart';
 
 import '../data/resource_api.dart';
-import '../data/startup_item_api.dart';
+import '../../strategy/data/strategy_api.dart';
 import 'drop_target_stub.dart'
     if (dart.library.io) 'package:desktop_drop/desktop_drop.dart';
 import 'platform_helper.dart';
 import 'web_drop_zone.dart';
-import 'widgets/add_startup_item_modal.dart';
+import '../../strategy/presentation/widgets/add_startup_item_modal.dart';
 import 'widgets/context_menu.dart';
-import 'widgets/file_editor_modal.dart';
+import '../../strategy/presentation/widgets/file_editor_modal.dart';
 import 'widgets/file_icon.dart';
-import 'widgets/startup_config_modal.dart';
+import '../../strategy/presentation/widgets/startup_config_modal.dart';
 import 'widgets/upload_helper.dart';
 import 'widgets/upload_modal.dart';
 

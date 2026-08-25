@@ -11,8 +11,8 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/providers/app_providers.dart';
 import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/utils/top_notice.dart';
-import '../../data/startup_item_api.dart';
-import '../../data/resource_api.dart' as res;
+import '../../data/strategy_api.dart';
+import '../../../channel/data/resource_api.dart' as res;
 import 'exe_picker_dialog.dart';
 
 /// 后台解码函数（必须是顶级函数才能在 compute 中使用）
@@ -137,6 +137,7 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
           .map((l) => _LocaleFileEntry(
                 id: l.id,
                 groupFileId: l.groupFileId,
+                fileId: l.fileId,
                 pathController: TextEditingController(text: l.path),
                 contentController:
                     TextEditingController(text: l.content ?? ''),
@@ -279,6 +280,13 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
                 content: f.mode == 'text' ? f.contentController.text : null,
                 fileBytes: f.mode == 'upload' ? f.fileBytes : null,
                 fileName: f.mode == 'upload' ? f.fileName : null,
+                // T8c-0 行为变更 d：把已上传文件的 file_id 带回去，避免重编辑丢引用。
+                // group_file_id==0 是后端标记"这条本地化是上传上来的文件"
+                // （对齐 web StrategyAddDialog.vue:1184 `const isUpload = l.group_file_id == 0`），
+                // 本弹窗目前不按它切换显示模式（那是 T8c-2 的 UI 活），
+                // 但提交时必须按上传模式发键，否则后端会把上传文件当成文本内容处理。
+                fileId: f.fileId,
+                isUploadMode: f.mode == 'upload' || f.groupFileId == 0,
               ))
           .toList();
 
@@ -1679,6 +1687,8 @@ class _AreaEntry {
 class _LocaleFileEntry {
   final int? id;
   int? groupFileId;
+  /// T8c-0：后端回传的已上传文件 id，编辑保存时必须原样带回（否则丢文件引用）
+  final int? fileId;
   final TextEditingController pathController;
   final TextEditingController contentController;
   String mode; // 'text' | 'upload'
@@ -1696,6 +1706,7 @@ class _LocaleFileEntry {
   _LocaleFileEntry({
     this.id,
     this.groupFileId,
+    this.fileId,
     required this.pathController,
     required this.contentController,
     this.mode = 'text',

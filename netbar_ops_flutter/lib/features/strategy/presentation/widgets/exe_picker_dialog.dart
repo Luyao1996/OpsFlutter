@@ -5,7 +5,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
-import '../../data/resource_api.dart' as res;
+import '../../../channel/data/resource_api.dart' as res;
 
 class ExeZoneOption {
   final String label;
