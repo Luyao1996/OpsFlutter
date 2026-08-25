@@ -184,14 +184,33 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
     if (!perm.isManager) return false;
     if (file == null) return _canWriteHere(zoneKey);
     if (file.inherited) return false;
-    // 【S12 刻意偏离，留痕】下发节点的 groupId 实际是 source_id：
+    // 【S12 → T8c-2 已偿还，留痕】下发节点的 groupId 实际是 source_id：
     // sourceScope=='merchant' 时它是 merchant_id，喂给 canOperateGroupConfig
-    // 比的却是 group_id（跨 id 空间，判定结果无意义）。本期直接置灰该类节点的写操作，
-    // 待 T8c 拿到「网吧 → 所属组」映射后按真实归属判权。
+    // 比的却是 group_id（跨 id 空间，判定结果无意义）。T8b 一律置灰该类节点的写操作；
+    // T8c-2 改为先把 merchant_id 还原成「所属组 id」再判权。
+    // 映射源是 netbarListProvider（下发区左侧 scope 树本来就在用它，
+    // 见 distribution_zone.dart:130-132 —— 能右键到下发文件说明该 provider 已有值，
+    // 零额外请求）。**查不到映射时保持置灰**，只放宽能证明归属的情形。
     if (zoneKey == 'distribution' && file.sourceScope == 'merchant') {
-      return false;
+      final ownerGroupIds = _merchantOwnerGroupIds(file.sourceId);
+      if (ownerGroupIds.isEmpty) return false;
+      return ownerGroupIds.any(perm.canOperateGroupConfig);
     }
     return perm.canOperateGroupConfig(file.groupId);
+  }
+
+  /// 网吧 → 所属组 id 集合（T8c-2）。
+  /// 一家网吧可挂多个组，任一组有权即可写（与 canOperateGroupConfig 的"同组可操作"同义）。
+  List<int> _merchantOwnerGroupIds(int? merchantId) {
+    if (merchantId == null) return const [];
+    final merchants =
+        ref.read(netbarListProvider).valueOrNull?.merchants ?? const <Netbar>[];
+    for (final m in merchants) {
+      if (m.id == merchantId) {
+        return (m.groups ?? const <GroupBrief>[]).map((g) => g.id).toList();
+      }
+    }
+    return const [];
   }
 
   /// 继承节点批量守卫（移植 ChannelV2Page.vue:469-485），move/delete/unzip 三处调用

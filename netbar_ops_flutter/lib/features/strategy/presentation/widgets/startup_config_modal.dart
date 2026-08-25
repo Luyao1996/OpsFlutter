@@ -14,6 +14,8 @@ import '../../../../shared/utils/top_notice.dart';
 import '../../data/strategy_api.dart';
 import '../../../channel/data/resource_api.dart' as res;
 import 'exe_picker_dialog.dart';
+import 'strategy_exe_picker.dart';
+import 'strategy_merchants_panel.dart';
 
 /// 后台解码函数（必须是顶级函数才能在 compute 中使用）
 String _decodeInBackground(Map<String, dynamic> params) {
@@ -50,10 +52,29 @@ class StartupConfigModal extends ConsumerStatefulWidget {
   final bool isAdmin;
   final VoidCallback onSuccess;
 
+  /// T8c-2 新增（**可选，默认 private，V1 两个页面不传 → 行为一字未变**）：
+  /// 策略形态。[StrategyVariant.public] 时的**全部**差异：
+  ///   1. 「区域配置」页签换成「生效网吧」多选，并**加载全部网吧 + 预选已生效的**
+  ///      （web StrategyAddDialog.vue:1112-1134：公共策略无论编辑还是新增都拉全量；
+  ///      私有策略编辑态则固定只构造当前一家、不请求列表，:806-822）
+  ///   2. 保存走 POST /public-tactic/{id}，且要先把编辑前的生效网吧用
+  ///      delete_merchants[] 全删一遍（后端先删后加，:998-1008）
+  ///   3. 删除走 DELETE /public-tactic/{id}
+  /// 其余字段两形态完全相同，**禁止**再分叉。
+  final StrategyVariant variant;
+
+  /// T8c-2 新增（**可选，默认 null，V1 不传 → 执行文件仍是只读文本框**）：
+  /// 注入式执行文件选择器（下发文件区，评审 A-4）。注入后执行文件可改，
+  /// 提交时按新路径 + 新 group_file_id 发；不注入时这两个值恒等于原策略的值，
+  /// 提交内容与改动前逐字节一致。
+  final StrategyExePicker? exePicker;
+
   const StartupConfigModal({
     super.key,
     required this.item,
     this.isAdmin = false,
+    this.variant = StrategyVariant.private,
+    this.exePicker,
     required this.onSuccess,
     List<dynamic> areas = const [],
   });
@@ -76,9 +97,21 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
   late TextEditingController _strategyNameController;
   late List<_PeriodInput> _periods;
 
-  // --- 区域字段 ---
+  // --- 区域字段（仅私有策略）---
   late TextEditingController _areaInputController;
   late List<_AreaEntry> _areaList;
+
+  // --- 生效网吧（仅公共策略）---
+  late Set<int> _selectedMerchantIds;
+
+  /// 编辑前的生效网吧（提交时作为 delete_merchants[]，先删后加）
+  late List<int> _originalMerchantIds;
+
+  // --- 执行文件（注入 exePicker 时可改；否则恒为原值）---
+  late TextEditingController _pathController;
+  int? _exeGroupFileId;
+
+  bool get _isPublic => widget.variant == StrategyVariant.public;
 
   // --- 本地化字段 ---
   late List<_LocaleFileEntry> _localeFiles;
@@ -124,6 +157,15 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
       _periods = [_PeriodInput()];
     }
 
+    // 执行文件：注入选择器时可改，否则这两个值全程不变（= 改动前的提交口径）
+    _pathController =
+        TextEditingController(text: startup?.startupPath ?? '');
+    _exeGroupFileId = startup?.groupFileId;
+
+    // 生效网吧（公共策略）：预选已生效的，并记下原始集合用于 delete_merchants[]
+    _originalMerchantIds = widget.item.merchants.map((m) => m.id).toList();
+    _selectedMerchantIds = _originalMerchantIds.toSet();
+
     // 区域
     _areaInputController = TextEditingController();
     _areaList = widget.item.area
@@ -155,6 +197,7 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
 
   @override
   void dispose() {
+    _pathController.dispose();
     _parameterController.dispose();
     _delayController.dispose();
     _strategyNameController.dispose();
@@ -283,7 +326,8 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
                 // T8c-0 行为变更 d：把已上传文件的 file_id 带回去，避免重编辑丢引用。
                 // group_file_id==0 是后端标记"这条本地化是上传上来的文件"
                 // （对齐 web StrategyAddDialog.vue:1184 `const isUpload = l.group_file_id == 0`），
-                // 本弹窗目前不按它切换显示模式（那是 T8c-2 的 UI 活），
+                // 本弹窗不按它切换显示模式（T8c-2 未做：本地化两形态一致，
+                // "上传态"的 UI 呈现留待后续），
                 // 但提交时必须按上传模式发键，否则后端会把上传文件当成文本内容处理。
                 fileId: f.fileId,
                 isUploadMode: f.mode == 'upload' || f.groupFileId == 0,
@@ -294,23 +338,54 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
       final area =
           _areaList.where((a) => a.enabled).map((a) => a.range).toList();
 
-      await _api.updateTactic(
-        widget.item.id,
-        startupId: widget.item.startup?.id,
-        path: widget.item.startup?.startupPath,
-        groupFileId: widget.item.startup?.groupFileId,
-        parameter: _parameterController.text,
-        delay: int.tryParse(_delayController.text) ?? 0,
-        isRandomName: _isRandomName,
-        isForcedOn: _isForcedOn,
-        strategy: StartupStrategy(
-          mode: _strategyMode,
-          name: _strategyNameController.text,
-        ),
-        period: periods,
-        locales: locales,
-        area: area,
-      );
+      if (_isPublic) {
+        // T8c-2：公共策略 → POST /public-tactic/{id}。
+        // 不发 area（公共策略无区域）；deleteMerchantIds 传编辑前的全部生效网吧，
+        // 共享层会先发 delete_merchants[] 再发新的 merchants（后端"先删后加"语义）。
+        // 提交前兜底（finally 会复位 _saving）
+        if (_selectedMerchantIds.isEmpty) {
+          showTopNotice(context, '请至少选择一个网吧', level: NoticeLevel.error);
+          return;
+        }
+        await _api.updatePublicTactic(
+          widget.item.id,
+          startupId: widget.item.startup?.id,
+          path: _pathController.text,
+          groupFileId: _exeGroupFileId,
+          parameter: _parameterController.text,
+          delay: int.tryParse(_delayController.text) ?? 0,
+          isRandomName: _isRandomName,
+          isForcedOn: _isForcedOn,
+          strategy: StartupStrategy(
+            mode: _strategyMode,
+            name: _strategyNameController.text,
+          ),
+          period: periods,
+          locales: locales,
+          merchantIds: _selectedMerchantIds.toList(),
+          deleteMerchantIds: _originalMerchantIds,
+        );
+      } else {
+        await _api.updateTactic(
+          widget.item.id,
+          startupId: widget.item.startup?.id,
+          // 未注入 exePicker 时这两个值 = initState 里从 item 取的原值，
+          // 与改动前 `widget.item.startup?.xxx` 完全等价
+          path: _pathController.text,
+          groupFileId: _exeGroupFileId,
+          parameter: _parameterController.text,
+          delay: int.tryParse(_delayController.text) ?? 0,
+          isRandomName: _isRandomName,
+          isForcedOn: _isForcedOn,
+          strategy: StartupStrategy(
+            mode: _strategyMode,
+            name: _strategyNameController.text,
+          ),
+          period: periods,
+          locales: locales,
+          area: area,
+        );
+      }
       widget.onSuccess();
       if (mounted) {
         showTopNotice(context, '保存成功', level: NoticeLevel.success);
@@ -348,7 +423,11 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
     );
     if (confirm != true) return;
     try {
-      await _api.delete(widget.item.id);
+      if (_isPublic) {
+        await _api.deletePublicTactic(widget.item.id);
+      } else {
+        await _api.delete(widget.item.id);
+      }
       widget.onSuccess();
       if (mounted) {
         showTopNotice(
@@ -387,10 +466,11 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
             labelStyle:
                 const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             unselectedLabelStyle: const TextStyle(fontSize: 13),
-            tabs: const [
-              Tab(text: '启动项'),
-              Tab(text: '区域配置'),
-              Tab(text: '本地化'),
+            tabs: [
+              const Tab(text: '启动项'),
+              // T8c-2：公共策略没有生效区域（web hasArea=false），该页签换成「生效网吧」
+              Tab(text: _isPublic ? '生效网吧' : '区域配置'),
+              const Tab(text: '本地化'),
             ],
           ),
         ),
@@ -402,8 +482,10 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
               children: [
                 SingleChildScrollView(
                     child: _buildStartupForm(isSheet: isSheet)),
-                SingleChildScrollView(
-                    child: _buildAreaForm(isSheet: isSheet)),
+                _isPublic
+                    ? _buildMerchantsForm(isSheet: isSheet)
+                    : SingleChildScrollView(
+                        child: _buildAreaForm(isSheet: isSheet)),
                 _buildLocaleForm(isSheet: isSheet),
               ],
             ),
@@ -464,9 +546,10 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  '编辑策略配置',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                Text(
+                  _isPublic ? '编辑公共策略' : '编辑策略配置',
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -499,15 +582,10 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 执行文件（只读）
+          // 执行文件：默认（V1）只读；注入 exePicker 时可从下发文件区改选
           _buildFormItem(
             label: '执行文件',
-            child: TextFormField(
-              initialValue: widget.item.startup?.startupPath ?? '',
-              enabled: false,
-              decoration: _inputDecoration('无'),
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-            ),
+            child: _buildExeField(),
           ),
           const SizedBox(height: 16),
 
@@ -588,6 +666,43 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
           ],
         ],
       ),
+    );
+  }
+
+  /// 执行文件控件。
+  /// **默认（V1）**：只读文本框，与改动前逐字一致（路径不可改，提交时原样发回）。
+  /// **注入 exePicker 时（channel_v2）**：可从下发文件区改选，
+  /// 对齐 web 编辑态执行文件同样可改（StrategyAddDialog.vue:81-83）。
+  Widget _buildExeField() {
+    final picker = widget.exePicker;
+    if (picker == null) {
+      return TextFormField(
+        controller: _pathController,
+        enabled: false,
+        decoration: _inputDecoration('无'),
+        style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+      );
+    }
+    return StrategyInjectedExeField(
+      controller: _pathController,
+      decoration: _inputDecoration('从下发文件区选择'),
+      picker: picker,
+      onPicked: (p) => setState(() => _exeGroupFileId = p.groupFileId),
+      // 对齐 web clearStartupPath（:581-584）。注意：路径清空后共享层
+      // _appendStartup 会整块跳过 startup（T8c-0 行为变更 e），
+      // 即"只改本地化、不动启动项"，这与 web `if (startupForm.execPath)` 一致。
+      onCleared: () => setState(() => _exeGroupFileId = null),
+    );
+  }
+
+  // ==================== 生效网吧 Tab（仅公共策略）====================
+  Widget _buildMerchantsForm({required bool isSheet}) {
+    return StrategyMerchantsPanel(
+      api: _api,
+      // 编辑态恒拉全量网吧（web 公共策略不按文件过滤，:1114 loadMerchants() 无参）
+      initialSelectedIds: _selectedMerchantIds,
+      isSheet: isSheet,
+      onChanged: (ids) => setState(() => _selectedMerchantIds = ids),
     );
   }
 

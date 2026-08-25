@@ -5,6 +5,27 @@
 // 注意：features/netbar/data/netbar_api.dart 另有一个同名 GroupBrief（结构相同但类型不同），
 // 两者互不通用，跨模块传递时不要直接互相赋值。
 
+/// 策略形态（T8c-2 新增）。
+///
+/// 对齐 web StrategyAddDialog.vue:286 `variant: 'netbar' | 'public'`：
+///   - [private] 网吧私有策略 → /tactic，**有**生效区域，merchants 为嵌套键形
+///   - [public]  程序公共策略 → /public-tactic，**无**生效区域（web hasArea=false，
+///               StrategyAddDialog.vue:292），merchants 为扁平键形且编辑先发
+///               delete_merchants[]
+///
+/// 【V1 隔离约定】共享层的两个表单弹窗都以 `variant = StrategyVariant.private`
+/// 为默认值：V1 两个旧页面（通道管理页 / 资源管理页）不传该参数，走的仍是
+/// 改动前的全部代码路径，行为一字未变。新增差异只允许写成
+/// `if (variant == StrategyVariant.public) { ... }` 的**附加**分支，
+/// 禁止改动 private 默认路径上的既有逻辑。
+enum StrategyVariant {
+  /// 网吧私有策略（V1 唯一形态）
+  private,
+
+  /// 程序公共策略
+  public,
+}
+
 /// 商户简要信息（启动项关联）
 class MerchantBrief {
   final int id;

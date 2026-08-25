@@ -15,6 +15,8 @@ import '../../../channel/data/resource_api.dart' as res;
 import '../../../netbar/data/area_api.dart';
 import 'exe_picker_dialog.dart';
 import 'executable_path_picker_field.dart';
+import 'strategy_exe_picker.dart';
+import 'strategy_merchants_panel.dart';
 
 /// 新增启动项弹窗 - 与编辑弹窗保持一致的 3 Tab 结构
 class AddStartupItemModal extends ConsumerStatefulWidget {
@@ -36,6 +38,20 @@ class AddStartupItemModal extends ConsumerStatefulWidget {
   /// 必须带上，否则复制出的上传型本地化文件会丢失文件引用（T8c-0 行为变更 d 同款坑）。
   final TacticItem? template;
 
+  /// T8c-2 新增（**可选，默认 private，V1 两个页面不传 → 行为一字未变**）：
+  /// 策略形态。[StrategyVariant.public] 时的**全部**差异：
+  ///   1. 「区域配置」页签换成「生效网吧」多选（web hasArea=false，
+  ///      StrategyAddDialog.vue:292 / :133）
+  ///   2. 保存走 POST /public-tactic（扁平 merchants 键形，无 area）
+  /// 其余字段（执行文件/参数/延时/随机进程名/生效时段/执行策略/强制开启/本地化）
+  /// 两形态完全相同，**禁止**再分叉。
+  final StrategyVariant variant;
+
+  /// T8c-2 新增（**可选，默认 null，V1 不传 → 仍用 ExecutablePathPickerField**）：
+  /// 注入式执行文件选择器。channel_v2 注入的是「下发文件区」选择器，
+  /// 因为 web 的策略表单选执行文件走 /delivery/tree 而不是资源中心（评审 A-4）。
+  final StrategyExePicker? exePicker;
+
   const AddStartupItemModal({
     super.key,
     required this.zone,
@@ -46,6 +62,8 @@ class AddStartupItemModal extends ConsumerStatefulWidget {
     this.isAdmin = false,
     this.areas = const [],
     this.template,
+    this.variant = StrategyVariant.private,
+    this.exePicker,
     required this.onSuccess,
   });
 
@@ -69,9 +87,14 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
   final _strategyNameController = TextEditingController();
   late List<_PeriodInput> _periods;
 
-  // --- 区域字段 ---
+  // --- 区域字段（仅私有策略）---
   final _areaInputController = TextEditingController();
   final List<_AreaEntry> _areaList = [];
+
+  // --- 生效网吧（仅公共策略）---
+  Set<int> _selectedMerchantIds = <int>{};
+
+  bool get _isPublic => widget.variant == StrategyVariant.public;
 
   // --- 本地化字段 ---
   final List<_LocaleFileEntry> _localeFiles = [];
@@ -93,6 +116,12 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
     _periods = [_PeriodInput()];
     if (widget.template != null) {
       _applyTemplate(widget.template!);
+      // T8c-2：公共策略的「复制」要把模板的生效网吧一并预选
+      // （对齐 web StrategyAddDialog.vue:1117-1125，复制态同样按 data.merchants 预选）。
+      // merchant 是归属关系不是主键，复制时保留不违反"剥主键"约定。
+      if (_isPublic) {
+        _selectedMerchantIds = widget.template!.merchants.map((m) => m.id).toSet();
+      }
     }
     if (_localeFiles.isEmpty) {
       _localeFiles.add(_LocaleFileEntry(
@@ -258,7 +287,14 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
     final currentNetbar = ref.read(currentNetbarProvider);
     final netbarId = widget.netbarId ?? currentNetbar.id;
 
-    if (netbarId == null) {
+    if (_isPublic) {
+      // T8c-2：公共策略的生效网吧来自「生效网吧」面板的多选，与"当前网吧"上下文无关
+      // （对齐 web handleSave :841-845）
+      if (_selectedMerchantIds.isEmpty) {
+        showTopNotice(context, '请至少选择一个网吧', level: NoticeLevel.error);
+        return;
+      }
+    } else if (netbarId == null) {
       showTopNotice(context, '请先选择网吧', level: NoticeLevel.error);
       return;
     }
@@ -301,24 +337,47 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
       final area =
           _areaList.where((a) => a.enabled).map((a) => a.range).toList();
 
-      await _api.createTactic(
-        groupFileId: _selectedExeResourceId ?? widget.resourceId,
-        path: _pathController.text.trim(),
-        parameter: _parameterController.text.isEmpty
-            ? null
-            : _parameterController.text,
-        delay: int.tryParse(_delayController.text) ?? 0,
-        isRandomName: _isRandomName,
-        isForcedOn: _isForcedOn,
-        strategy: StartupStrategy(
-          mode: _strategyMode,
-          name: _strategyNameController.text,
-        ),
-        period: periods.isEmpty ? null : periods,
-        locales: locales.isEmpty ? null : locales,
-        merchantIds: [netbarId],
-        area: area.isEmpty ? null : area,
-      );
+      if (_isPublic) {
+        // T8c-2：公共策略 → POST /public-tactic。
+        // 不传 area：公共策略没有区域概念（共享层 _appendPublicMerchants 用扁平键形）。
+        await _api.createPublicTactic(
+          groupFileId: _selectedExeResourceId ?? widget.resourceId,
+          path: _pathController.text.trim(),
+          parameter: _parameterController.text.isEmpty
+              ? null
+              : _parameterController.text,
+          delay: int.tryParse(_delayController.text) ?? 0,
+          isRandomName: _isRandomName,
+          isForcedOn: _isForcedOn,
+          strategy: StartupStrategy(
+            mode: _strategyMode,
+            name: _strategyNameController.text,
+          ),
+          period: periods.isEmpty ? null : periods,
+          locales: locales.isEmpty ? null : locales,
+          merchantIds: _selectedMerchantIds.toList(),
+        );
+      } else {
+        await _api.createTactic(
+          groupFileId: _selectedExeResourceId ?? widget.resourceId,
+          path: _pathController.text.trim(),
+          parameter: _parameterController.text.isEmpty
+              ? null
+              : _parameterController.text,
+          delay: int.tryParse(_delayController.text) ?? 0,
+          isRandomName: _isRandomName,
+          isForcedOn: _isForcedOn,
+          strategy: StartupStrategy(
+            mode: _strategyMode,
+            name: _strategyNameController.text,
+          ),
+          period: periods.isEmpty ? null : periods,
+          locales: locales.isEmpty ? null : locales,
+          // 私有分支下 netbarId 已在上面的校验里确认非空
+          merchantIds: [netbarId!],
+          area: area.isEmpty ? null : area,
+        );
+      }
       widget.onSuccess();
       if (mounted) {
         showTopNotice(context, '创建成功', level: NoticeLevel.success);
@@ -356,10 +415,12 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
             labelStyle:
                 const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             unselectedLabelStyle: const TextStyle(fontSize: 13),
-            tabs: const [
-              Tab(text: '启动项'),
-              Tab(text: '区域配置'),
-              Tab(text: '本地化'),
+            tabs: [
+              const Tab(text: '启动项'),
+              // T8c-2：公共策略没有生效区域（web hasArea=false，
+              // StrategyAddDialog.vue:133 的 area-panel 整块 v-if），该页签换成「生效网吧」
+              Tab(text: _isPublic ? '生效网吧' : '区域配置'),
+              const Tab(text: '本地化'),
             ],
           ),
         ),
@@ -371,7 +432,10 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
               children: [
                 SingleChildScrollView(
                     child: _buildStartupForm(isSheet: isSheet)),
-                SingleChildScrollView(child: _buildAreaForm(isSheet: isSheet)),
+                _isPublic
+                    ? _buildMerchantsForm(isSheet: isSheet)
+                    : SingleChildScrollView(
+                        child: _buildAreaForm(isSheet: isSheet)),
                 _buildLocaleForm(isSheet: isSheet),
               ],
             ),
@@ -429,18 +493,19 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
             ),
           ),
           const SizedBox(width: 12),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '新增启动项',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  _isPublic ? '新增公共策略' : '新增启动项',
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold),
                 ),
-                SizedBox(height: 2),
+                const SizedBox(height: 2),
                 Text(
-                  '创建一个新的开机自动运行任务',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                  _isPublic ? '创建一条对多家网吧生效的程序公共策略' : '创建一个新的开机自动运行任务',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ],
             ),
@@ -466,14 +531,7 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
           _buildFormItem(
             label: '执行文件',
             required: true,
-            child: ExecutablePathPickerField(
-              controller: _pathController,
-              validator: (v) =>
-                  v == null || v.isEmpty ? '请选择执行程序路径' : null,
-              decoration: _inputDecoration('请选择 exe 文件'),
-              onSelected: (r) =>
-                  setState(() => _selectedExeResourceId = r.id),
-            ),
+            child: _buildExeField(),
           ),
           const SizedBox(height: 16),
 
@@ -553,6 +611,51 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
           ],
         ],
       ),
+    );
+  }
+
+  /// 执行文件控件。
+  /// **默认（V1）**：[ExecutablePathPickerField] → 资源中心 ExePickerDialog，
+  /// 与改动前逐字一致。
+  /// **注入 exePicker 时（channel_v2）**：走下发文件区选择器（评审 A-4，
+  /// web 的策略表单选文件用的就是 /delivery/tree）。
+  Widget _buildExeField() {
+    final picker = widget.exePicker;
+    if (picker == null) {
+      return ExecutablePathPickerField(
+        controller: _pathController,
+        validator: (v) => v == null || v.isEmpty ? '请选择执行程序路径' : null,
+        decoration: _inputDecoration('请选择 exe 文件'),
+        onSelected: (r) => setState(() => _selectedExeResourceId = r.id),
+      );
+    }
+    return StrategyInjectedExeField(
+      controller: _pathController,
+      validator: (v) => v == null || v.isEmpty ? '请选择执行程序路径' : null,
+      decoration: _inputDecoration('从下发文件区选择'),
+      picker: picker,
+      onPicked: (p) => setState(() => _selectedExeResourceId = p.groupFileId),
+      // 对齐 web clearStartupPath（:581-584）：清路径连带清 group_file_id
+      onCleared: () => setState(() => _selectedExeResourceId = null),
+    );
+  }
+
+  // ==================== 生效网吧 Tab（仅公共策略）====================
+  //
+  // 【面板状态可被 TabBarView 丢弃，故选中集合由本 State 持有】
+  // TabBarView 底层是 PageView，离屏页签可能被销毁重建；把当前选中集合作为
+  // initialSelectedIds 回喂，重建后勾选状态不丢（代价是重建时会重新拉一次网吧列表）。
+  Widget _buildMerchantsForm({required bool isSheet}) {
+    return StrategyMerchantsPanel(
+      api: _api,
+      // 【对 web 的偏离，留痕】web 在选中"非总部的启动项文件"后会用该文件 id 重拉一次
+      // 网吧列表（handleFilePicked :744-746）；这里恒按入口上下文的 resourceId 拉
+      // （V2 工具栏入口为 null = 全量），避免"先选文件再开页签"时列表被悄悄过滤掉、
+      // 用户找不到自己的网吧。web 工具栏入口本身也是传空的。
+      groupFileId: widget.resourceId,
+      initialSelectedIds: _selectedMerchantIds,
+      isSheet: isSheet,
+      onChanged: (ids) => setState(() => _selectedMerchantIds = ids),
     );
   }
 

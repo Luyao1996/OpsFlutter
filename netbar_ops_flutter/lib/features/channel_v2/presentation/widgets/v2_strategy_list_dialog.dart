@@ -14,7 +14,10 @@ import '../../../strategy/data/strategy_api.dart';
 import '../../../strategy/data/strategy_permission.dart';
 import '../../../strategy/presentation/widgets/add_startup_item_modal.dart';
 import '../../../strategy/presentation/widgets/startup_config_modal.dart';
+import '../../../strategy/presentation/widgets/strategy_exe_picker.dart';
+import '../../data/channel_v2_api.dart';
 import '../channel_v2_file_actions.dart' show v2ErrMessage, v2ConfirmDanger;
+import 'v2_delivery_exe_picker_dialog.dart';
 
 /// 策略列表弹窗的两种形态。
 ///
@@ -357,7 +360,25 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
     }
   }
 
-  /// 编辑：直接复用共享层 StartupConfigModal（它本来就是 /tactic 的编辑实现）
+  /// 执行文件选择器（T8c-2，评审 A-4）：策略表单选执行文件必须走**下发文件区**
+  /// （web FileSelectDialog source='delivery'），共享层默认的 ExePickerDialog 走的是
+  /// 资源中心，文件域不对。这里按注入点把 channel_v2 的下发树选择器塞进共享层表单。
+  ///
+  /// scope 口径对齐 web fileScope（StrategyAddDialog.vue:573-579）：
+  /// **私有策略编辑态**（策略已固定归属一家网吧）按该网吧查它自己的下发区；
+  /// 其余情况（新增 / 复制可多选网吧、公共策略无网吧归属）留空，
+  /// 由选择器按当前账号身份推导 hq / group。
+  StrategyExePicker _exePicker({MerchantBrief? merchantScope}) {
+    final api = ref.read(channelV2ApiProvider);
+    if (merchantScope != null) {
+      return v2DeliveryExePicker(api,
+          scopeType: 'merchant', scopeId: '${merchantScope.id}');
+    }
+    return v2DeliveryExePicker(api);
+  }
+
+  /// 编辑：直接复用共享层 StartupConfigModal
+  /// （私有 = /tactic，公共 = /public-tactic，由 variant 决定）
   Future<void> _editRow(TacticItem row) async {
     if (row.isPlaceholder) return;
     final perm = ref.read(permissionProvider);
@@ -366,6 +387,11 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
       (_) => StartupConfigModal(
         item: row,
         isAdmin: perm.isManager,
+        variant:
+            _isPrivate ? StrategyVariant.private : StrategyVariant.public,
+        exePicker: _exePicker(
+          merchantScope: _isPrivate ? row.merchant : null,
+        ),
         onSuccess: _fetch,
       ),
       routeName: '/dialog/startup-config',
@@ -374,12 +400,15 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
 
   /// 新增（含占位行入口）：复用共享层 AddStartupItemModal。
   ///
-  /// [merchant] 为预选网吧。为 null 时先弹网吧选择器——AddStartupItemModal
-  /// 没有网吧选择器（V1 是"当前网吧"上下文），V2 弹窗里没有当前网吧，
+  /// **私有策略**：[merchant] 为预选网吧；为 null 时先弹单选网吧选择器——
+  /// AddStartupItemModal 私有形态沿用 V1 的"当前网吧"上下文（只吃一个 netbarId），
   /// 不先选会在保存时报「请先选择网吧」。
+  ///
+  /// **公共策略**：不弹前置选择器——表单里的「生效网吧」页签本身就是多选面板
+  /// （T8c-2 新增），与 web 一致。
   Future<void> _addStrategy({MerchantBrief? merchant, TacticItem? template}) async {
-    var target = merchant;
-    if (target == null) {
+    MerchantBrief? target = merchant;
+    if (_isPrivate && target == null) {
       target = await showAdaptive<MerchantBrief>(
         context,
         (_) => _MerchantPickerDialog(api: _api, groupFileId: widget.groupFileId),
@@ -394,9 +423,13 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
         // 【留痕】zone 是 AddStartupItemModal 的死参数（全文件无 widget.zone 引用），
         // 传值仅为满足 required；V2 没有 zone 概念。
         zone: 'BRANCH',
-        netbarId: target!.id,
+        // 公共策略不吃 netbarId（生效网吧走表单内多选）
+        netbarId: target?.id,
         isAdmin: perm.isManager,
         template: template,
+        variant:
+            _isPrivate ? StrategyVariant.private : StrategyVariant.public,
+        exePicker: _exePicker(),
         onSuccess: _fetch,
       ),
       routeName: '/dialog/add-startup-item',
@@ -409,11 +442,13 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
   /// 这里不构造"没有 id 的 TacticItem"，而是把整行当只读模板传给
   /// AddStartupItemModal（新增态），由它只读取表单字段、绝不读取任何 id。
   /// 【对 web 的偏离，留痕】web 复制后可在弹窗里重选生效网吧（可多选）；
-  /// Flutter 的 AddStartupItemModal 只接受单个 netbarId，故这里先弹网吧选择器，
-  /// 多选生效网吧待 T8c-2 给 modal 加 merchants 选择能力。
+  /// Flutter **私有策略**沿用 V1 的单网吧上下文，故先弹单选网吧选择器
+  /// （私有策略本来就一条策略只归属一家网吧，多选只影响"一次建多条"的便利性）。
+  /// **公共策略**复制走表单内的「生效网吧」多选面板，并预选模板原有的生效网吧，
+  /// 与 web 一致。
   Future<void> _copyRow(TacticItem row) async {
     if (row.isPlaceholder) return;
-    _notice('已复制配置，请选择生效网吧并保存', NoticeLevel.success);
+    _notice('已复制配置，请确认生效网吧并保存', NoticeLevel.success);
     await _addStrategy(template: row);
   }
 
@@ -487,23 +522,13 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
       ),
     );
 
-    // 公共策略的新增在 T8c-2 才开放：两个 variant 的 merchants 键形不同
-    // （私有嵌套含 area / 公共扁平且编辑先发 delete_merchants），
-    // 共享层的 Add/Config modal 目前只实现了私有形态。
-    final addButton = _isPrivate
-        ? OutlinedButton.icon(
-            onPressed: () => _addStrategy(),
-            icon: const Icon(LucideIcons.plus, size: 14),
-            label: const Text('添加', style: TextStyle(fontSize: 13)),
-          )
-        : Tooltip(
-            message: '暂未开放（公共策略新增待 T8c-2）',
-            child: OutlinedButton.icon(
-              onPressed: null,
-              icon: const Icon(LucideIcons.plus, size: 14),
-              label: const Text('添加', style: TextStyle(fontSize: 13)),
-            ),
-          );
+    // T8c-2：两个 variant 的新增都已接通（共享层表单按 variant 分流
+    // merchants 键形与保存端点），不再置灰。
+    final addButton = OutlinedButton.icon(
+      onPressed: () => _addStrategy(),
+      icon: const Icon(LucideIcons.plus, size: 14),
+      label: const Text('添加', style: TextStyle(fontSize: 13)),
+    );
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
@@ -897,21 +922,15 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
     // 返回 true，与"总部创建的策略仅总部管理员可删"语义相反。
     final canEdit = perm.canEditStrategy(row);
     final canDelete = perm.canDeleteStrategy(row);
-    // 公共策略的编辑/复制走的是同一批 modal（目前只实现私有 merchants 键形）→ 本期置灰
-    final publicLocked = !_isPrivate;
-
+    // T8c-2：公共策略的编辑/复制已接通（共享层表单按 variant 分流），不再置灰。
     return Wrap(
       spacing: 2,
       alignment: WrapAlignment.center,
       children: [
         if (canEdit)
-          publicLocked
-              ? _lockedLinkButton('编辑')
-              : _linkButton('编辑', AppColors.iosBlue, () => _editRow(row)),
+          _linkButton('编辑', AppColors.iosBlue, () => _editRow(row)),
         if (perm.isManager)
-          publicLocked
-              ? _lockedLinkButton('复制')
-              : _linkButton('复制', const Color(0xFF67C23A), () => _copyRow(row)),
+          _linkButton('复制', const Color(0xFF67C23A), () => _copyRow(row)),
         if (canDelete)
           _linkButton('删除', AppColors.red, () => _deleteRow(row)),
       ],
@@ -930,11 +949,6 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
       child: Text(label, style: const TextStyle(fontSize: 12)),
     );
   }
-
-  Widget _lockedLinkButton(String label) => Tooltip(
-        message: '暂未开放（公共策略编辑待 T8c-2）',
-        child: _linkButton(label, Colors.grey, null),
-      );
 
   Widget _placeholderText() => const Text('未配置',
       style: TextStyle(fontSize: 12, color: Color(0xFFBFC4CD)));
@@ -1344,10 +1358,12 @@ class _DisableDurationDialogState extends State<_DisableDurationDialog> {
 
 /// 单选网吧。数据源 GET /tactic/merchants（T8c-0 已实现，全量无分页）。
 ///
-/// 【存在的理由，留痕】共享层 AddStartupItemModal 是 V1 的"当前网吧"上下文产物，
-/// 只接受一个 netbarId 且没有网吧选择器；V2 弹窗里没有当前网吧，
-/// 不先选会在保存时直接报「请先选择网吧」。web 那边是在策略表单内多选网吧，
-/// 待 T8c-2 给 modal 加 merchants 选择能力后本弹窗可下线。
+/// 【存在的理由，留痕】共享层 AddStartupItemModal 的**私有**形态是 V1 的
+/// "当前网吧"上下文产物，只接受一个 netbarId；V2 弹窗里没有当前网吧，
+/// 不先选会在保存时直接报「请先选择网吧」。
+/// T8c-2 给表单加的「生效网吧」多选面板**只挂在公共策略上**（私有形态挂上去
+/// 等于给 V1 两个旧页面平白多一个页签，违反"V1 行为一字不变"），
+/// 故私有策略仍保留本前置选择器。
 class _MerchantPickerDialog extends StatefulWidget {
   final StrategyApi api;
   final int? groupFileId;
