@@ -65,6 +65,7 @@ import 'widgets/console_manager_tab.dart';
 import 'widgets/pty_console_tab.dart';
 import 'widgets/log_manager_tab.dart';
 import '../../game_library/presentation/game_manage_view.dart';
+import '../../game_library/presentation/image_manage_view.dart';
 
 
 /// 终端详情 provider 的复合 key：(netbarId, terminalId)。
@@ -192,6 +193,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
   final List<Map<String, dynamic>> _tabs = [
     {'icon': LucideIcons.gamepad2, 'label': '远程控制'},
     {'icon': LucideIcons.hardDrive, 'label': '游戏管理'},
+    // 恒显示（对齐游戏管理先例）：进入后无盘平台不可用时由视图内空态承接
+    {'icon': LucideIcons.database, 'label': '镜像管理'},
     {'icon': LucideIcons.fileText, 'label': '文件管理'},
     {'icon': LucideIcons.activity, 'label': '进程管理'},
     // 新版 = ptyshell 交互式终端（PtyConsoleTab）；旧版 = cmdlogin 行式终端，保留全部功能
@@ -203,6 +206,9 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
   /// 游戏管理 Tab 是否处于"应用内全屏"展示
   /// （仅影响布局：true 时隐藏 Header / 左侧栏 / TabBar，让内容铺满）
   bool _gameManageFullscreen = false;
+
+  /// 镜像管理 Tab 的"应用内全屏"，机制同 [_gameManageFullscreen]
+  bool _imageManageFullscreen = false;
 
   /// 终端命令（ptyshell）Tab 的"应用内全屏"，机制同 [_gameManageFullscreen]：
   /// 仅布局重排，PtyConsoleTab 的 controller 不变 ⇒ 会话保活；
@@ -467,6 +473,10 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
           // 游戏管理 Tab 全屏：跳过 Header / 左侧栏 / TabBar，直接铺满
           if (_selectedTab == '游戏管理' && _gameManageFullscreen) {
             return SafeArea(bottom: false, child: _buildGameManageView());
+          }
+          // 镜像管理 Tab 全屏：同上机制
+          if (_selectedTab == '镜像管理' && _imageManageFullscreen) {
+            return SafeArea(bottom: false, child: _buildImageManageView(live));
           }
           // 终端命令（ptyshell）Tab 全屏：同上机制
           if (_selectedTab == '终端命令' && _ptyFullscreen) {
@@ -1308,6 +1318,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
       _selectedTab = label;
       // 切离"游戏管理"时自动退出全屏，避免下次切回来仍然是全屏态
       if (label != '游戏管理') _gameManageFullscreen = false;
+      // 镜像管理同理
+      if (label != '镜像管理') _imageManageFullscreen = false;
       // 终端命令（ptyshell）同理
       if (label != '终端命令') _ptyFullscreen = false;
     });
@@ -1373,6 +1385,8 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
       );
     } else if (_selectedTab == '游戏管理') {
       return _buildGameManageView();
+    } else if (_selectedTab == '镜像管理') {
+      return _buildImageManageView(terminal);
     } else if (_selectedTab == '文件管理') {
       return FileManagerTab(terminalId: terminal.id, seatId: terminal.seatId);
     } else if (_selectedTab == '进程管理') {
@@ -1406,6 +1420,21 @@ class _TerminalDetailPageState extends ConsumerState<TerminalDetailPage>
       isFullscreen: _gameManageFullscreen,
       onToggleFullscreen: () =>
           setState(() => _gameManageFullscreen = !_gameManageFullscreen),
+    );
+  }
+
+  /// 构建"镜像管理"Tab 内容，机制与游戏管理完全一致；
+  /// initialKeyword 传当前终端机号，进入即筛到本机
+  Widget _buildImageManageView(Terminal terminal) {
+    final netbar = ref.read(currentNetbarProvider);
+    return ImageManageView(
+      merchantId: netbar.id ?? 0,
+      subdomainFull: netbar.subdomainFull ?? '',
+      netbarName: netbar.name ?? '',
+      initialKeyword: terminal.seatId,
+      isFullscreen: _imageManageFullscreen,
+      onToggleFullscreen: () =>
+          setState(() => _imageManageFullscreen = !_imageManageFullscreen),
     );
   }
 
