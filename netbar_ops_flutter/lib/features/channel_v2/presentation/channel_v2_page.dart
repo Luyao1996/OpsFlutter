@@ -7,13 +7,16 @@ import '../../../core/responsive/responsive.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/providers/permission_provider.dart';
+import '../../../shared/utils/adaptive_show.dart';
 import '../../../shared/utils/top_notice.dart';
 import '../../netbar/data/netbar_list_provider.dart';
 import '../data/channel_v2_api.dart';
 import '../data/channel_v2_models.dart';
+import '../data/v2_upload_service.dart';
 import 'channel_v2_controllers.dart';
 import 'widgets/distribution_zone.dart';
 import 'widgets/resource_zone.dart';
+import 'widgets/v2_upload_dialog.dart';
 
 /// 通道管理 V2（T8a：双区只读浏览 + 可扩展骨架，对齐 web ChannelV2Page.vue）。
 /// 与旧 channel feature 新旧并存，互不 import。
@@ -178,7 +181,10 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
       case 'refresh':
         _ctrl.refreshZone(zoneKey);
         break;
-      // 'properties' T8a 置灰不可达；T8b 起在此接 PropsDialogSlot
+      case 'upload':
+        _openUploadDialog(zoneKey: zoneKey);
+        break;
+      // 'properties' 仍置灰不可达；T8b-2 起在此接 PropsDialogSlot
     }
   }
 
@@ -232,6 +238,46 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
     );
   }
 
+  // ====== 上传 ======
+
+  /// 打开上传弹窗。
+  ///
+  /// [zoneKey] 为 null = 工具栏入口：落根目录、不带归属字段，由后端按账号身份
+  /// 决定落点（对齐 web ChannelV2Page.vue:368-372 —— 工具栏 @click 传进来的是
+  /// 事件对象，类型守卫后回退 '0' + 空 extra）。
+  /// 有 zoneKey = 空白右键入口：上传到当前浏览目录；小组区根目录后端无法从父目录
+  /// 推断归属，必须显式带 group_id（对齐 ChannelV2Page.vue:502-509）。
+  ///
+  /// folderId 与 extra 都在这里取一次快照传进弹窗：上传中切组/切目录不得改变
+  /// 已入队文件的落点。
+  void _openUploadDialog({String? zoneKey}) {
+    final String folderId;
+    final Map<String, String> extra;
+    if (zoneKey == null || zoneKey == 'distribution') {
+      // 下发区无资源目录语义 → 仍用根目录
+      folderId = '0';
+      extra = const {};
+    } else {
+      folderId = '${_ctrl.currentFolderIdOf(zoneKey) ?? 0}';
+      extra = zoneKey == 'group'
+          ? buildV2UploadExtra('group', groupId: _effectiveGroupId)
+          : buildV2UploadExtra('hq');
+    }
+
+    showAdaptive<void>(
+      context,
+      (_) => V2UploadDialog(
+        service: ref.read(v2UploadServiceProvider),
+        folderId: folderId,
+        extraParams: extra,
+        // 全部跑完只回调一次；web:392-394 同样只刷资源区（下发区未变）
+        onUploaded: () => _ctrl.refreshResourceZones(),
+      ),
+      // 上传中禁止关窗：点遮罩关闭会让串行队列成孤儿
+      barrierDismissible: false,
+    );
+  }
+
   // ====== 权限/账号派生 ======
 
   int? get _effectiveGroupId {
@@ -256,7 +302,7 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildToolbar(context, isNarrow, canSeeHqZone),
+          _buildToolbar(context, isNarrow, canSeeHqZone, perm.isManager),
           const SizedBox(height: 8),
           Expanded(
             child: isNarrow
@@ -270,7 +316,8 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
     );
   }
 
-  Widget _buildToolbar(BuildContext context, bool isNarrow, bool canSeeHqZone) {
+  Widget _buildToolbar(
+      BuildContext context, bool isNarrow, bool canSeeHqZone, bool canUpload) {
     return _card(
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -286,6 +333,14 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
                   color: Color(0xFF1F2937)),
             ),
             const Spacer(),
+            // 对齐 web ChannelV2Page.vue:24 `v-if=isManagerUser`：
+            // 等价于 _canWriteHere('hq')（该函数只在 group 区额外要求已选组）
+            if (canUpload)
+              TextButton.icon(
+                onPressed: () => _openUploadDialog(),
+                icon: const Icon(LucideIcons.upload, size: 14),
+                label: const Text('上传', style: TextStyle(fontSize: 13)),
+              ),
             // 搜索框与 grid/list 切换 T8a 不做（ResourceZone props 已预留
             // searchActive/matchedKeys；viewMode 待 T8b）
             IconButton(

@@ -451,8 +451,8 @@ class V2ContextMenuItem {
 
 /// 根据「区域 + 文件 + 权限 + 批量」决定右键菜单项。
 /// 签名对齐 useContextMenuItems.js:16-24，后续阶段只往里补 item，不改签名。
-/// T8a 只挂 刷新 / 属性(disabled 占位)；
-/// 完整项集（复制到下发区/解压/重命名/移动/删除/上传/视图切换）T8b+ 按 web 全集补齐。
+/// 已挂：刷新 / 上传（空白区）/ 属性(disabled 占位)；
+/// 其余项（复制到下发区/解压/重命名/移动/删除/视图切换）T8b-2 按 web 全集补齐。
 List<V2ContextMenuItem> buildContextMenuItems({
   required String zoneKey,
   V2File? file,
@@ -463,8 +463,20 @@ List<V2ContextMenuItem> buildContextMenuItems({
   required String viewMode,
 }) {
   if (isBlank) {
-    return const [
-      V2ContextMenuItem(key: 'refresh', label: '刷新', icon: LucideIcons.refreshCw),
+    final isDist = zoneKey == 'distribution';
+    return [
+      const V2ContextMenuItem(
+          key: 'refresh', label: '刷新', icon: LucideIcons.refreshCw),
+      const V2ContextMenuItem.divider(),
+      // 下发区"上传"实际仍走资源区（后端按账号身份决定落点）→ 该区恒可上传，
+      // 不参与 writableHere 判定（对齐 useContextMenuItems.js:32-33）
+      V2ContextMenuItem(
+        key: 'upload',
+        label: '上传',
+        icon: LucideIcons.upload,
+        disabled: !isDist && !writableHere,
+      ),
+      // 视图切换（grid/list）T8b-2 补
     ];
   }
   return const [

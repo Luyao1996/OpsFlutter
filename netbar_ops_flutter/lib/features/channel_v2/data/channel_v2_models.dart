@@ -213,3 +213,51 @@ class DistributionScope {
     required this.name,
   });
 }
+
+/// 文件属性（GET /file/attribute → data.userFile）轻模型。
+///
+/// 【字段陷阱，留痕】隐藏标记在本接口叫 `hidden`，在列表接口 /file/view 叫
+/// `is_hide`（V2File.isHide）；两者不可互相套用，否则属性弹窗的隐藏开关恒为关。
+/// 对齐 web FilePropsDialog.vue:112-128。
+class V2FileAttribute {
+  final String name;
+  final bool isFolder;
+
+  /// 体积取 userFile.file.size（属性接口把物理文件信息挂在嵌套 file 上）
+  final int? size;
+
+  /// 上传者昵称：userFile.user.nickname
+  final String uploader;
+  final String createdAt;
+  final String updatedAt;
+  final bool hidden;
+  final Map<String, dynamic> raw;
+
+  const V2FileAttribute({
+    required this.name,
+    required this.isFolder,
+    this.size,
+    this.uploader = '',
+    this.createdAt = '',
+    this.updatedAt = '',
+    this.hidden = false,
+    this.raw = const {},
+  });
+
+  factory V2FileAttribute.fromJson(Map<String, dynamic> json) {
+    final file = json['file'];
+    final user = json['user'];
+    return V2FileAttribute(
+      name: _toStr(json['name']),
+      isFolder: v2Truthy(json['is_folder']),
+      size: file is Map<String, dynamic>
+          ? _toIntOrNull(file['size'])
+          : _toIntOrNull(json['size']),
+      uploader: user is Map<String, dynamic> ? _toStr(user['nickname']) : '',
+      createdAt: _toStr(json['created_at']),
+      updatedAt: _toStr(json['updated_at']),
+      hidden: v2Truthy(json['hidden']),
+      raw: json,
+    );
+  }
+}
