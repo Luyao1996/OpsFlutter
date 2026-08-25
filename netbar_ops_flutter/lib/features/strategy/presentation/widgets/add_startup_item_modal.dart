@@ -27,6 +27,15 @@ class AddStartupItemModal extends ConsumerStatefulWidget {
   final List<NetbarArea> areas;
   final VoidCallback onSuccess;
 
+  /// T8c-1 新增（**可选，默认 null，V1 两个页面不传 → 行为一字未变**）：
+  /// 「复制策略」的只读模板。传入时用它预填全部表单字段（路径/参数/延迟/随机名/
+  /// 强制开启/执行策略/生效时段/区域/本地化），但**绝不读取其中任何 id**
+  /// （tactic.id / startup.id / locale.id）——那正是 web copyItem 深拷贝后删掉的东西，
+  /// 复制出来的必须是一条全新记录。
+  /// 例外：locale 的 group_file_id / file_id 属于"文件引用"而非主键，
+  /// 必须带上，否则复制出的上传型本地化文件会丢失文件引用（T8c-0 行为变更 d 同款坑）。
+  final TacticItem? template;
+
   const AddStartupItemModal({
     super.key,
     required this.zone,
@@ -36,6 +45,7 @@ class AddStartupItemModal extends ConsumerStatefulWidget {
     this.defaultWorkingDir,
     this.isAdmin = false,
     this.areas = const [],
+    this.template,
     required this.onSuccess,
   });
 
@@ -81,11 +91,71 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
       _pathController.text = widget.defaultPath!;
     }
     _periods = [_PeriodInput()];
-    _localeFiles.add(_LocaleFileEntry(
-      pathController: TextEditingController(),
-      contentController: TextEditingController(),
-    ));
+    if (widget.template != null) {
+      _applyTemplate(widget.template!);
+    }
+    if (_localeFiles.isEmpty) {
+      _localeFiles.add(_LocaleFileEntry(
+        pathController: TextEditingController(),
+        contentController: TextEditingController(),
+      ));
+    }
     _tabController = TabController(length: 3, vsync: this);
+  }
+
+  /// T8c-1：按「复制」模板预填表单（只读字段，不碰任何主键 id）。
+  /// 字段映射与 startup_config_modal 的编辑态回填逐条对齐，避免两处口径分叉。
+  void _applyTemplate(TacticItem t) {
+    final s = t.startup;
+    if (s != null) {
+      _pathController.text = s.startupPath ?? '';
+      _selectedExeResourceId = s.groupFileId ?? widget.resourceId;
+      _parameterController.text = s.parameter ?? '';
+      _delayController.text = (s.startupDelay ?? 0).toString();
+      _isRandomName = s.isRandomName;
+      _isForcedOn = s.isForcedOn;
+      // mode 三值原样保留，禁止把 '2' 降级成 '0'（见 StartupStrategy 注释）
+      _strategyMode = s.strategy.mode;
+      _strategyNameController.text = s.strategy.name;
+      if (s.period.isNotEmpty) {
+        _periods = s.period
+            .map((p) => _PeriodInput(
+                  start: _parseTimeStr(p.start),
+                  end: _parseTimeStr(p.end),
+                ))
+            .toList();
+      }
+    }
+
+    for (final a in t.area) {
+      if (a.trim().isEmpty) continue;
+      _areaList.add(_AreaEntry(range: a, enabled: true));
+    }
+
+    for (final l in t.locales) {
+      _localeFiles.add(_LocaleFileEntry(
+        // 不带 locale.id：复制出来的是新记录
+        groupFileId: l.groupFileId,
+        fileId: l.fileId,
+        // group_file_id==0 是后端对"上传上来的文件"的标记
+        // （对齐 web StrategyAddDialog.vue:1184 `const isUpload = l.group_file_id == 0`）。
+        // 这类条目必须以 upload 模式提交，否则后端会把它当纯文本处理、丢掉文件引用。
+        mode: l.groupFileId == 0 ? 'upload' : 'text',
+        fileName: l.groupFileId == 0 ? l.content : null,
+        pathController: TextEditingController(text: l.path),
+        contentController: TextEditingController(text: l.content ?? ''),
+      ));
+    }
+  }
+
+  TimeOfDay? _parseTimeStr(String? t) {
+    if (t == null || t.isEmpty) return null;
+    final parts = t.split(':');
+    if (parts.length < 2) return null;
+    return TimeOfDay(
+      hour: int.tryParse(parts[0]) ?? 0,
+      minute: int.tryParse(parts[1]) ?? 0,
+    );
   }
 
   @override
@@ -219,7 +289,10 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
                 fileBytes: f.mode == 'upload' ? f.fileBytes : null,
                 fileName: f.mode == 'upload' ? f.fileName : null,
                 // T8c-0 行为变更 d：上传模式要发 group_file_id=0
-                // （新增态没有已存在的 file_id，只需标记模式）
+                // T8c-1：fileId 仅「复制策略」预填时非 null（V1 新增流程恒 null，
+                // _appendLocales 只在 isUploadMode && 无新字节 && fileId!=null 时才发
+                // file_id，故 V1 提交内容与改动前逐字节一致）
+                fileId: f.fileId,
                 isUploadMode: f.mode == 'upload',
               ))
           .toList();
@@ -1602,6 +1675,10 @@ class _AreaEntry {
 /// 本地化文件条目辅助类
 class _LocaleFileEntry {
   int? groupFileId;
+
+  /// T8c-1 新增：后端回传的已上传文件 id。
+  /// 仅「复制策略」预填时会有值（V1 新增流程恒为 null → 提交内容与改动前完全一致）。
+  final int? fileId;
   final TextEditingController pathController;
   final TextEditingController contentController;
   String mode; // 'text' | 'upload'
@@ -1618,6 +1695,7 @@ class _LocaleFileEntry {
 
   _LocaleFileEntry({
     this.groupFileId,
+    this.fileId,
     required this.pathController,
     required this.contentController,
     this.mode = 'text',

@@ -21,6 +21,7 @@ import 'widgets/distribution_zone.dart';
 import 'widgets/resource_zone.dart';
 import 'widgets/v2_file_props_dialog.dart';
 import 'widgets/v2_move_target_dialog.dart';
+import 'widgets/v2_strategy_list_dialog.dart';
 import 'widgets/v2_upload_dialog.dart';
 
 /// 通道管理 V2（T8b-2：文件操作层，对齐 web ChannelV2Page.vue）。
@@ -664,6 +665,17 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
         onPressed: _ctrl.refreshAll,
         icon: Icon(LucideIcons.refreshCw, size: 16, color: Colors.grey.shade600),
       ),
+      // 窄屏不渲染 [_placeholderButtons]（会挤爆标题行），策略入口在这里收进菜单，
+      // 否则手机端根本进不去策略弹窗
+      if (isNarrow)
+        Builder(
+          builder: (btnCtx) => IconButton(
+            tooltip: '策略',
+            onPressed: () => _openStrategyMenu(btnCtx),
+            icon: Icon(LucideIcons.settings,
+                size: 16, color: Colors.grey.shade600),
+          ),
+        ),
     ];
 
     final searchField = SizedBox(
@@ -761,22 +773,60 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
   }
 
   List<Widget> _placeholderButtons() {
-    const labels = ['网吧私有策略', '程序公共策略', '桌标管理', '任务列表'];
+    // T8c-1 已接：前两个策略弹窗；桌标管理 / 任务列表仍为 T8d 占位
+    final entries = <(String, VoidCallback?)>[
+      ('网吧私有策略', () => _openStrategyDialog(V2StrategyVariant.private)),
+      ('程序公共策略', () => _openStrategyDialog(V2StrategyVariant.public)),
+      ('桌标管理', null),
+      ('任务列表', null),
+    ];
     return [
-      for (final l in labels)
+      for (final e in entries)
         Padding(
           padding: const EdgeInsets.only(right: 4),
           child: TextButton(
-            onPressed: null, // T8c/T8d 接入
+            onPressed: e.$2,
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               minimumSize: const Size(0, 28),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            child: Text(l, style: const TextStyle(fontSize: 12)),
+            child: Text(e.$1, style: const TextStyle(fontSize: 12)),
           ),
         ),
     ];
+  }
+
+  /// 打开策略列表弹窗。
+  /// 工具栏入口是**全局策略**（不带 group_file_id），对齐 web 工具栏
+  /// `currentDialogFile=null`（ChannelV2Page.vue:6-8）。
+  /// web 另有右键「策略」入口带文件过滤，但那条路径在 web 从未被激活，本期不做。
+  /// 窄屏策略入口菜单（走 [_showContextMenu] → 已包 [_guardDialog]）
+  Future<void> _openStrategyMenu(BuildContext btnCtx) async {
+    final box = btnCtx.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final pos = box.localToGlobal(box.size.bottomLeft(Offset.zero));
+    final key = await _showContextMenu(pos, const [
+      V2ContextMenuItem(
+          key: 'strategy_private',
+          label: '网吧私有策略',
+          icon: LucideIcons.shieldCheck),
+      V2ContextMenuItem(
+          key: 'strategy_public', label: '程序公共策略', icon: LucideIcons.globe),
+    ]);
+    if (key == 'strategy_private') {
+      _openStrategyDialog(V2StrategyVariant.private);
+    } else if (key == 'strategy_public') {
+      _openStrategyDialog(V2StrategyVariant.public);
+    }
+  }
+
+  void _openStrategyDialog(V2StrategyVariant variant) {
+    _guardDialog<void>(() async => showAdaptive<void>(
+          context,
+          (_) => V2StrategyListDialog(variant: variant),
+          routeName: '/dialog/channel-v2-strategy',
+        ));
   }
 
   // ====== 宽屏：左下发复合面板 + 右列（HQ 上 / Group 下） ======
