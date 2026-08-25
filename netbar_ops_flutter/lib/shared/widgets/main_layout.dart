@@ -391,8 +391,6 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
       return (name: '概览', icon: LucideIcons.layoutDashboard, color: Colors.blue);
     } else if (location.startsWith('/monitor')) {
       return (name: '网吧管理', icon: LucideIcons.network, color: Colors.indigo);
-    } else if (location.startsWith('/netbar-list')) {
-      return (name: '网吧列表', icon: LucideIcons.building2, color: Colors.cyan);
     } else if (location.startsWith('/resource-management')) {
       return (name: '资源管理', icon: LucideIcons.database, color: Colors.orange);
     } else if (location.startsWith('/channel-management')) {
@@ -471,12 +469,6 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
               '/monitor',
               LucideIcons.network,
               Colors.indigo,
-            ),
-            _buildMenuItem(
-              '网吧列表',
-              '/netbar-list',
-              LucideIcons.building2,
-              Colors.cyan,
             ),
             _buildMenuItem(
               '资源管理',

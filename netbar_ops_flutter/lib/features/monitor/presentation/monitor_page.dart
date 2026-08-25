@@ -777,9 +777,10 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
             groupName: updated.group,
           );
     } else {
-      // 当前网吧已被删除：清空当前网吧并返回网吧列表，避免停留在已删网吧的监控页
+      // 当前网吧已被删除：清空当前网吧回到监控页空态（网吧列表页已下线），
+      // 用户经顶部 tab 栏的切换网吧弹窗重新选择
       await ref.read(currentNetbarProvider.notifier).clear();
-      if (mounted) context.go('/netbar-list');
+      if (mounted) context.go('/monitor');
     }
   }
 

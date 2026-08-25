@@ -6,7 +6,6 @@ import '../features/auth/presentation/login_page.dart';
 import '../features/channel/presentation/channel_management_page.dart' as channel;
 import '../features/dashboard/presentation/dashboard_page.dart';
 import '../features/monitor/presentation/monitor_page.dart';
-import '../features/netbar/presentation/netbar_list_page.dart';
 import '../features/resource/presentation/resource_management_page.dart';
 import '../features/user/presentation/user_management_page.dart';
 import '../features/logs/presentation/log_center_page.dart';
@@ -68,16 +67,6 @@ final routerProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
               child: const DashboardPage(),
-              transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                return FadeTransition(opacity: animation, child: child);
-              },
-            ),
-          ),
-          GoRoute(
-            path: '/netbar-list',
-            pageBuilder: (context, state) => CustomTransitionPage(
-              key: state.pageKey,
-              child: const NetbarListPage(),
               transitionsBuilder: (context, animation, secondaryAnimation, child) {
                 return FadeTransition(opacity: animation, child: child);
               },
