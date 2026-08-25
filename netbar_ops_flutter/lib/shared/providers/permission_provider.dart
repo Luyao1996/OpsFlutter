@@ -83,6 +83,16 @@ class PermissionService {
   /// PERMISSION_IDS 数字 id 的形态；后端改文案不影响判断）。
   bool hasDetailPermissionById(int permId) => _match((p) => p.id == permId);
 
+  /// 组配置可操作性（对齐 toolboxPage permissions.js:183-198 canOperateGroupConfig）：
+  /// - 总部配置（creatorGroupId 为 0/null）任何人都可操作；
+  /// - 总部人员可操作所有配置；
+  /// - 小组配置仅本组人员可操作。
+  bool canOperateGroupConfig(int? creatorGroupId) {
+    if (creatorGroupId == null || creatorGroupId == 0) return true;
+    if (isHQUser) return true;
+    return creatorGroupId == userGroupId;
+  }
+
   /// zone: PUBLIC/HEADQUARTERS/BRANCH
   /// netbarId: 当前网吧 id（仅 PUBLIC 需要）
   /// 普通用户：只能编辑 PUBLIC；HEADQUARTERS/BRANCH 仅查看/下载

@@ -395,6 +395,8 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
       return (name: '资源管理', icon: LucideIcons.database, color: Colors.orange);
     } else if (location.startsWith('/channel-management')) {
       return (name: '通道管理', icon: LucideIcons.activity, color: AppColors.iosBlue);
+    } else if (location.startsWith('/channel-v2')) {
+      return (name: '通道管理V2', icon: LucideIcons.layers, color: Colors.deepPurple);
     } else if (location.startsWith('/desktop-management')) {
       return (name: '桌面管理', icon: LucideIcons.layoutGrid, color: Colors.teal);
     } else if (location.startsWith('/user-management')) {
@@ -481,6 +483,14 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
               '/channel-management',
               LucideIcons.activity,
               AppColors.iosBlue,
+            ),
+            // 新版通道管理（资源区/下发区双区）与旧版并存；web 端按 CHANNEL_MANAGE
+            // 模块权限门禁，Flutter 无模块级判定原语，与旧版一样暂不加门禁
+            _buildMenuItem(
+              '通道管理V2',
+              '/channel-v2',
+              LucideIcons.layers,
+              Colors.deepPurple,
             ),
             if (!platformHelper.isMobile)
               _buildMenuItem(

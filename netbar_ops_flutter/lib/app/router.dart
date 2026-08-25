@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../features/auth/presentation/login_page.dart';
 import '../features/channel/presentation/channel_management_page.dart' as channel;
+import '../features/channel_v2/presentation/channel_v2_page.dart';
 import '../features/dashboard/presentation/dashboard_page.dart';
 import '../features/monitor/presentation/monitor_page.dart';
 import '../features/resource/presentation/resource_management_page.dart';
@@ -101,6 +102,16 @@ final routerProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) => CustomTransitionPage(
               key: state.pageKey,
               child: const UserManagementPage(),
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                return FadeTransition(opacity: animation, child: child);
+              },
+            ),
+          ),
+          GoRoute(
+            path: '/channel-v2',
+            pageBuilder: (context, state) => CustomTransitionPage(
+              key: state.pageKey,
+              child: const ChannelV2Page(),
               transitionsBuilder: (context, animation, secondaryAnimation, child) {
                 return FadeTransition(opacity: animation, child: child);
               },
