@@ -191,6 +191,24 @@ class StartupItemApi {
     List<LocaleSubmitData>? locales,
     // area 字段
     List<String>? area,
+
+    /// 生效网吧（**可选，默认 null = 不发 merchants，V1 两个旧页面的现状**）。
+    ///
+    /// 【对 web 的刻意偏离 + 待验证，留痕】
+    /// 现有 Flutter 编辑态只发 `area[]`、不发 merchants，故私有策略一旦创建就
+    /// **改不了生效网吧**。用户反馈 #5 要求编辑态可改，这里按私有嵌套键形补发
+    /// `merchants[i][id]` + `merchants[i][area][]`（[_appendPrivateMerchants]）。
+    /// 键形本身与 web 私有新增/编辑一致（LocalStrategyAdd.vue:698-710，
+    /// 该 web 弹窗新增与编辑走同一段代码、编辑时 url=`/tactic/{id}` 同样发 merchants）。
+    ///
+    /// 偏离点：web 该弹窗**只发嵌套 merchants、不发顶层 area[]**；
+    /// 这里两者都发 —— 顶层 `area[]` 是当前 Flutter 已跑通的区域编辑通路，
+    /// 贸然去掉会拿"区域编辑"去赌后端解析口径。两处 area 值恒相同，不构成冲突。
+    ///
+    /// **待验证**：后端 `POST /tactic/{id}` 是否真的支持据此变更生效网吧。
+    /// 若不支持，需回退为「仅新增态可选生效网吧」（调用方不再传本参数即可，
+    /// 共享层无需改动）。
+    List<int>? merchantIds,
   }) async {
     final formData = FormData();
 
@@ -211,7 +229,7 @@ class StartupItemApi {
     // locales 部分
     _appendLocales(formData, locales);
 
-    // area 部分（私有策略编辑态：web StrategyAddDialog.vue:965-988 只发 area[]，不发 merchants）
+    // area 部分
     if (area != null) {
       if (area.isEmpty) {
         formData.fields.add(const MapEntry('area[]', ''));
@@ -220,6 +238,11 @@ class StartupItemApi {
           formData.fields.add(MapEntry('area[]', a));
         }
       }
+    }
+
+    // merchants 部分（见上方 [merchantIds] 注释；不传 = 与改动前逐字节一致）
+    if (merchantIds != null) {
+      _appendPrivateMerchants(formData, merchantIds, area);
     }
 
     await _client.post('/tactic/$tacticId', data: formData);

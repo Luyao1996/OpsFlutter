@@ -377,6 +377,10 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
     return v2DeliveryExePicker(api);
   }
 
+  /// 共享层表单的宽屏宽度：用户反馈 #3 要求放大 30%（560 → 728）。
+  /// 只有 V2 传这个值，V1 两个旧页面不传 → 仍是 560。
+  static const double _kFormDialogWidth = 728;
+
   /// 编辑：直接复用共享层 StartupConfigModal
   /// （私有 = /tactic，公共 = /public-tactic，由 variant 决定）
   Future<void> _editRow(TacticItem row) async {
@@ -392,6 +396,12 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
         exePicker: _exePicker(
           merchantScope: _isPrivate ? row.merchant : null,
         ),
+        // 用户反馈 #5：私有策略编辑态也要能改「生效网吧」。
+        // 该开关只有 V2 传 true，V1 两个旧页面不传 → 仍是 3 个页签、
+        // 提交也不带 merchants[]（见 StartupConfigModal.allowMerchantEdit 注释）。
+        // 公共策略本来就恒有该页签，传 true 对它没有额外影响。
+        allowMerchantEdit: true,
+        dialogWidth: _kFormDialogWidth,
         onSuccess: _fetch,
       ),
       routeName: '/dialog/startup-config',
@@ -430,6 +440,7 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
         variant:
             _isPrivate ? StrategyVariant.private : StrategyVariant.public,
         exePicker: _exePicker(),
+        dialogWidth: _kFormDialogWidth,
         onSuccess: _fetch,
       ),
       routeName: '/dialog/add-startup-item',
@@ -459,7 +470,12 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
     final isNarrow = context.isNarrow;
     return ResponsiveDialogScaffold(
       title: _spec.title,
-      maxWidth: 1280,
+      // 用户反馈 #3：弹窗放大 30%（1280→1664）。
+      // 高度同步放宽：骨架的 effectiveMaxHeight = min(屏高*0.85, maxHeightCap)，
+      // 默认 cap=820 会在 1080p 上先卡住，820*1.3≈1066 让它退回按屏高 0.85 走。
+      // 两个值都只是**上限**，Dialog 本身受 屏宽/屏高 - insetPadding 收紧，小屏不越界。
+      maxWidth: 1664,
+      maxHeightCap: 1066,
       scrollableBody: false,
       bodyPadding: EdgeInsets.zero,
       body: Column(
@@ -474,23 +490,42 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
     );
   }
 
+  /// 顶部工具条统一控件高度（用户反馈 #2）。
+  ///
+  /// 原来输入框/下拉写死 34，而旁边 OutlinedButton 走 M3 默认 minimumSize
+  /// （高 40）→ 输入框明显比按钮矮一截。这里把**三者都钉死同一个值**，
+  /// 不再依赖 M3 默认高度（换主题/换 visualDensity 也不会重新错位）。
+  static const double _kToolbarControlHeight = 40;
+
   Widget _buildHeader(bool isNarrow) {
     final perm = ref.watch(permissionProvider);
+    // 按钮统一高度：minimumSize 只管下限，还要 padding 不把高度顶上去
+    final buttonStyle = OutlinedButton.styleFrom(
+      minimumSize: const Size(0, _kToolbarControlHeight),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    );
+
     final typeDropdown = SizedBox(
       width: 130,
-      height: 34,
+      height: _kToolbarControlHeight,
       child: DropdownButtonFormField<String>(
         initialValue: _type,
         isDense: true,
+        isExpanded: true,
         decoration: const InputDecoration(
           isDense: true,
-          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          contentPadding: EdgeInsets.symmetric(horizontal: 10),
           border: OutlineInputBorder(),
         ),
         style: const TextStyle(fontSize: 13, color: Color(0xFF1F2937)),
         items: [
           for (final o in _spec.typeOptions)
-            DropdownMenuItem(value: o.value, child: Text(o.label)),
+            DropdownMenuItem(
+              value: o.value,
+              child: Text(o.label,
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
         ],
         onChanged: (v) {
           if (v == null) return;
@@ -506,7 +541,7 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
     };
 
     final searchField = SizedBox(
-      height: 34,
+      height: _kToolbarControlHeight,
       child: TextField(
         controller: _searchCtrl,
         style: const TextStyle(fontSize: 13),
@@ -515,6 +550,8 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
         decoration: InputDecoration(
           hintText: hintByType[_type] ?? '请输入关键字',
           hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF9CA3AF)),
+          // isDense + 零纵向 padding：让 SizedBox 的 40 完全决定高度，
+          // 文本在其中垂直居中，与按钮齐平
           isDense: true,
           contentPadding: const EdgeInsets.symmetric(horizontal: 10),
           border: const OutlineInputBorder(),
@@ -526,6 +563,7 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
     // merchants 键形与保存端点），不再置灰。
     final addButton = OutlinedButton.icon(
       onPressed: () => _addStrategy(),
+      style: buttonStyle,
       icon: const Icon(LucideIcons.plus, size: 14),
       label: const Text('添加', style: TextStyle(fontSize: 13)),
     );
@@ -541,14 +579,22 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
           SizedBox(width: isNarrow ? 160 : 220, child: searchField),
           OutlinedButton(
             onPressed: _search,
+            style: buttonStyle,
             child: const Text('搜索', style: TextStyle(fontSize: 13)),
           ),
           if (perm.isManager) addButton,
-          IconButton(
-            tooltip: '刷新',
-            onPressed: _fetch,
-            icon: Icon(LucideIcons.refreshCw,
-                size: 16, color: Colors.grey.shade600),
+          SizedBox(
+            height: _kToolbarControlHeight,
+            child: IconButton(
+              tooltip: '刷新',
+              onPressed: _fetch,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(
+                  minWidth: _kToolbarControlHeight,
+                  minHeight: _kToolbarControlHeight),
+              icon: Icon(LucideIcons.refreshCw,
+                  size: 16, color: Colors.grey.shade600),
+            ),
           ),
         ],
       ),
@@ -1084,63 +1130,100 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
 
   // ---------- 分页 ----------
 
+  /// 分页条（用户反馈 #1：右下角 `RIGHT OVERFLOWED BY 6.9 PIXELS`）。
+  ///
+  /// 原实现是 `Row + Spacer`：Row 不会收缩，两个 IconButton 各带 48x48 的默认
+  /// minimumSize，加上 90 宽的每页下拉，在窄一点的容器里必然把行撑爆。
+  /// 改为：
+  ///   1. 外层 Wrap(spaceBetween)——放得下时左右分列，放不下就整块换行；
+  ///   2. 右侧控件自己也是 Wrap，可以继续折行；
+  ///   3. 两个翻页 IconButton 去掉 48x48 默认约束，压到 32x32。
   Widget _buildPagination(bool isNarrow) {
     final pageCount = _perPage <= 0 ? 1 : ((_total + _perPage - 1) ~/ _perPage);
     final maxPage = pageCount < 1 ? 1 : pageCount;
-    return Row(
+
+    Widget pageButton(IconData icon, VoidCallback? onPressed) => IconButton(
+          onPressed: onPressed,
+          icon: Icon(icon, size: 18),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          splashRadius: 18,
+        );
+
+    return Wrap(
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 8,
+      runSpacing: 6,
       children: [
         Text('共 $_total 条',
             style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
-        const Spacer(),
-        if (!isNarrow) ...[
-          SizedBox(
-            width: 90,
-            height: 32,
-            child: DropdownButtonFormField<int>(
-              initialValue: _perPage,
-              isDense: true,
-              decoration: const InputDecoration(
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(horizontal: 8),
-                border: OutlineInputBorder(),
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 4,
+          runSpacing: 6,
+          children: [
+            if (!isNarrow)
+              SizedBox(
+                width: 96,
+                height: 32,
+                child: DropdownButtonFormField<int>(
+                  initialValue: _perPage,
+                  isDense: true,
+                  // 不加 isExpanded 时 DropdownButton 按最宽 item 的固有宽度撑开，
+                  // 会顶破外面的 SizedBox
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                    border: OutlineInputBorder(),
+                  ),
+                  style:
+                      const TextStyle(fontSize: 12, color: Color(0xFF1F2937)),
+                  items: const [
+                    DropdownMenuItem(
+                        value: 10,
+                        child: Text('10 条/页',
+                            maxLines: 1, overflow: TextOverflow.ellipsis)),
+                    DropdownMenuItem(
+                        value: 20,
+                        child: Text('20 条/页',
+                            maxLines: 1, overflow: TextOverflow.ellipsis)),
+                    DropdownMenuItem(
+                        value: 50,
+                        child: Text('50 条/页',
+                            maxLines: 1, overflow: TextOverflow.ellipsis)),
+                  ],
+                  onChanged: (v) {
+                    if (v == null) return;
+                    _perPage = v;
+                    _page = 1;
+                    _fetch();
+                  },
+                ),
               ),
-              style: const TextStyle(fontSize: 12, color: Color(0xFF1F2937)),
-              items: const [
-                DropdownMenuItem(value: 10, child: Text('10 条/页')),
-                DropdownMenuItem(value: 20, child: Text('20 条/页')),
-                DropdownMenuItem(value: 50, child: Text('50 条/页')),
-              ],
-              onChanged: (v) {
-                if (v == null) return;
-                _perPage = v;
-                _page = 1;
-                _fetch();
-              },
+            pageButton(
+              LucideIcons.chevronLeft,
+              _page > 1
+                  ? () {
+                      _page--;
+                      _fetch();
+                    }
+                  : null,
             ),
-          ),
-          const SizedBox(width: 8),
-        ],
-        IconButton(
-          onPressed: _page > 1
-              ? () {
-                  _page--;
-                  _fetch();
-                }
-              : null,
-          icon: const Icon(LucideIcons.chevronLeft, size: 18),
-          splashRadius: 18,
-        ),
-        Text('$_page / $maxPage',
-            style: const TextStyle(fontSize: 12, color: Color(0xFF1F2937))),
-        IconButton(
-          onPressed: _page < maxPage
-              ? () {
-                  _page++;
-                  _fetch();
-                }
-              : null,
-          icon: const Icon(LucideIcons.chevronRight, size: 18),
-          splashRadius: 18,
+            Text('$_page / $maxPage',
+                style:
+                    const TextStyle(fontSize: 12, color: Color(0xFF1F2937))),
+            pageButton(
+              LucideIcons.chevronRight,
+              _page < maxPage
+                  ? () {
+                      _page++;
+                      _fetch();
+                    }
+                  : null,
+            ),
+          ],
         ),
       ],
     );
@@ -1361,9 +1444,13 @@ class _DisableDurationDialogState extends State<_DisableDurationDialog> {
 /// 【存在的理由，留痕】共享层 AddStartupItemModal 的**私有**形态是 V1 的
 /// "当前网吧"上下文产物，只接受一个 netbarId；V2 弹窗里没有当前网吧，
 /// 不先选会在保存时直接报「请先选择网吧」。
-/// T8c-2 给表单加的「生效网吧」多选面板**只挂在公共策略上**（私有形态挂上去
-/// 等于给 V1 两个旧页面平白多一个页签，违反"V1 行为一字不变"），
-/// 故私有策略仍保留本前置选择器。
+///
+/// 【本次（用户反馈 #5）的处理范围，留痕】只给**编辑态**
+/// （StartupConfigModal + allowMerchantEdit）补了私有策略的「生效网吧」多选面板；
+/// **新增态**没动，故私有新增仍走本前置单选器。
+/// 结果是"新增只能一次建一家、编辑可改成多家"——与 web 私有弹窗
+/// （LocalStrategyAdd.vue 新增/编辑共用同一个多选面板）仍有差距，
+/// 待编辑态的 merchants 提交经后端验证跑通后再统一。
 class _MerchantPickerDialog extends StatefulWidget {
   final StrategyApi api;
   final int? groupFileId;

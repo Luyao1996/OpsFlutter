@@ -52,6 +52,10 @@ class AddStartupItemModal extends ConsumerStatefulWidget {
   /// 因为 web 的策略表单选执行文件走 /delivery/tree 而不是资源中心（评审 A-4）。
   final StrategyExePicker? exePicker;
 
+  /// 用户反馈 #3 新增（**可选，默认 560 = V1 现状**）：宽屏 Dialog 宽度。
+  /// V2 传放大 30% 后的 728。窄屏走整页 Sheet，本参数不参与。
+  final double dialogWidth;
+
   const AddStartupItemModal({
     super.key,
     required this.zone,
@@ -64,6 +68,7 @@ class AddStartupItemModal extends ConsumerStatefulWidget {
     this.template,
     this.variant = StrategyVariant.private,
     this.exePicker,
+    this.dialogWidth = 560,
     required this.onSuccess,
   });
 
@@ -453,12 +458,19 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
       );
     }
 
+    // 宽度取 min(调用方给的宽, 屏宽-48)，小屏下不越界；
+    // 高度保持 0.9 屏高（已经贴满，不再放大）
+    final screen = MediaQuery.of(context).size;
+    final width = widget.dialogWidth < screen.width - 48
+        ? widget.dialogWidth
+        : screen.width - 48;
+
     return Dialog(
       backgroundColor: Colors.transparent,
       child: Container(
-        width: 560,
+        width: width,
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.9,
+          maxHeight: screen.height * 0.9,
         ),
         decoration: BoxDecoration(
           color: Colors.white,
@@ -841,19 +853,21 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
                                           : FontWeight.normal,
                                     ),
                                   ),
-                                  if (_localeFiles.length > 1) ...[
-                                    const SizedBox(width: 4),
-                                    InkWell(
-                                      onTap: () => _removeLocaleTab(i),
-                                      child: Icon(
-                                        LucideIcons.x,
-                                        size: 12,
-                                        color: isActive
-                                            ? AppColors.iosBlue
-                                            : Colors.grey.shade400,
-                                      ),
+                                  // 【能力增强，留痕】原条件是 `_localeFiles.length > 1`：
+                                  // 只剩最后 1 个文件时删除按钮消失 → 本地化配置**清不掉**
+                                  // （用户反馈 #6）。改为恒显示，允许删到 0 个。
+                                  // 与 startup_config_modal 同款位置保持一致。
+                                  const SizedBox(width: 4),
+                                  InkWell(
+                                    onTap: () => _removeLocaleTab(i),
+                                    child: Icon(
+                                      LucideIcons.x,
+                                      size: 12,
+                                      color: isActive
+                                          ? AppColors.iosBlue
+                                          : Colors.grey.shade400,
                                     ),
-                                  ],
+                                  ),
                                 ],
                               ),
                             ),
@@ -889,8 +903,44 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
               padding: EdgeInsets.all(isSheet ? 16 : 24),
               child: _buildLocaleEditor(_localeFiles[_activeLocaleIndex]),
             ),
-          ),
+          )
+        else
+          // 删到 0 个后的空态（用户反馈 #6）。新增态本就允许不配本地化
+          // （locales 为空时 _handleSave 传 null，不发任何 locales 键）。
+          Expanded(child: _buildLocaleEmptyState()),
       ],
+    );
+  }
+
+  /// 本地化文件全部删除后的空态
+  Widget _buildLocaleEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(LucideIcons.fileX, size: 36, color: Colors.grey.shade300),
+            const SizedBox(height: 12),
+            Text(
+              '未配置本地化文件',
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '本地化配置为可选项，可直接保存',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: _addLocaleTab,
+              icon: const Icon(LucideIcons.plus, size: 14),
+              label: const Text('添加文件', style: TextStyle(fontSize: 13)),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

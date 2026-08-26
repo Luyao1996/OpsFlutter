@@ -3,16 +3,15 @@ import 'package:flutter/material.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../data/strategy_api.dart';
 
-/// 「生效网吧」多选面板（T8c-2 新增，**只给公共策略用**）。
+/// 「生效网吧」多选面板。
 ///
-/// 对齐 web StrategyAddDialog.vue:15-70 的 netbar-panel：
+/// 对齐 web netbar-panel（LocalStrategyAdd.vue:13-70）：
 /// 分组下拉 + 关键字搜索 + 全选 + 逐行勾选。数据源 GET /tactic/merchants
 /// （T8c-0 已实现，全量无分页，每个 merchant 带 groups[] 归属）。
 ///
-/// 【只用于 public 的原因，留痕】私有策略在 Flutter 侧是"当前网吧"上下文
-/// （V1 两个旧页面就一个网吧，V2 列表页在进表单前先弹单选器），编辑态 web 也只构造
-/// 当前一家、不请求列表（StrategyAddDialog.vue:806-822）。把本面板挂到私有形态上
-/// 等于给 V1 平白多一个页签 —— 违反"V1 行为一字不变"，故不做。
+/// 【使用范围，留痕】T8c-2 时只给公共策略用；本次（用户反馈 #5）起
+/// **私有策略编辑态**在显式开启 `allowMerchantEdit` 时也复用本面板。
+/// V1 两个旧页面不开该开关，仍是"当前网吧"上下文、看不到本面板 → V1 行为不变。
 ///
 /// 【虚拟化】网吧可达上千家，列表恒走 ListView.builder。
 class StrategyMerchantsPanel extends StatefulWidget {
@@ -170,39 +169,57 @@ class _StrategyMerchantsPanelState extends State<StrategyMerchantsPanel> {
                 ),
               ),
               const SizedBox(height: 4),
+              // 文案改成两形态通用（本面板现在也给私有策略编辑态用）
               Text(
-                '公共策略至少选择一家网吧；已选 ${_selected.length} 家',
+                '至少选择一家网吧；已选 ${_selected.length} 家',
                 style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
               ),
               const SizedBox(height: 12),
+              // 【溢出修复】原先分组下拉写死 SizedBox(width:130) + isExpanded 缺省(false)：
+              // DropdownButton 不换行时按**最宽 item 的固有宽度**撑开自己，分组名一长
+              // 就把 130 撑爆 → 整行 RIGHT OVERFLOWED。改为
+              //   1. isExpanded:true + item 文本 ellipsis（下拉不再按内容撑宽）
+              //   2. 两个控件都用 Expanded 按比例分配（窄容器下一起收缩，不会溢出）
               Row(
                 children: [
-                  SizedBox(
-                    width: 130,
-                    height: 36,
-                    child: DropdownButtonFormField<String>(
-                      initialValue: _groupFilter,
-                      isDense: true,
-                      decoration: const InputDecoration(
+                  Expanded(
+                    flex: 2,
+                    child: SizedBox(
+                      height: 36,
+                      child: DropdownButtonFormField<String>(
+                        initialValue: _groupFilter,
                         isDense: true,
-                        hintText: '所属分组',
-                        contentPadding:
-                            EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                        border: OutlineInputBorder(),
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          hintText: '所属分组',
+                          contentPadding:
+                              EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                          border: OutlineInputBorder(),
+                        ),
+                        style: const TextStyle(
+                            fontSize: 12, color: Color(0xFF1F2937)),
+                        items: [
+                          const DropdownMenuItem<String>(
+                              value: null,
+                              child: Text('全部分组',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis)),
+                          for (final g in _groupOptions)
+                            DropdownMenuItem(
+                              value: g,
+                              child: Text(g,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis),
+                            ),
+                        ],
+                        onChanged: (v) => setState(() => _groupFilter = v),
                       ),
-                      style: const TextStyle(
-                          fontSize: 12, color: Color(0xFF1F2937)),
-                      items: [
-                        const DropdownMenuItem<String>(
-                            value: null, child: Text('全部分组')),
-                        for (final g in _groupOptions)
-                          DropdownMenuItem(value: g, child: Text(g)),
-                      ],
-                      onChanged: (v) => setState(() => _groupFilter = v),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
+                    flex: 3,
                     child: SizedBox(
                       height: 36,
                       child: TextField(

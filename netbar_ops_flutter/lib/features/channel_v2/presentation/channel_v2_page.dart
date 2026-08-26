@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -10,7 +9,6 @@ import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/providers/permission_provider.dart';
 import '../../../shared/utils/adaptive_show.dart';
-import '../../../shared/utils/platform_utils.dart';
 import '../../../shared/utils/top_notice.dart';
 import '../../netbar/data/netbar_api.dart';
 import '../../netbar/data/netbar_list_provider.dart';
@@ -794,14 +792,16 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
     );
   }
 
-  /// 工具栏功能入口（对齐 web ChannelV2Page.vue:6-8,22）。T8d 起四个全部接通。
+  /// 工具栏功能入口（对齐 web ChannelV2Page.vue:6-8,22）。
+  ///
+  /// 【对 web 的偏离，留痕】web 工具栏有第四项「桌标管理」（`router.push('/desktopIcon')`，
+  /// ChannelV2Page.vue:219）。按用户反馈整项移除：该功能在 Flutter 侧已有独立的
+  /// 桌面管理页入口（主菜单 → /desktop-management），通道管理页内重复挂入口无意义。
+  /// 窄屏菜单 [_openMoreMenu] 必须同步保持一致。
   List<Widget> _extraToolbarButtons() {
     final entries = <(String, VoidCallback?)>[
       ('网吧私有策略', () => _openStrategyDialog(V2StrategyVariant.private)),
       ('程序公共策略', () => _openStrategyDialog(V2StrategyVariant.public)),
-      // 桌标管理在移动端整体不提供（与主菜单同口径，见 main_layout.dart:495
-      // `if (!platformHelper.isMobile)`），故移动端直接不渲染入口
-      if (!isMobilePlatform) ('桌标管理', _openDesktopIcon),
       ('任务列表', _openTaskListDialog),
     ];
     return [
@@ -822,7 +822,7 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
   }
 
   /// 窄屏功能入口菜单（走 [_showContextMenu] → 已包 [_guardDialog]）。
-  /// 项集合必须与 [_extraToolbarButtons] 保持一致（含移动端隐藏桌标管理）。
+  /// 项集合必须与 [_extraToolbarButtons] 保持一致（桌标管理已整项移除）。
   Future<void> _openMoreMenu(BuildContext btnCtx) async {
     final box = btnCtx.findRenderObject() as RenderBox?;
     if (box == null) return;
@@ -834,9 +834,6 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
           icon: LucideIcons.shieldCheck),
       const V2ContextMenuItem(
           key: 'strategy_public', label: '程序公共策略', icon: LucideIcons.globe),
-      if (!isMobilePlatform)
-        const V2ContextMenuItem(
-            key: 'desktop_icon', label: '桌标管理', icon: LucideIcons.layoutGrid),
       const V2ContextMenuItem(
           key: 'task_list', label: '任务列表', icon: LucideIcons.listChecks),
     ]);
@@ -846,9 +843,6 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
         break;
       case 'strategy_public':
         _openStrategyDialog(V2StrategyVariant.public);
-        break;
-      case 'desktop_icon':
-        _openDesktopIcon();
         break;
       case 'task_list':
         _openTaskListDialog();
@@ -875,14 +869,6 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
           (_) => V2TaskListDialog(api: _api),
           routeName: '/dialog/channel-v2-task-list',
         ));
-  }
-
-  /// 桌标管理：web 是 `router.push('/desktopIcon')`（ChannelV2Page.vue:219），
-  /// Flutter 对应已有的桌面管理页路由 /desktop-management（router.dart:91）。
-  /// 移动端不提供入口（见 [_extraToolbarButtons] 注释），这里再兜一层。
-  void _openDesktopIcon() {
-    if (isMobilePlatform) return;
-    context.go('/desktop-management');
   }
 
   // ====== 宽屏：左下发复合面板 + 右列（HQ 上 / Group 下） ======

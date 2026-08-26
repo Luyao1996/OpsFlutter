@@ -63,6 +63,25 @@ class StartupConfigModal extends ConsumerStatefulWidget {
   /// 其余字段两形态完全相同，**禁止**再分叉。
   final StrategyVariant variant;
 
+  /// 用户反馈 #5 新增（**可选，默认 false，V1 两个页面不传 → 行为一字未变**）：
+  /// **私有策略编辑态**是否允许改「生效网吧」。
+  ///
+  /// 【为什么必须是开关而不是无条件开启，留痕】
+  /// V1 两个旧页面（channel_management_page / resource_management_page）编辑私有策略
+  /// 时的上下文就是"当前这一家网吧"，页面里根本没有"换一家网吧"的语义；
+  /// 无条件多出一个「生效网吧」页签会：
+  ///   1. 让用户在单网吧页面里把策略改挂到别的网吧（UI 语义错位）；
+  ///   2. 让 V1 的保存请求开始携带 merchants[]（见 StrategyApi.updateTactic 的
+  ///      merchantIds 注释）—— 这是**提交内容变更**，不是纯 UI 变更。
+  /// 故按共享层既有惯例做成可选开关，只有 channel_v2 传 true。
+  ///
+  /// 开启后私有形态的页签变为 4 个：启动项 / 生效网吧 / 区域配置 / 本地化。
+  final bool allowMerchantEdit;
+
+  /// 用户反馈 #3 新增（**可选，默认 560 = V1 现状**）：宽屏 Dialog 宽度。
+  /// V2 传放大 30% 后的 728。窄屏走整页 Sheet，本参数不参与。
+  final double dialogWidth;
+
   /// T8c-2 新增（**可选，默认 null，V1 不传 → 执行文件仍是只读文本框**）：
   /// 注入式执行文件选择器（下发文件区，评审 A-4）。注入后执行文件可改，
   /// 提交时按新路径 + 新 group_file_id 发；不注入时这两个值恒等于原策略的值，
@@ -75,6 +94,8 @@ class StartupConfigModal extends ConsumerStatefulWidget {
     this.isAdmin = false,
     this.variant = StrategyVariant.private,
     this.exePicker,
+    this.allowMerchantEdit = false,
+    this.dialogWidth = 560,
     required this.onSuccess,
     List<dynamic> areas = const [],
   });
@@ -112,6 +133,23 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
   int? _exeGroupFileId;
 
   bool get _isPublic => widget.variant == StrategyVariant.public;
+
+  /// 是否显示「生效网吧」页签：公共策略恒有；私有策略仅在显式开启开关时有。
+  bool get _showMerchantsTab => _isPublic || widget.allowMerchantEdit;
+
+  /// 是否显示「区域配置」页签：公共策略无区域概念（web hasArea=false）。
+  bool get _showAreaTab => !_isPublic;
+
+  /// 区域是否可编辑。
+  ///
+  /// 对齐 web `canEditArea = singleSelectedNetbar !== null`
+  /// （LocalStrategyAdd.vue:344-346）：**恰好勾选 1 家网吧**时才能配区域，
+  /// 多选则强制全场（提交时 area 发空 → 后端清空区域）。
+  ///
+  /// 未开启 [StartupConfigModal.allowMerchantEdit]（= V1）时恒为 true，
+  /// 区域编辑行为与改动前一字不差。
+  bool get _areaEditable =>
+      !widget.allowMerchantEdit || _selectedMerchantIds.length == 1;
 
   // --- 本地化字段 ---
   late List<_LocaleFileEntry> _localeFiles;
@@ -165,6 +203,13 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
     // 生效网吧（公共策略）：预选已生效的，并记下原始集合用于 delete_merchants[]
     _originalMerchantIds = widget.item.merchants.map((m) => m.id).toList();
     _selectedMerchantIds = _originalMerchantIds.toSet();
+    // 私有策略的生效网吧挂在 item.merchant（**单数**）上，item.merchants 恒为空列表
+    // （见 TacticItem.merchants 注释：私有接口不返回该字段），故要单独回填一次，
+    // 否则开了 allowMerchantEdit 后一进页签就是"一家都没选"。
+    if (!_isPublic && widget.allowMerchantEdit) {
+      final owner = widget.item.merchant;
+      if (owner != null) _selectedMerchantIds = {owner.id};
+    }
 
     // 区域
     _areaInputController = TextEditingController();
@@ -192,8 +237,14 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
       )];
     }
 
-    _tabController = TabController(length: 3, vsync: this);
+    // 页签数随形态变化：公共=3（启动项/生效网吧/本地化），
+    // V1 私有=3（启动项/区域配置/本地化），V2 私有=4（两者都有）。
+    _tabController = TabController(length: _tabCount, vsync: this);
   }
+
+  /// 启动项 + 本地化恒有，中间两个按形态可选
+  int get _tabCount =>
+      2 + (_showMerchantsTab ? 1 : 0) + (_showAreaTab ? 1 : 0);
 
   @override
   void dispose() {
@@ -297,6 +348,12 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
   Future<void> _handleSave() async {
     if (!_formKey.currentState!.validate()) return;
 
+    // 私有策略开了生效网吧编辑：至少留一家，否则这条策略会变成"不对任何网吧生效"
+    if (!_isPublic && widget.allowMerchantEdit && _selectedMerchantIds.isEmpty) {
+      showTopNotice(context, '请至少选择一个网吧', level: NoticeLevel.error);
+      return;
+    }
+
     setState(() {
       _saving = true;
       _error = null;
@@ -310,7 +367,12 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
               ))
           .toList();
 
-      // 构建 locales
+      // 构建 locales。
+      // 【用户反馈 #6，待验证】本地化文件可以被删到 0 个，此时 locales 为空列表 →
+      // 共享层 _appendLocales 一条 `locales[...]` 键都不发。
+      // 这依赖后端把"没有 locales 键"解释成"清空本地化"。
+      // 若后端实为"没传就保留旧值"，删到 0 个保存后本地化不会消失，
+      // 届时需要后端补一个显式的清空键（如 delete_locales[]）再回来接。
       final locales = _localeFiles
           .where((f) =>
               f.pathController.text.isNotEmpty ||
@@ -334,9 +396,13 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
               ))
           .toList();
 
-      // 构建 area
-      final area =
-          _areaList.where((a) => a.enabled).map((a) => a.range).toList();
+      // 构建 area。
+      // 多选网吧时区域强制全场（web canEditArea 为 false 的等价提交口径）：
+      // 发空列表 → 共享层补 `area[]=''` 占位 → 后端清空区域。
+      // V1（allowMerchantEdit=false）下 _areaEditable 恒 true，此处与改动前等价。
+      final area = _areaEditable
+          ? _areaList.where((a) => a.enabled).map((a) => a.range).toList()
+          : <String>[];
 
       if (_isPublic) {
         // T8c-2：公共策略 → POST /public-tactic/{id}。
@@ -384,6 +450,11 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
           period: periods,
           locales: locales,
           area: area,
+          // 只有开了开关才发 merchants[]；V1 传 null → 请求体与改动前逐字节一致。
+          // 详见 StrategyApi.updateTactic 的 merchantIds 注释（含对 web 的偏离与待验证项）。
+          merchantIds: widget.allowMerchantEdit
+              ? _selectedMerchantIds.toList()
+              : null,
         );
       }
       widget.onSuccess();
@@ -466,10 +537,12 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
             labelStyle:
                 const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             unselectedLabelStyle: const TextStyle(fontSize: 13),
+            // 页签集合与 [_tabCount] / TabBarView.children 必须逐条对应
             tabs: [
               const Tab(text: '启动项'),
-              // T8c-2：公共策略没有生效区域（web hasArea=false），该页签换成「生效网吧」
-              Tab(text: _isPublic ? '生效网吧' : '区域配置'),
+              if (_showMerchantsTab) const Tab(text: '生效网吧'),
+              // 公共策略没有生效区域（web hasArea=false）
+              if (_showAreaTab) const Tab(text: '区域配置'),
               const Tab(text: '本地化'),
             ],
           ),
@@ -482,10 +555,10 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
               children: [
                 SingleChildScrollView(
                     child: _buildStartupForm(isSheet: isSheet)),
-                _isPublic
-                    ? _buildMerchantsForm(isSheet: isSheet)
-                    : SingleChildScrollView(
-                        child: _buildAreaForm(isSheet: isSheet)),
+                if (_showMerchantsTab) _buildMerchantsForm(isSheet: isSheet),
+                if (_showAreaTab)
+                  SingleChildScrollView(
+                      child: _buildAreaForm(isSheet: isSheet)),
                 _buildLocaleForm(isSheet: isSheet),
               ],
             ),
@@ -502,12 +575,19 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
       );
     }
 
+    // 宽度取 min(调用方给的宽, 屏宽-48)，小屏下不越界；
+    // 高度保持 0.9 屏高（已经贴满，不再放大）
+    final screen = MediaQuery.of(context).size;
+    final width = widget.dialogWidth < screen.width - 48
+        ? widget.dialogWidth
+        : screen.width - 48;
+
     return Dialog(
       backgroundColor: Colors.transparent,
       child: Container(
-        width: 560,
+        width: width,
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.9,
+          maxHeight: screen.height * 0.9,
         ),
         decoration: BoxDecoration(
           color: Colors.white,
@@ -695,19 +775,24 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
     );
   }
 
-  // ==================== 生效网吧 Tab（仅公共策略）====================
+  // ============ 生效网吧 Tab（公共策略 + 开了开关的私有策略）============
   Widget _buildMerchantsForm({required bool isSheet}) {
     return StrategyMerchantsPanel(
       api: _api,
-      // 编辑态恒拉全量网吧（web 公共策略不按文件过滤，:1114 loadMerchants() 无参）
+      // 编辑态恒拉全量网吧（web 公共策略不按文件过滤，loadMerchants() 无参；
+      // 私有形态同样走 GET /tactic/merchants 全量）
       initialSelectedIds: _selectedMerchantIds,
       isSheet: isSheet,
+      // setState 是必需的：私有形态下「区域配置」页签要跟着勾选数量联动
+      // （[_areaEditable]，恰好 1 家才可编辑区域）
       onChanged: (ids) => setState(() => _selectedMerchantIds = ids),
     );
   }
 
   // ==================== 区域配置 Tab ====================
   Widget _buildAreaForm({required bool isSheet}) {
+    // 多选网吧时区域强制全场（见 [_areaEditable]）
+    final editable = _areaEditable;
     return Padding(
       padding: EdgeInsets.all(isSheet ? 16 : 24),
       child: Column(
@@ -728,12 +813,45 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
           ),
           const SizedBox(height: 16),
 
+          // 多选/未选网吧时的锁定提示（对齐 web canEditArea 为 false 时的 area-tip）
+          if (!editable) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(LucideIcons.alertTriangle,
+                      size: 14, color: Colors.orange.shade700),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _selectedMerchantIds.isEmpty
+                          ? '请先在「生效网吧」中选择 1 家网吧，才能配置区域。'
+                          : '已选 ${_selectedMerchantIds.length} 家网吧，区域配置强制为全场生效；'
+                              '仅勾选 1 家时才能指定区域。保存后所选网吧的已有区域将被覆盖为全场。',
+                      style: TextStyle(
+                          fontSize: 12, color: Colors.orange.shade700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+
           // 输入行
           Row(
             children: [
               Expanded(
                 child: TextFormField(
                   controller: _areaInputController,
+                  enabled: editable,
                   decoration: _inputDecoration('区域机号: 001-009,020'),
                   style: const TextStyle(fontSize: 13),
                   onFieldSubmitted: (_) => _addArea(),
@@ -741,7 +859,7 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
               ),
               const SizedBox(width: 12),
               ElevatedButton(
-                onPressed: _addArea,
+                onPressed: editable ? _addArea : null,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.iosBlue,
                   foregroundColor: Colors.white,
@@ -759,7 +877,7 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
           const SizedBox(height: 16),
 
           // 区域列表
-          if (_areaList.isEmpty)
+          if (_areaList.isEmpty || !editable)
             Container(
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
@@ -769,7 +887,7 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
               ),
               child: Center(
                 child: Text(
-                  '未添加区域，将全场生效',
+                  editable ? '未添加区域，将全场生效' : '多选网吧时不展示区域列表，保存后按全场生效',
                   style:
                       TextStyle(fontSize: 13, color: Colors.grey.shade500),
                 ),
@@ -892,19 +1010,22 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
                                           : FontWeight.normal,
                                     ),
                                   ),
-                                  if (_localeFiles.length > 1) ...[
-                                    const SizedBox(width: 4),
-                                    InkWell(
-                                      onTap: () => _removeLocaleTab(i),
-                                      child: Icon(
-                                        LucideIcons.x,
-                                        size: 12,
-                                        color: isActive
-                                            ? AppColors.iosBlue
-                                            : Colors.grey.shade400,
-                                      ),
+                                  // 【能力增强，留痕】原条件是 `_localeFiles.length > 1`：
+                                  // 只剩最后 1 个文件时删除按钮消失 → 本地化配置**清不掉**
+                                  // （用户反馈 #6）。改为恒显示，允许删到 0 个。
+                                  // 这是"以前删不掉、现在能删"的能力增强，不是既有行为变更；
+                                  // V1 两个旧页面同样受益。
+                                  const SizedBox(width: 4),
+                                  InkWell(
+                                    onTap: () => _removeLocaleTab(i),
+                                    child: Icon(
+                                      LucideIcons.x,
+                                      size: 12,
+                                      color: isActive
+                                          ? AppColors.iosBlue
+                                          : Colors.grey.shade400,
                                     ),
-                                  ],
+                                  ),
                                 ],
                               ),
                             ),
@@ -941,8 +1062,44 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
               padding: EdgeInsets.all(isSheet ? 16 : 24),
               child: _buildLocaleEditor(_localeFiles[_activeLocaleIndex]),
             ),
-          ),
+          )
+        else
+          // 删到 0 个后的空态（用户反馈 #6：允许清空本地化配置）。
+          // 保存后 locales 为空 → 后端应据此清空本地化，见 _handleSave 注释。
+          Expanded(child: _buildLocaleEmptyState()),
       ],
+    );
+  }
+
+  /// 本地化文件全部删除后的空态
+  Widget _buildLocaleEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(LucideIcons.fileX, size: 36, color: Colors.grey.shade300),
+            const SizedBox(height: 12),
+            Text(
+              '未配置本地化文件',
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '保存后将清空该策略的本地化配置',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: _addLocaleTab,
+              icon: const Icon(LucideIcons.plus, size: 14),
+              label: const Text('添加文件', style: TextStyle(fontSize: 13)),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
