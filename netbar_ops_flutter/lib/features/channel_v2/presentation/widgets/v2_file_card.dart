@@ -290,7 +290,13 @@ class V2FileCard extends StatelessWidget {
               Text(
                 sizeText,
                 maxLines: 1,
-                style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
+                // height 必须显式给：不给时用字体自带行距（中文字体约 1.4），
+                // 会超出 v2CardHeightFor 按 1.25 预算的格高（实测溢出 1px）
+                style: TextStyle(
+                  fontSize: 10,
+                  height: 1.2,
+                  color: Colors.grey.shade500,
+                ),
               ),
           ],
         ),
