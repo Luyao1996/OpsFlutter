@@ -6,7 +6,6 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
-import '../../../../shared/providers/app_providers.dart' show currentNetbarIdProvider;
 import '../../../../shared/providers/permission_provider.dart';
 import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/utils/top_notice.dart';
@@ -407,16 +406,9 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
         exePicker: _exePicker(
           merchantScope: _isPrivate ? row.merchant : null,
         ),
-        // 用户反馈 #5：私有策略编辑态也要能改「生效网吧」。
-        // 该开关只有 V2 传 true，V1 两个旧页面不传 → 仍是 3 个页签、
-        // 提交也不带 merchants[]（见 StartupConfigModal.allowMerchantEdit 注释）。
-        // 公共策略本来就恒有该页签，传 true 对它没有额外影响。
-        allowMerchantEdit: true,
+        // 【留痕】私有编辑态没有「生效网吧」页签、提交也不带 merchants[]：
+        // 生效网吧一旦创建就不可改，这是 web 的原始行为。
         dialogWidth: _kFormDialogWidth,
-        // 用户反馈：生效网吧默认勾当前网吧。编辑态只在策略本身一家都没挂时兜底，
-        // 不覆盖回填（见 StartupConfigModal.defaultMerchantId）。
-        // 共享层不读 currentNetbarProvider，由 V2 显式注入 → V1 不受影响。
-        defaultMerchantId: ref.read(currentNetbarIdProvider),
         onSuccess: _fetch,
       ),
       routeName: '/dialog/startup-config',
@@ -425,22 +417,13 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
 
   /// 新增（含占位行入口）：复用共享层 AddStartupItemModal。
   ///
-  /// **私有策略**：[merchant] 为预选网吧；为 null 时先弹单选网吧选择器——
-  /// AddStartupItemModal 私有形态沿用 V1 的"当前网吧"上下文（只吃一个 netbarId），
-  /// 不先选会在保存时报「请先选择网吧」。
+  /// 两种形态都**不弹前置网吧选择器**——网吧一律在表单的「生效网吧」页签里多选
+  /// （私有靠 `allowMerchantSelect: true` 打开该页签），与 web 一致
+  /// （LocalStrategyAdd.vue 新增/编辑共用同一个多选面板）。
   ///
-  /// **公共策略**：不弹前置选择器——表单里的「生效网吧」页签本身就是多选面板
-  /// （T8c-2 新增），与 web 一致。
+  /// 【留痕】[merchant] 参数保留给占位行入口做语义标注，但**不再预选**：
+  /// 规格要求新增态默认一家都不勾。
   Future<void> _addStrategy({MerchantBrief? merchant, TacticItem? template}) async {
-    MerchantBrief? target = merchant;
-    if (_isPrivate && target == null) {
-      target = await showAdaptive<MerchantBrief>(
-        context,
-        (_) => _MerchantPickerDialog(api: _api, groupFileId: widget.groupFileId),
-        routeName: '/dialog/v2-strategy-merchant-picker',
-      );
-      if (target == null || !mounted) return;
-    }
     final perm = ref.read(permissionProvider);
     await showAdaptive<void>(
       context,
@@ -448,17 +431,20 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
         // 【留痕】zone 是 AddStartupItemModal 的死参数（全文件无 widget.zone 引用），
         // 传值仅为满足 required；V2 没有 zone 概念。
         zone: 'BRANCH',
-        // 公共策略不吃 netbarId（生效网吧走表单内多选）
-        netbarId: target?.id,
+        // 【留痕】两种形态的生效网吧都走表单内多选面板，netbarId 不再参与提交；
+        // 传值仅为保留入口上下文，共享层在 allowMerchantSelect=true 时不读它。
+        netbarId: merchant?.id,
         isAdmin: perm.isManager,
         template: template,
         variant:
             _isPrivate ? StrategyVariant.private : StrategyVariant.public,
         exePicker: _exePicker(),
         dialogWidth: _kFormDialogWidth,
-        // 用户反馈：新增态「生效网吧」默认勾选当前网吧（公共策略形态才有该面板；
-        // 私有形态没有面板，网吧走上面的前置单选器）。
-        defaultMerchantId: ref.read(currentNetbarIdProvider),
+        // 私有新增态用表单内的「生效网吧」多选面板选网吧（默认一家都不勾），
+        // 对齐 web LocalStrategyAdd 的多选行为。该开关只有 V2 传 true，
+        // V1 两个旧页面不传 → 仍是 3 页签、网吧恒取入口 netbarId。
+        // 公共形态恒有该面板，本开关对它无影响。
+        allowMerchantSelect: true,
         onSuccess: _fetch,
       ),
       routeName: '/dialog/add-startup-item',
@@ -470,11 +456,9 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
   /// 【Flutter 用显式 mode 表达，不靠 id==null 隐式判断】：
   /// 这里不构造"没有 id 的 TacticItem"，而是把整行当只读模板传给
   /// AddStartupItemModal（新增态），由它只读取表单字段、绝不读取任何 id。
-  /// 【对 web 的偏离，留痕】web 复制后可在弹窗里重选生效网吧（可多选）；
-  /// Flutter **私有策略**沿用 V1 的单网吧上下文，故先弹单选网吧选择器
-  /// （私有策略本来就一条策略只归属一家网吧，多选只影响"一次建多条"的便利性）。
-  /// **公共策略**复制走表单内的「生效网吧」多选面板，并预选模板原有的生效网吧，
-  /// 与 web 一致。
+  /// 复制态的生效网吧同样走表单内的多选面板：**公共**策略会预选模板原有的生效网吧；
+  /// **私有**策略不预选（TacticItem 私有形态的归属挂在单数 `merchant` 上，
+  /// 共享层新增态只按 `template.merchants` 预选），需用户自行勾选后保存。
   Future<void> _copyRow(TacticItem row) async {
     if (row.isPlaceholder) return;
     _notice('已复制配置，请确认生效网吧并保存', NoticeLevel.success);
@@ -1422,152 +1406,6 @@ class _DisableDurationDialogState extends State<_DisableDurationDialog> {
                 )),
           ],
         ),
-      ),
-    );
-  }
-}
-
-// ===========================================================================
-// 生效网吧选择器（新增/复制前置步骤）
-// ===========================================================================
-
-/// 单选网吧。数据源 GET /tactic/merchants（T8c-0 已实现，全量无分页）。
-///
-/// 【存在的理由，留痕】共享层 AddStartupItemModal 的**私有**形态是 V1 的
-/// "当前网吧"上下文产物，只接受一个 netbarId；V2 弹窗里没有当前网吧，
-/// 不先选会在保存时直接报「请先选择网吧」。
-///
-/// 【本次（用户反馈 #5）的处理范围，留痕】只给**编辑态**
-/// （StartupConfigModal + allowMerchantEdit）补了私有策略的「生效网吧」多选面板；
-/// **新增态**没动，故私有新增仍走本前置单选器。
-/// 结果是"新增只能一次建一家、编辑可改成多家"——与 web 私有弹窗
-/// （LocalStrategyAdd.vue 新增/编辑共用同一个多选面板）仍有差距，
-/// 待编辑态的 merchants 提交经后端验证跑通后再统一。
-class _MerchantPickerDialog extends StatefulWidget {
-  final StrategyApi api;
-  final int? groupFileId;
-
-  const _MerchantPickerDialog({required this.api, this.groupFileId});
-
-  @override
-  State<_MerchantPickerDialog> createState() => _MerchantPickerDialogState();
-}
-
-class _MerchantPickerDialogState extends State<_MerchantPickerDialog> {
-  final TextEditingController _kw = TextEditingController();
-  List<MerchantBrief> _all = const [];
-  bool _loading = true;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  @override
-  void dispose() {
-    _kw.dispose();
-    super.dispose();
-  }
-
-  Future<void> _load() async {
-    try {
-      final list = await widget.api.getTacticMerchants(
-        groupFileId: widget.groupFileId,
-      );
-      if (!mounted) return;
-      setState(() {
-        _all = list;
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = v2ErrMessage(e, '获取网吧列表失败');
-        _loading = false;
-      });
-    }
-  }
-
-  List<MerchantBrief> get _filtered {
-    final q = _kw.text.trim();
-    if (q.isEmpty) return _all;
-    return _all.where((m) => m.name.contains(q)).toList();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final list = _filtered;
-    return ResponsiveDialogScaffold(
-      title: '选择生效网吧',
-      maxWidth: 460,
-      scrollableBody: false,
-      bodyPadding: EdgeInsets.zero,
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            // 外层不再套 SizedBox 定高：isDense 的 InputDecorator 只按
-            // contentPadding + 文字算可见边框高度，套 SizedBox 只会占位不撑边框
-            // （同 _buildHeader 里的根因说明）。纵向 padding 8 → 约 34px。
-            child: TextField(
-              controller: _kw,
-              style: const TextStyle(fontSize: 13),
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                hintText: '搜索网吧名称',
-                hintStyle: TextStyle(fontSize: 12, color: Color(0xFF9CA3AF)),
-                isDense: true,
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ),
-          Expanded(
-            child: _loading
-                ? const Center(
-                    child: Text('加载中...',
-                        style: TextStyle(
-                            fontSize: 13, color: Color(0xFF9CA3AF))))
-                : _error != null
-                    ? Center(
-                        child: Text(_error!,
-                            style: const TextStyle(
-                                fontSize: 13, color: AppColors.red)))
-                    : list.isEmpty
-                        ? const Center(
-                            child: Text('无匹配网吧',
-                                style: TextStyle(
-                                    fontSize: 13, color: Color(0xFF9CA3AF))))
-                        // 网吧数量可能上千 → 虚拟化
-                        : ListView.builder(
-                            itemCount: list.length,
-                            itemBuilder: (_, i) {
-                              final m = list[i];
-                              final groups = m.groups
-                                      ?.map((g) => g.name)
-                                      .where((n) => n.isNotEmpty)
-                                      .join('、') ??
-                                  '';
-                              return ListTile(
-                                dense: true,
-                                title: Text(m.name,
-                                    style: const TextStyle(fontSize: 13)),
-                                subtitle: Text(
-                                  '终端数 ${m.terminalCount}'
-                                  '${groups.isEmpty ? '' : ' · $groups'}',
-                                  style: const TextStyle(
-                                      fontSize: 11, color: Color(0xFF9CA3AF)),
-                                ),
-                                onTap: () => Navigator.of(context).pop(m),
-                              );
-                            },
-                          ),
-          ),
-        ],
       ),
     );
   }

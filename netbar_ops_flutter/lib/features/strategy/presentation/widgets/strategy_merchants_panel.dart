@@ -9,9 +9,10 @@ import '../../data/strategy_api.dart';
 /// 分组下拉 + 关键字搜索 + 全选 + 逐行勾选。数据源 GET /tactic/merchants
 /// （T8c-0 已实现，全量无分页，每个 merchant 带 groups[] 归属）。
 ///
-/// 【使用范围，留痕】T8c-2 时只给公共策略用；本次（用户反馈 #5）起
-/// **私有策略编辑态**在显式开启 `allowMerchantEdit` 时也复用本面板。
-/// V1 两个旧页面不开该开关，仍是"当前网吧"上下文、看不到本面板 → V1 行为不变。
+/// 【使用范围，留痕】公共策略（新增/编辑）恒用本面板；私有策略只有**新增态**
+/// 在调用方显式开启 `allowMerchantSelect` 时才用（V2）。私有**编辑态**没有本面板
+/// —— 生效网吧一旦创建就不可改，这是 web 的原始行为。
+/// V1 两个旧页面两态都不开 → 仍是"当前网吧"上下文、看不到本面板，行为不变。
 ///
 /// 【虚拟化】网吧可达上千家，列表恒走 ListView.builder。
 class StrategyMerchantsPanel extends StatefulWidget {
@@ -28,16 +29,6 @@ class StrategyMerchantsPanel extends StatefulWidget {
 
   final bool isSheet;
 
-  /// 用户反馈 #3 新增（**可选，默认 null → 与改动前一字不差**）：
-  /// 新增态默认勾选的网吧 id（V2 传"顶部 tab 栏当前网吧"）。
-  ///
-  /// 【生效条件，留痕】只有 [initialSelectedIds] 为空（= 新增态 / 无回填）
-  /// **且**该 id 出现在 /tactic/merchants 返回的候选里时才勾；候选里没有就
-  /// 静默跳过，不报错。编辑态的回填集合非空 → 本参数不参与，绝不覆盖回填。
-  /// 不在本组件里读 currentNetbarProvider：那会让共享层对所有调用方（含 V1）
-  /// 生效，必须由调用方显式注入。
-  final int? defaultSelectedMerchantId;
-
   const StrategyMerchantsPanel({
     super.key,
     required this.api,
@@ -45,7 +36,6 @@ class StrategyMerchantsPanel extends StatefulWidget {
     this.groupFileId,
     this.initialSelectedIds = const {},
     this.isSheet = false,
-    this.defaultSelectedMerchantId,
   });
 
   @override
@@ -102,21 +92,12 @@ class _StrategyMerchantsPanelState extends State<StrategyMerchantsPanel> {
         groupFileId: widget.groupFileId,
       );
       if (!mounted) return;
-      // 默认勾选当前网吧：只在"一家都没勾"时补，且必须在候选列表里
-      final int? fallback = widget.defaultSelectedMerchantId;
-      final int? applyId = (_selected.isEmpty &&
-              fallback != null &&
-              list.any((m) => m.id == fallback))
-          ? fallback
-          : null;
+      // 【不做任何默认勾选，留痕】勾选集合只来自 initialSelectedIds（编辑/复制态回填），
+      // 新增态一律"一家都不勾"，由用户显式选择 —— 与 web 一致。
       setState(() {
         _all = list;
         _loading = false;
-        if (applyId != null) _selected.add(applyId);
       });
-      // 回调必须发出去，否则父弹窗的 _selectedMerchantIds 还是空、保存时会报
-      // 「请至少选择一家网吧」。此处已过异步 gap，不在 build 阶段，可以直接调。
-      if (applyId != null) _notify();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -213,7 +194,7 @@ class _StrategyMerchantsPanelState extends State<StrategyMerchantsPanel> {
                 ),
               ),
               const SizedBox(height: 4),
-              // 文案改成两形态通用（本面板现在也给私有策略编辑态用）
+              // 文案两形态通用（公共策略 + 开了开关的私有新增态）
               Text(
                 '至少选择一家网吧；已选 ${_selected.length} 家',
                 style: TextStyle(fontSize: 12, color: Colors.grey.shade500),

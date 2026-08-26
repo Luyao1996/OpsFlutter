@@ -18,7 +18,7 @@ import 'executable_path_picker_field.dart';
 import 'strategy_exe_picker.dart';
 import 'strategy_merchants_panel.dart';
 
-/// 新增启动项弹窗 - 与编辑弹窗保持一致的 3 Tab 结构
+/// 新增启动项弹窗 - Tab 结构随形态变化，见 [_AddStartupItemModalState._tabCount]
 class AddStartupItemModal extends ConsumerStatefulWidget {
   final String zone;
   final int? netbarId;
@@ -56,14 +56,24 @@ class AddStartupItemModal extends ConsumerStatefulWidget {
   /// V2 传放大 30% 后的 728。窄屏走整页 Sheet，本参数不参与。
   final double dialogWidth;
 
-  /// 本轮反馈 #3 新增（**可选，默认 null → V1 行为一字未变**）：
-  /// 「生效网吧」面板新增态默认勾选的网吧 id（V2 传顶部 tab 栏的当前网吧）。
+  /// 本轮新增（**可选，默认 false，V1 两个页面不传 → 行为一字未变**）：
+  /// **私有策略新增态**是否用「生效网吧」多选面板选网吧。
   ///
-  /// 只对**有生效网吧面板的形态**（公共策略）生效；私有形态没有该面板
-  /// （沿用 V1 的"单个 netbarId 上下文"）。复制态若模板自带生效网吧，
-  /// 面板初始集合非空 → 本参数自动让位，不覆盖模板。
-  /// 共享层不读 currentNetbarProvider，一律由调用方注入。
-  final int? defaultMerchantId;
+  /// 【为什么必须是开关而不是无条件开启，留痕】
+  /// V1 两个旧页面（channel_management_page / resource_management_page）新增私有
+  /// 启动项时的上下文就是"当前这一家网吧"（[netbarId]），页面里没有"挑网吧"的语义。
+  /// 无条件多出「生效网吧」页签会：
+  ///   1. 让用户在单网吧页面里把策略建到别的网吧上（UI 语义错位）；
+  ///   2. 把提交的 merchants 来源从 `[netbarId]` 换成面板勾选 —— 这是**提交内容变更**。
+  /// 故按共享层既有惯例做成可选开关，只有 channel_v2 传 true。
+  ///
+  /// - false（V1）：私有 3 页签（启动项 / 区域配置 / 本地化），
+  ///   merchants 恒取 `[netbarId]`，与改动前逐字节一致。
+  /// - true（V2）：私有 4 页签（启动项 / 生效网吧 / 区域配置 / 本地化），
+  ///   merchants 取面板勾选（默认一家都不勾），区域按 [_AddStartupItemModalState._areaEditable] 联动。
+  ///
+  /// 公共形态恒有该面板，本开关对它无影响。
+  final bool allowMerchantSelect;
 
   const AddStartupItemModal({
     super.key,
@@ -78,7 +88,7 @@ class AddStartupItemModal extends ConsumerStatefulWidget {
     this.variant = StrategyVariant.private,
     this.exePicker,
     this.dialogWidth = 560,
-    this.defaultMerchantId,
+    this.allowMerchantSelect = false,
     required this.onSuccess,
   });
 
@@ -106,15 +116,31 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
   final _areaInputController = TextEditingController();
   final List<_AreaEntry> _areaList = [];
 
-  // --- 生效网吧（仅公共策略）---
+  // --- 生效网吧（公共策略 + 开了开关的私有策略）---
   Set<int> _selectedMerchantIds = <int>{};
 
-  /// 用户是否已经动过生效网吧勾选。
-  /// TabBarView 会销毁重建离屏页签，面板每次重建都会重跑"默认勾当前网吧"；
-  /// 一旦用户手动改过（比如故意全部取消），就不再补默认值。
-  bool _merchantsTouched = false;
-
   bool get _isPublic => widget.variant == StrategyVariant.public;
+
+  /// 是否显示「生效网吧」页签：公共策略恒有；私有策略仅在显式开启开关时有。
+  bool get _showMerchantsTab => _isPublic || widget.allowMerchantSelect;
+
+  /// 是否显示「区域配置」页签：公共策略无区域概念（web hasArea=false）。
+  bool get _showAreaTab => !_isPublic;
+
+  /// 启动项 + 本地化恒有，中间两个按形态可选。
+  /// 公共=3，V1 私有=3，V2 私有=4。
+  int get _tabCount =>
+      2 + (_showMerchantsTab ? 1 : 0) + (_showAreaTab ? 1 : 0);
+
+  /// 区域是否可编辑。
+  ///
+  /// 对齐 web `canEditArea = singleSelectedNetbar !== null`
+  /// （LocalStrategyAdd.vue:344-346）：**恰好勾选 1 家网吧**时才能配区域，
+  /// 0 家或多家则强制全场（提交时 area 发空 → 后端按全场处理）。
+  ///
+  /// 没有生效网吧面板时（= V1 私有）恒为 true，区域编辑行为与改动前一字不差。
+  bool get _areaEditable =>
+      !_showMerchantsTab || _selectedMerchantIds.length == 1;
 
   // --- 本地化字段 ---
   final List<_LocaleFileEntry> _localeFiles = [];
@@ -149,7 +175,7 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
         contentController: TextEditingController(),
       ));
     }
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: _tabCount, vsync: this);
   }
 
   /// T8c-1：按「复制」模板预填表单（只读字段，不碰任何主键 id）。
@@ -307,8 +333,8 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
     final currentNetbar = ref.read(currentNetbarProvider);
     final netbarId = widget.netbarId ?? currentNetbar.id;
 
-    if (_isPublic) {
-      // T8c-2：公共策略的生效网吧来自「生效网吧」面板的多选，与"当前网吧"上下文无关
+    if (_showMerchantsTab) {
+      // 生效网吧来自「生效网吧」面板的多选，与"当前网吧"上下文无关
       // （对齐 web handleSave :841-845）
       if (_selectedMerchantIds.isEmpty) {
         showTopNotice(context, '请至少选择一个网吧', level: NoticeLevel.error);
@@ -353,9 +379,12 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
               ))
           .toList();
 
-      // 构建 area
-      final area =
-          _areaList.where((a) => a.enabled).map((a) => a.range).toList();
+      // 构建 area。
+      // 0 家 / 多家网吧时区域强制全场（web canEditArea 为 false 的等价提交口径）。
+      // V1（无生效网吧面板）下 _areaEditable 恒 true，此处与改动前等价。
+      final area = _areaEditable
+          ? _areaList.where((a) => a.enabled).map((a) => a.range).toList()
+          : <String>[];
 
       if (_isPublic) {
         // T8c-2：公共策略 → POST /public-tactic。
@@ -393,8 +422,13 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
           ),
           period: periods.isEmpty ? null : periods,
           locales: locales.isEmpty ? null : locales,
-          // 私有分支下 netbarId 已在上面的校验里确认非空
-          merchantIds: [netbarId!],
+          // 私有新增恒走嵌套键形 merchants[i][id]+merchants[i][area][]
+          // （共享层 _appendPrivateMerchants）。
+          // 开关关闭（V1）时网吧恒为入口上下文的 netbarId（上面的校验已确认非空），
+          // 与改动前逐字节一致；开关打开（V2）时取面板勾选。
+          merchantIds: _showMerchantsTab
+              ? _selectedMerchantIds.toList()
+              : [netbarId!],
           area: area.isEmpty ? null : area,
         );
       }
@@ -435,11 +469,13 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
             labelStyle:
                 const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             unselectedLabelStyle: const TextStyle(fontSize: 13),
+            // 页签集合与 [_tabCount] / TabBarView.children 必须逐条对应
             tabs: [
               const Tab(text: '启动项'),
-              // T8c-2：公共策略没有生效区域（web hasArea=false，
-              // StrategyAddDialog.vue:133 的 area-panel 整块 v-if），该页签换成「生效网吧」
-              Tab(text: _isPublic ? '生效网吧' : '区域配置'),
+              if (_showMerchantsTab) const Tab(text: '生效网吧'),
+              // 公共策略没有生效区域（web hasArea=false，
+              // StrategyAddDialog.vue:133 的 area-panel 整块 v-if）
+              if (_showAreaTab) const Tab(text: '区域配置'),
               const Tab(text: '本地化'),
             ],
           ),
@@ -452,10 +488,10 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
               children: [
                 SingleChildScrollView(
                     child: _buildStartupForm(isSheet: isSheet)),
-                _isPublic
-                    ? _buildMerchantsForm(isSheet: isSheet)
-                    : SingleChildScrollView(
-                        child: _buildAreaForm(isSheet: isSheet)),
+                if (_showMerchantsTab) _buildMerchantsForm(isSheet: isSheet),
+                if (_showAreaTab)
+                  SingleChildScrollView(
+                      child: _buildAreaForm(isSheet: isSheet)),
                 _buildLocaleForm(isSheet: isSheet),
               ],
             ),
@@ -667,7 +703,7 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
     );
   }
 
-  // ==================== 生效网吧 Tab（仅公共策略）====================
+  // ============ 生效网吧 Tab（公共策略 + 开了开关的私有策略）============
   //
   // 【面板状态可被 TabBarView 丢弃，故选中集合由本 State 持有】
   // TabBarView 底层是 PageView，离屏页签可能被销毁重建；把当前选中集合作为
@@ -680,20 +716,19 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
       // （V2 工具栏入口为 null = 全量），避免"先选文件再开页签"时列表被悄悄过滤掉、
       // 用户找不到自己的网吧。web 工具栏入口本身也是传空的。
       groupFileId: widget.resourceId,
+      // 新增态一家都不预勾（复制态例外：initState 已按模板预选）
       initialSelectedIds: _selectedMerchantIds,
-      // 新增态默认勾当前网吧；用户动过之后不再补（见 _merchantsTouched）
-      defaultSelectedMerchantId:
-          _merchantsTouched ? null : widget.defaultMerchantId,
       isSheet: isSheet,
-      onChanged: (ids) => setState(() {
-        _merchantsTouched = true;
-        _selectedMerchantIds = ids;
-      }),
+      // setState 是必需的：私有形态下「区域配置」页签要跟着勾选数量联动
+      // （[_areaEditable]，恰好 1 家才可编辑区域）
+      onChanged: (ids) => setState(() => _selectedMerchantIds = ids),
     );
   }
 
   // ==================== 区域配置 Tab ====================
   Widget _buildAreaForm({required bool isSheet}) {
+    // 0 家 / 多家网吧时区域强制全场（见 [_areaEditable]）
+    final editable = _areaEditable;
     return Padding(
       padding: EdgeInsets.all(isSheet ? 16 : 24),
       child: Column(
@@ -714,12 +749,45 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
           ),
           const SizedBox(height: 16),
 
+          // 0 家 / 多家网吧时的锁定提示（对齐 web canEditArea 为 false 时的 area-tip）
+          if (!editable) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(LucideIcons.alertTriangle,
+                      size: 14, color: Colors.orange.shade700),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _selectedMerchantIds.isEmpty
+                          ? '请先在「生效网吧」中选择 1 家网吧，才能配置区域。'
+                          : '已选 ${_selectedMerchantIds.length} 家网吧，区域配置强制为全场生效；'
+                              '仅勾选 1 家时才能指定区域。',
+                      style: TextStyle(
+                          fontSize: 12, color: Colors.orange.shade700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+
           // 输入行
           Row(
             children: [
               Expanded(
                 child: TextFormField(
                   controller: _areaInputController,
+                  enabled: editable,
                   decoration: _inputDecoration('区域机号: 001-009,020'),
                   style: const TextStyle(fontSize: 13),
                   onFieldSubmitted: (_) => _addArea(),
@@ -727,7 +795,7 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
               ),
               const SizedBox(width: 12),
               ElevatedButton(
-                onPressed: _addArea,
+                onPressed: editable ? _addArea : null,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.iosBlue,
                   foregroundColor: Colors.white,
@@ -744,7 +812,7 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
           const SizedBox(height: 16),
 
           // 区域列表
-          if (_areaList.isEmpty)
+          if (_areaList.isEmpty || !editable)
             Container(
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
@@ -754,7 +822,7 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
               ),
               child: Center(
                 child: Text(
-                  '未添加区域，将全场生效',
+                  editable ? '未添加区域，将全场生效' : '未选 / 多选网吧时不展示区域列表，保存后按全场生效',
                   style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
                 ),
               ),
