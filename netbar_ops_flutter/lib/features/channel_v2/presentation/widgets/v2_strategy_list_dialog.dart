@@ -6,6 +6,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/providers/app_providers.dart' show currentNetbarIdProvider;
 import '../../../../shared/providers/permission_provider.dart';
 import '../../../../shared/utils/adaptive_show.dart';
 import '../../../../shared/utils/top_notice.dart';
@@ -18,6 +19,7 @@ import '../../../strategy/presentation/widgets/strategy_exe_picker.dart';
 import '../../data/channel_v2_api.dart';
 import '../channel_v2_file_actions.dart' show v2ErrMessage, v2ConfirmDanger;
 import 'v2_delivery_exe_picker_dialog.dart';
+import 'v2_pagination_bar.dart';
 
 /// 策略列表弹窗的两种形态。
 ///
@@ -161,6 +163,8 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
   final StrategyApi _api = StrategyApi();
 
   final TextEditingController _searchCtrl = TextEditingController();
+  /// 搜索框边框自绘（见 _buildHeader），聚焦高亮只能靠 FocusNode 自己监听
+  final FocusNode _searchFocus = FocusNode();
   final ScrollController _hScroll = ScrollController();
 
   String _type = 'merchant';
@@ -186,14 +190,21 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
   @override
   void initState() {
     super.initState();
+    _searchFocus.addListener(_onSearchFocusChanged);
     _fetch();
   }
 
   @override
   void dispose() {
+    _searchFocus.removeListener(_onSearchFocusChanged);
+    _searchFocus.dispose();
     _searchCtrl.dispose();
     _hScroll.dispose();
     super.dispose();
+  }
+
+  void _onSearchFocusChanged() {
+    if (mounted) setState(() {});
   }
 
   // ====== 数据 ======
@@ -402,6 +413,10 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
         // 公共策略本来就恒有该页签，传 true 对它没有额外影响。
         allowMerchantEdit: true,
         dialogWidth: _kFormDialogWidth,
+        // 用户反馈：生效网吧默认勾当前网吧。编辑态只在策略本身一家都没挂时兜底，
+        // 不覆盖回填（见 StartupConfigModal.defaultMerchantId）。
+        // 共享层不读 currentNetbarProvider，由 V2 显式注入 → V1 不受影响。
+        defaultMerchantId: ref.read(currentNetbarIdProvider),
         onSuccess: _fetch,
       ),
       routeName: '/dialog/startup-config',
@@ -441,6 +456,9 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
             _isPrivate ? StrategyVariant.private : StrategyVariant.public,
         exePicker: _exePicker(),
         dialogWidth: _kFormDialogWidth,
+        // 用户反馈：新增态「生效网吧」默认勾选当前网吧（公共策略形态才有该面板；
+        // 私有形态没有面板，网吧走上面的前置单选器）。
+        defaultMerchantId: ref.read(currentNetbarIdProvider),
         onSuccess: _fetch,
       ),
       routeName: '/dialog/add-startup-item',
@@ -490,47 +508,90 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
     );
   }
 
-  /// 顶部工具条统一控件高度（用户反馈 #2）。
+  /// 顶部工具条统一控件高度。
   ///
-  /// 原来输入框/下拉写死 34，而旁边 OutlinedButton 走 M3 默认 minimumSize
-  /// （高 40）→ 输入框明显比按钮矮一截。这里把**三者都钉死同一个值**，
-  /// 不再依赖 M3 默认高度（换主题/换 visualDensity 也不会重新错位）。
+  /// 【第二次反馈的真根因，留痕】上一轮把输入框/下拉包进 `SizedBox(height: 40)`
+  /// 就以为等高了，实际没有：
+  ///   1. **输入框/下拉**用的是 InputDecorator（TextField / DropdownButtonFormField）。
+  ///      InputDecorator 的**可见边框**是它自己按内容算出来的 containerHeight，
+  ///      `isDense: true` + 纵向 padding = 0 时 minContainerHeight 被置 0，
+  ///      containerHeight ≈ 一行文字高（约 18~20px）。外面的 SizedBox 只是**占位**
+  ///      40px，并不会把边框撑到 40 → 看上去是个矮盒子顶在 40px 空间的上沿。
+  ///   2. **按钮**这边 minimumSize 又被 VisualDensity 改过：main.dart:373-375 给
+  ///      全局主题设了 `visualDensity: VisualDensity.adaptivePlatformDensity`，
+  ///      桌面端解析为 compact(-2,-2)，baseSizeAdjustment = -8 → `minimumSize`
+  ///      Size(0,40) 实际按 32 生效。
+  /// 于是渲染结果是「输入框≈20 / 按钮≈32」，两者都比 40 矮且互相不等 →
+  /// 用户看到的「输入框明显比按钮矮」。
+  ///
+  /// 【修法】不再依赖 InputDecorator 自己算高度：输入框与下拉的边框改由
+  /// Container 自绘（TextField 用 isCollapsed 完全不画装饰），高度即本常量；
+  /// 按钮外面套 tight 的 SizedBox（ConstrainedBox 会 enforce 外部紧约束，
+  /// 按钮一定是 40）并显式写死 visualDensity，不吃全局 density。
   static const double _kToolbarControlHeight = 40;
+
+  static const Color _kControlBorder = Color(0xFFDCDFE6);
+  static const BorderRadius _kControlRadius =
+      BorderRadius.all(Radius.circular(8));
+
+  /// 工具条控件统一外框（下拉/搜索框共用）
+  static BoxDecoration _controlBox({bool focused = false}) => BoxDecoration(
+        color: Colors.white,
+        borderRadius: _kControlRadius,
+        border: Border.all(
+          color: focused ? AppColors.iosBlue : _kControlBorder,
+          width: focused ? 1.5 : 1,
+        ),
+      );
 
   Widget _buildHeader(bool isNarrow) {
     final perm = ref.watch(permissionProvider);
-    // 按钮统一高度：minimumSize 只管下限，还要 padding 不把高度顶上去
+
+    // 按钮：tight SizedBox 决定最终高度；style 里的 minimumSize/visualDensity 只是
+    // 兜底（避免哪天去掉 SizedBox 又被全局 compact density 缩回 32）
     final buttonStyle = OutlinedButton.styleFrom(
       minimumSize: const Size(0, _kToolbarControlHeight),
       padding: const EdgeInsets.symmetric(horizontal: 16),
+      visualDensity: VisualDensity.standard,
       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      side: const BorderSide(color: _kControlBorder),
+      shape: const RoundedRectangleBorder(borderRadius: _kControlRadius),
     );
 
-    final typeDropdown = SizedBox(
+    Widget toolbarButton(Widget child) => SizedBox(
+          height: _kToolbarControlHeight,
+          child: child,
+        );
+
+    final typeDropdown = Container(
       width: 130,
       height: _kToolbarControlHeight,
-      child: DropdownButtonFormField<String>(
-        initialValue: _type,
-        isDense: true,
-        isExpanded: true,
-        decoration: const InputDecoration(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      alignment: Alignment.center,
+      decoration: _controlBox(),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: _type,
           isDense: true,
-          contentPadding: EdgeInsets.symmetric(horizontal: 10),
-          border: OutlineInputBorder(),
+          // isExpanded：DropdownButton 默认按最宽 item 的固有宽度撑开自己，
+          // 分组名/程序名一长就会顶破固定宽度
+          isExpanded: true,
+          icon: const Icon(LucideIcons.chevronDown,
+              size: 14, color: Color(0xFF9CA3AF)),
+          style: const TextStyle(fontSize: 13, color: Color(0xFF1F2937)),
+          items: [
+            for (final o in _spec.typeOptions)
+              DropdownMenuItem(
+                value: o.value,
+                child: Text(o.label,
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+              ),
+          ],
+          onChanged: (v) {
+            if (v == null) return;
+            setState(() => _type = v);
+          },
         ),
-        style: const TextStyle(fontSize: 13, color: Color(0xFF1F2937)),
-        items: [
-          for (final o in _spec.typeOptions)
-            DropdownMenuItem(
-              value: o.value,
-              child: Text(o.label,
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-        ],
-        onChanged: (v) {
-          if (v == null) return;
-          setState(() => _type = v);
-        },
       ),
     );
 
@@ -540,21 +601,30 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
       'file': '请输入程序名称',
     };
 
-    final searchField = SizedBox(
+    final searchField = Container(
       height: _kToolbarControlHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      alignment: Alignment.center,
+      decoration: _controlBox(focused: _searchFocus.hasFocus),
       child: TextField(
         controller: _searchCtrl,
+        focusNode: _searchFocus,
         style: const TextStyle(fontSize: 13),
         textInputAction: TextInputAction.search,
         onSubmitted: (_) => _search(),
+        // isCollapsed + 全部边框 none + filled:false：InputDecorator 什么都不画、
+        // 也不参与高度决策（全局 inputDecorationTheme 的 filled/enabledBorder/
+        // focusedBorder 会被这里逐项覆盖），盒子由外层 Container 负责
         decoration: InputDecoration(
+          isCollapsed: true,
+          filled: false,
+          contentPadding: EdgeInsets.zero,
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          disabledBorder: InputBorder.none,
           hintText: hintByType[_type] ?? '请输入关键字',
           hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF9CA3AF)),
-          // isDense + 零纵向 padding：让 SizedBox 的 40 完全决定高度，
-          // 文本在其中垂直居中，与按钮齐平
-          isDense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 10),
-          border: const OutlineInputBorder(),
         ),
       ),
     );
@@ -577,13 +647,14 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
         children: [
           typeDropdown,
           SizedBox(width: isNarrow ? 160 : 220, child: searchField),
-          OutlinedButton(
+          toolbarButton(OutlinedButton(
             onPressed: _search,
             style: buttonStyle,
             child: const Text('搜索', style: TextStyle(fontSize: 13)),
-          ),
-          if (perm.isManager) addButton,
+          )),
+          if (perm.isManager) toolbarButton(addButton),
           SizedBox(
+            width: _kToolbarControlHeight,
             height: _kToolbarControlHeight,
             child: IconButton(
               tooltip: '刷新',
@@ -1130,102 +1201,23 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
 
   // ---------- 分页 ----------
 
-  /// 分页条（用户反馈 #1：右下角 `RIGHT OVERFLOWED BY 6.9 PIXELS`）。
-  ///
-  /// 原实现是 `Row + Spacer`：Row 不会收缩，两个 IconButton 各带 48x48 的默认
-  /// minimumSize，加上 90 宽的每页下拉，在窄一点的容器里必然把行撑爆。
-  /// 改为：
-  ///   1. 外层 Wrap(spaceBetween)——放得下时左右分列，放不下就整块换行；
-  ///   2. 右侧控件自己也是 Wrap，可以继续折行；
-  ///   3. 两个翻页 IconButton 去掉 48x48 默认约束，压到 32x32。
+  /// 分页条（用户反馈 #1 的右溢出 6.9px / 「20 条/...」被截断）。
+  /// 已与任务列表弹窗合并为共用组件，见 [V2PaginationBar]。
   Widget _buildPagination(bool isNarrow) {
-    final pageCount = _perPage <= 0 ? 1 : ((_total + _perPage - 1) ~/ _perPage);
-    final maxPage = pageCount < 1 ? 1 : pageCount;
-
-    Widget pageButton(IconData icon, VoidCallback? onPressed) => IconButton(
-          onPressed: onPressed,
-          icon: Icon(icon, size: 18),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          splashRadius: 18,
-        );
-
-    return Wrap(
-      alignment: WrapAlignment.spaceBetween,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: 8,
-      runSpacing: 6,
-      children: [
-        Text('共 $_total 条',
-            style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
-        Wrap(
-          crossAxisAlignment: WrapCrossAlignment.center,
-          spacing: 4,
-          runSpacing: 6,
-          children: [
-            if (!isNarrow)
-              SizedBox(
-                width: 96,
-                height: 32,
-                child: DropdownButtonFormField<int>(
-                  initialValue: _perPage,
-                  isDense: true,
-                  // 不加 isExpanded 时 DropdownButton 按最宽 item 的固有宽度撑开，
-                  // 会顶破外面的 SizedBox
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(horizontal: 8),
-                    border: OutlineInputBorder(),
-                  ),
-                  style:
-                      const TextStyle(fontSize: 12, color: Color(0xFF1F2937)),
-                  items: const [
-                    DropdownMenuItem(
-                        value: 10,
-                        child: Text('10 条/页',
-                            maxLines: 1, overflow: TextOverflow.ellipsis)),
-                    DropdownMenuItem(
-                        value: 20,
-                        child: Text('20 条/页',
-                            maxLines: 1, overflow: TextOverflow.ellipsis)),
-                    DropdownMenuItem(
-                        value: 50,
-                        child: Text('50 条/页',
-                            maxLines: 1, overflow: TextOverflow.ellipsis)),
-                  ],
-                  onChanged: (v) {
-                    if (v == null) return;
-                    _perPage = v;
-                    _page = 1;
-                    _fetch();
-                  },
-                ),
-              ),
-            pageButton(
-              LucideIcons.chevronLeft,
-              _page > 1
-                  ? () {
-                      _page--;
-                      _fetch();
-                    }
-                  : null,
-            ),
-            Text('$_page / $maxPage',
-                style:
-                    const TextStyle(fontSize: 12, color: Color(0xFF1F2937))),
-            pageButton(
-              LucideIcons.chevronRight,
-              _page < maxPage
-                  ? () {
-                      _page++;
-                      _fetch();
-                    }
-                  : null,
-            ),
-          ],
-        ),
-      ],
+    return V2PaginationBar(
+      total: _total,
+      page: _page,
+      perPage: _perPage,
+      isNarrow: isNarrow,
+      onPageChanged: (p) {
+        _page = p;
+        _fetch();
+      },
+      onPerPageChanged: (v) {
+        _perPage = v;
+        _page = 1;
+        _fetch();
+      },
     );
   }
 }
@@ -1517,19 +1509,20 @@ class _MerchantPickerDialogState extends State<_MerchantPickerDialog> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: SizedBox(
-              height: 34,
-              child: TextField(
-                controller: _kw,
-                style: const TextStyle(fontSize: 13),
-                onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
-                  hintText: '搜索网吧名称',
-                  hintStyle: TextStyle(fontSize: 12, color: Color(0xFF9CA3AF)),
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 10),
-                  border: OutlineInputBorder(),
-                ),
+            // 外层不再套 SizedBox 定高：isDense 的 InputDecorator 只按
+            // contentPadding + 文字算可见边框高度，套 SizedBox 只会占位不撑边框
+            // （同 _buildHeader 里的根因说明）。纵向 padding 8 → 约 34px。
+            child: TextField(
+              controller: _kw,
+              style: const TextStyle(fontSize: 13),
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                hintText: '搜索网吧名称',
+                hintStyle: TextStyle(fontSize: 12, color: Color(0xFF9CA3AF)),
+                isDense: true,
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                border: OutlineInputBorder(),
               ),
             ),
           ),

@@ -88,6 +88,14 @@ class StartupConfigModal extends ConsumerStatefulWidget {
   /// 提交内容与改动前逐字节一致。
   final StrategyExePicker? exePicker;
 
+  /// 本轮反馈 #3 新增（**可选，默认 null → V1 行为一字未变**）：
+  /// 「生效网吧」面板的**兜底**默认勾选（V2 传顶部 tab 栏的当前网吧）。
+  ///
+  /// 【编辑态不覆盖回填，留痕】编辑态的勾选来自策略自身（公共 = item.merchants，
+  /// 私有 = item.merchant），只有回填结果为空时本参数才补一家；回填非空时
+  /// [StrategyMerchantsPanel] 内部也会因 initialSelectedIds 非空而忽略它。
+  final int? defaultMerchantId;
+
   const StartupConfigModal({
     super.key,
     required this.item,
@@ -96,6 +104,7 @@ class StartupConfigModal extends ConsumerStatefulWidget {
     this.exePicker,
     this.allowMerchantEdit = false,
     this.dialogWidth = 560,
+    this.defaultMerchantId,
     required this.onSuccess,
     List<dynamic> areas = const [],
   });
@@ -127,6 +136,9 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
 
   /// 编辑前的生效网吧（提交时作为 delete_merchants[]，先删后加）
   late List<int> _originalMerchantIds;
+
+  /// 用户是否已经动过生效网吧勾选（TabBarView 重建面板时不再重复补默认值）
+  bool _merchantsTouched = false;
 
   // --- 执行文件（注入 exePicker 时可改；否则恒为原值）---
   late TextEditingController _pathController;
@@ -782,10 +794,17 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
       // 编辑态恒拉全量网吧（web 公共策略不按文件过滤，loadMerchants() 无参；
       // 私有形态同样走 GET /tactic/merchants 全量）
       initialSelectedIds: _selectedMerchantIds,
+      // 兜底默认值：只有回填为空（策略上没有任何生效网吧）时才补当前网吧，
+      // 回填非空时面板内部直接忽略本参数 → 不会覆盖已有生效网吧
+      defaultSelectedMerchantId:
+          _merchantsTouched ? null : widget.defaultMerchantId,
       isSheet: isSheet,
       // setState 是必需的：私有形态下「区域配置」页签要跟着勾选数量联动
       // （[_areaEditable]，恰好 1 家才可编辑区域）
-      onChanged: (ids) => setState(() => _selectedMerchantIds = ids),
+      onChanged: (ids) => setState(() {
+        _merchantsTouched = true;
+        _selectedMerchantIds = ids;
+      }),
     );
   }
 

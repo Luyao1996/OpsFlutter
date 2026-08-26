@@ -7,6 +7,7 @@ import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../data/channel_v2_api.dart';
 import '../../data/channel_v2_models.dart';
 import '../channel_v2_file_actions.dart' show v2ErrMessage;
+import 'v2_pagination_bar.dart';
 
 /// 任务列表弹窗（对齐 web channel-v2/dialogs/TaskListDialog.vue）。
 ///
@@ -414,67 +415,26 @@ class _V2TaskListDialogState extends State<V2TaskListDialog> {
     );
   }
 
-  // ---------- 分页（与 v2_strategy_list_dialog 同一范式） ----------
+  // ---------- 分页 ----------
 
+  /// 用户反馈：本行原来是 `Row + Spacer` + `SizedBox(width:90)` 包
+  /// DropdownButtonFormField，且**漏了 `isExpanded: true`** → DropdownButton 按最宽
+  /// item 的固有宽度撑开自己，把 90px 顶爆（右溢出）。现统一走共用分页条。
   Widget _buildPagination(bool isNarrow) {
-    final pageCount = _perPage <= 0 ? 1 : ((_total + _perPage - 1) ~/ _perPage);
-    final maxPage = pageCount < 1 ? 1 : pageCount;
-    return Row(
-      children: [
-        Text('共 $_total 条',
-            style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
-        const Spacer(),
-        if (!isNarrow) ...[
-          SizedBox(
-            width: 90,
-            height: 32,
-            child: DropdownButtonFormField<int>(
-              initialValue: _perPage,
-              isDense: true,
-              decoration: const InputDecoration(
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(horizontal: 8),
-                border: OutlineInputBorder(),
-              ),
-              style: const TextStyle(fontSize: 12, color: Color(0xFF1F2937)),
-              items: const [
-                DropdownMenuItem(value: 10, child: Text('10 条/页')),
-                DropdownMenuItem(value: 20, child: Text('20 条/页')),
-                DropdownMenuItem(value: 50, child: Text('50 条/页')),
-              ],
-              onChanged: (v) {
-                if (v == null) return;
-                _perPage = v;
-                _page = 1;
-                _fetch();
-              },
-            ),
-          ),
-          const SizedBox(width: 8),
-        ],
-        IconButton(
-          onPressed: _page > 1
-              ? () {
-                  _page--;
-                  _fetch();
-                }
-              : null,
-          icon: const Icon(LucideIcons.chevronLeft, size: 18),
-          splashRadius: 18,
-        ),
-        Text('$_page / $maxPage',
-            style: const TextStyle(fontSize: 12, color: Color(0xFF1F2937))),
-        IconButton(
-          onPressed: _page < maxPage
-              ? () {
-                  _page++;
-                  _fetch();
-                }
-              : null,
-          icon: const Icon(LucideIcons.chevronRight, size: 18),
-          splashRadius: 18,
-        ),
-      ],
+    return V2PaginationBar(
+      total: _total,
+      page: _page,
+      perPage: _perPage,
+      isNarrow: isNarrow,
+      onPageChanged: (p) {
+        _page = p;
+        _fetch();
+      },
+      onPerPageChanged: (v) {
+        _perPage = v;
+        _page = 1;
+        _fetch();
+      },
     );
   }
 }

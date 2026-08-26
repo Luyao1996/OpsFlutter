@@ -56,6 +56,15 @@ class AddStartupItemModal extends ConsumerStatefulWidget {
   /// V2 传放大 30% 后的 728。窄屏走整页 Sheet，本参数不参与。
   final double dialogWidth;
 
+  /// 本轮反馈 #3 新增（**可选，默认 null → V1 行为一字未变**）：
+  /// 「生效网吧」面板新增态默认勾选的网吧 id（V2 传顶部 tab 栏的当前网吧）。
+  ///
+  /// 只对**有生效网吧面板的形态**（公共策略）生效；私有形态没有该面板
+  /// （沿用 V1 的"单个 netbarId 上下文"）。复制态若模板自带生效网吧，
+  /// 面板初始集合非空 → 本参数自动让位，不覆盖模板。
+  /// 共享层不读 currentNetbarProvider，一律由调用方注入。
+  final int? defaultMerchantId;
+
   const AddStartupItemModal({
     super.key,
     required this.zone,
@@ -69,6 +78,7 @@ class AddStartupItemModal extends ConsumerStatefulWidget {
     this.variant = StrategyVariant.private,
     this.exePicker,
     this.dialogWidth = 560,
+    this.defaultMerchantId,
     required this.onSuccess,
   });
 
@@ -98,6 +108,11 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
 
   // --- 生效网吧（仅公共策略）---
   Set<int> _selectedMerchantIds = <int>{};
+
+  /// 用户是否已经动过生效网吧勾选。
+  /// TabBarView 会销毁重建离屏页签，面板每次重建都会重跑"默认勾当前网吧"；
+  /// 一旦用户手动改过（比如故意全部取消），就不再补默认值。
+  bool _merchantsTouched = false;
 
   bool get _isPublic => widget.variant == StrategyVariant.public;
 
@@ -666,8 +681,14 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
       // 用户找不到自己的网吧。web 工具栏入口本身也是传空的。
       groupFileId: widget.resourceId,
       initialSelectedIds: _selectedMerchantIds,
+      // 新增态默认勾当前网吧；用户动过之后不再补（见 _merchantsTouched）
+      defaultSelectedMerchantId:
+          _merchantsTouched ? null : widget.defaultMerchantId,
       isSheet: isSheet,
-      onChanged: (ids) => setState(() => _selectedMerchantIds = ids),
+      onChanged: (ids) => setState(() {
+        _merchantsTouched = true;
+        _selectedMerchantIds = ids;
+      }),
     );
   }
 

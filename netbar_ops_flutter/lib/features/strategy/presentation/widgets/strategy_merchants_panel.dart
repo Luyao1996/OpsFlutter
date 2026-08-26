@@ -28,6 +28,16 @@ class StrategyMerchantsPanel extends StatefulWidget {
 
   final bool isSheet;
 
+  /// 用户反馈 #3 新增（**可选，默认 null → 与改动前一字不差**）：
+  /// 新增态默认勾选的网吧 id（V2 传"顶部 tab 栏当前网吧"）。
+  ///
+  /// 【生效条件，留痕】只有 [initialSelectedIds] 为空（= 新增态 / 无回填）
+  /// **且**该 id 出现在 /tactic/merchants 返回的候选里时才勾；候选里没有就
+  /// 静默跳过，不报错。编辑态的回填集合非空 → 本参数不参与，绝不覆盖回填。
+  /// 不在本组件里读 currentNetbarProvider：那会让共享层对所有调用方（含 V1）
+  /// 生效，必须由调用方显式注入。
+  final int? defaultSelectedMerchantId;
+
   const StrategyMerchantsPanel({
     super.key,
     required this.api,
@@ -35,6 +45,7 @@ class StrategyMerchantsPanel extends StatefulWidget {
     this.groupFileId,
     this.initialSelectedIds = const {},
     this.isSheet = false,
+    this.defaultSelectedMerchantId,
   });
 
   @override
@@ -43,6 +54,21 @@ class StrategyMerchantsPanel extends StatefulWidget {
 
 class _StrategyMerchantsPanelState extends State<StrategyMerchantsPanel> {
   final TextEditingController _kw = TextEditingController();
+
+  /// 筛选行控件统一高度（边框由 Container 自绘，见 build 内注释）
+  static const double _kFilterHeight = 36;
+
+  /// 搜索框边框自绘 → 聚焦高亮只能自己监听 FocusNode
+  final FocusNode _kwFocus = FocusNode();
+
+  static BoxDecoration _filterBox({bool focused = false}) => BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: focused ? AppColors.iosBlue : const Color(0xFFDCDFE6),
+          width: focused ? 1.5 : 1,
+        ),
+      );
 
   List<MerchantBrief> _all = const [];
   late Set<int> _selected;
@@ -54,13 +80,20 @@ class _StrategyMerchantsPanelState extends State<StrategyMerchantsPanel> {
   void initState() {
     super.initState();
     _selected = {...widget.initialSelectedIds};
+    _kwFocus.addListener(_onKwFocusChanged);
     _load();
   }
 
   @override
   void dispose() {
+    _kwFocus.removeListener(_onKwFocusChanged);
+    _kwFocus.dispose();
     _kw.dispose();
     super.dispose();
+  }
+
+  void _onKwFocusChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _load() async {
@@ -69,10 +102,21 @@ class _StrategyMerchantsPanelState extends State<StrategyMerchantsPanel> {
         groupFileId: widget.groupFileId,
       );
       if (!mounted) return;
+      // 默认勾选当前网吧：只在"一家都没勾"时补，且必须在候选列表里
+      final int? fallback = widget.defaultSelectedMerchantId;
+      final int? applyId = (_selected.isEmpty &&
+              fallback != null &&
+              list.any((m) => m.id == fallback))
+          ? fallback
+          : null;
       setState(() {
         _all = list;
         _loading = false;
+        if (applyId != null) _selected.add(applyId);
       });
+      // 回调必须发出去，否则父弹窗的 _selectedMerchantIds 还是空、保存时会报
+      // 「请至少选择一家网吧」。此处已过异步 gap，不在 build 阶段，可以直接调。
+      if (applyId != null) _notify();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -180,59 +224,80 @@ class _StrategyMerchantsPanelState extends State<StrategyMerchantsPanel> {
               // 就把 130 撑爆 → 整行 RIGHT OVERFLOWED。改为
               //   1. isExpanded:true + item 文本 ellipsis（下拉不再按内容撑宽）
               //   2. 两个控件都用 Expanded 按比例分配（窄容器下一起收缩，不会溢出）
+              //
+              // 【等高修复，与 v2_strategy_list_dialog 同一根因】原来两个控件都是
+              // InputDecorator（DropdownButtonFormField / TextField）套 SizedBox(36)：
+              // isDense 时 InputDecorator 的可见边框按自身内容算高度，SizedBox 只占位
+              // 不撑边框 → 下拉≈36、输入框≈18，肉眼明显不齐。现在边框一律由 Container
+              // 自绘，高度恒为 _kFilterHeight。
               Row(
                 children: [
                   Expanded(
                     flex: 2,
-                    child: SizedBox(
-                      height: 36,
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _groupFilter,
-                        isDense: true,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
+                    child: Container(
+                      height: _kFilterHeight,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      alignment: Alignment.center,
+                      decoration: _filterBox(),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _groupFilter,
                           isDense: true,
-                          hintText: '所属分组',
-                          contentPadding:
-                              EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                          border: OutlineInputBorder(),
+                          isExpanded: true,
+                          hint: const Text('所属分组',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontSize: 12, color: Color(0xFF9CA3AF))),
+                          icon: const Icon(Icons.keyboard_arrow_down,
+                              size: 16, color: Color(0xFF9CA3AF)),
+                          style: const TextStyle(
+                              fontSize: 12, color: Color(0xFF1F2937)),
+                          items: [
+                            const DropdownMenuItem<String>(
+                                value: null,
+                                child: Text('全部分组',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis)),
+                            for (final g in _groupOptions)
+                              DropdownMenuItem(
+                                value: g,
+                                child: Text(g,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
+                              ),
+                          ],
+                          onChanged: (v) => setState(() => _groupFilter = v),
                         ),
-                        style: const TextStyle(
-                            fontSize: 12, color: Color(0xFF1F2937)),
-                        items: [
-                          const DropdownMenuItem<String>(
-                              value: null,
-                              child: Text('全部分组',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis)),
-                          for (final g in _groupOptions)
-                            DropdownMenuItem(
-                              value: g,
-                              child: Text(g,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis),
-                            ),
-                        ],
-                        onChanged: (v) => setState(() => _groupFilter = v),
                       ),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     flex: 3,
-                    child: SizedBox(
-                      height: 36,
+                    child: Container(
+                      height: _kFilterHeight,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      alignment: Alignment.center,
+                      decoration: _filterBox(focused: _kwFocus.hasFocus),
                       child: TextField(
                         controller: _kw,
+                        focusNode: _kwFocus,
                         style: const TextStyle(fontSize: 13),
                         onChanged: (_) => setState(() {}),
+                        // isCollapsed + 边框全 none + filled:false：装饰完全交给外层
+                        // Container（同时压掉全局 inputDecorationTheme 的 filled/边框）
                         decoration: const InputDecoration(
+                          isCollapsed: true,
+                          filled: false,
+                          contentPadding: EdgeInsets.zero,
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          disabledBorder: InputBorder.none,
                           hintText: '搜索网吧 / 分组',
                           hintStyle:
                               TextStyle(fontSize: 12, color: Color(0xFF9CA3AF)),
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 10),
-                          border: OutlineInputBorder(),
                         ),
                       ),
                     ),
