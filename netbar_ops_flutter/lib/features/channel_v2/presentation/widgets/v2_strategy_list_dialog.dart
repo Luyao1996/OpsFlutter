@@ -19,6 +19,7 @@ import '../../data/channel_v2_api.dart';
 import '../channel_v2_file_actions.dart' show v2ErrMessage, v2ConfirmDanger;
 import 'v2_delivery_exe_picker_dialog.dart';
 import 'v2_pagination_bar.dart';
+import 'v2_toolbar_controls.dart';
 
 /// 策略列表弹窗的两种形态。
 ///
@@ -162,7 +163,10 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
   final StrategyApi _api = StrategyApi();
 
   final TextEditingController _searchCtrl = TextEditingController();
-  /// 搜索框边框自绘（见 _buildHeader），聚焦高亮只能靠 FocusNode 自己监听
+
+  /// 聚焦高亮由 [V2ToolbarTextField] 内部监听（边框是它自绘的，
+  /// InputDecorator 的 focusedBorder 已被置 none）；这里只负责持有与释放，
+  /// 本弹窗不再为焦点变化整体 rebuild。
   final FocusNode _searchFocus = FocusNode();
   final ScrollController _hScroll = ScrollController();
 
@@ -189,21 +193,15 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
   @override
   void initState() {
     super.initState();
-    _searchFocus.addListener(_onSearchFocusChanged);
     _fetch();
   }
 
   @override
   void dispose() {
-    _searchFocus.removeListener(_onSearchFocusChanged);
     _searchFocus.dispose();
     _searchCtrl.dispose();
     _hScroll.dispose();
     super.dispose();
-  }
-
-  void _onSearchFocusChanged() {
-    if (mounted) setState(() {});
   }
 
   // ====== 数据 ======
@@ -421,8 +419,11 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
   /// （私有靠 `allowMerchantSelect: true` 打开该页签），与 web 一致
   /// （LocalStrategyAdd.vue 新增/编辑共用同一个多选面板）。
   ///
-  /// 【留痕】[merchant] 参数保留给占位行入口做语义标注，但**不再预选**：
-  /// 规格要求新增态默认一家都不勾。
+  /// 【生效网吧的初始勾选，留痕】按**入口意图**分两种，不做任何与用户操作无关的
+  /// 自动勾选：
+  ///   - 工具栏「新增」（[merchant] 为 null）：一家都不勾，用户自己在面板里选；
+  ///   - 占位行「新增策略」（[merchant] = 该行网吧）：预勾这一家，用户可再增删。
+  ///     这是承接用户"给这家网吧建策略"的显式点击，不是默认值。
   Future<void> _addStrategy({MerchantBrief? merchant, TacticItem? template}) async {
     final perm = ref.read(permissionProvider);
     await showAdaptive<void>(
@@ -431,9 +432,8 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
         // 【留痕】zone 是 AddStartupItemModal 的死参数（全文件无 widget.zone 引用），
         // 传值仅为满足 required；V2 没有 zone 概念。
         zone: 'BRANCH',
-        // 【留痕】两种形态的生效网吧都走表单内多选面板，netbarId 不再参与提交；
-        // 传值仅为保留入口上下文，共享层在 allowMerchantSelect=true 时不读它。
-        netbarId: merchant?.id,
+        // 【留痕】不传 netbarId：它只服务于共享层"没有生效网吧面板时以单个网吧
+        // 上下文提交"的 V1 旁路；V2 两种形态都走表单内多选面板，传了也不会被读。
         isAdmin: perm.isManager,
         template: template,
         variant:
@@ -445,6 +445,9 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
         // V1 两个旧页面不传 → 仍是 3 页签、网吧恒取入口 netbarId。
         // 公共形态恒有该面板，本开关对它无影响。
         allowMerchantSelect: true,
+        // 见本方法文档：占位行入口预勾该行网吧，工具栏入口一家都不勾
+        initialSelectedMerchantIds:
+            merchant == null ? const <int>{} : <int>{merchant.id},
         onSuccess: _fetch,
       ),
       routeName: '/dialog/add-startup-item',
@@ -456,9 +459,10 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
   /// 【Flutter 用显式 mode 表达，不靠 id==null 隐式判断】：
   /// 这里不构造"没有 id 的 TacticItem"，而是把整行当只读模板传给
   /// AddStartupItemModal（新增态），由它只读取表单字段、绝不读取任何 id。
-  /// 复制态的生效网吧同样走表单内的多选面板：**公共**策略会预选模板原有的生效网吧；
-  /// **私有**策略不预选（TacticItem 私有形态的归属挂在单数 `merchant` 上，
-  /// 共享层新增态只按 `template.merchants` 预选），需用户自行勾选后保存。
+  /// 复制态的生效网吧同样走表单内的多选面板：**公共**策略会预选模板原有的生效网吧
+  /// （共享层按 `template.merchants` 预选）；**私有**策略不预选——私有 TacticItem 的
+  /// 归属挂在单数 `merchant` 上、不在 `merchants` 里，且顶部已提示"请确认生效网吧"。
+  /// 【未定，待用户拍板】私有复制是否也该预勾源网吧（同占位行入口的口径）。
   Future<void> _copyRow(TacticItem row) async {
     if (row.isPlaceholder) return;
     _notice('已复制配置，请确认生效网吧并保存', NoticeLevel.success);
@@ -492,135 +496,22 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
     );
   }
 
-  /// 顶部工具条统一控件高度。
+  /// 顶部工具条控件全部走 [v2_toolbar_controls]（[kV2ControlHeight] 是唯一真源）。
   ///
-  /// 【第二次反馈的真根因，留痕】上一轮把输入框/下拉包进 `SizedBox(height: 40)`
-  /// 就以为等高了，实际没有：
-  ///   1. **输入框/下拉**用的是 InputDecorator（TextField / DropdownButtonFormField）。
-  ///      InputDecorator 的**可见边框**是它自己按内容算出来的 containerHeight，
-  ///      `isDense: true` + 纵向 padding = 0 时 minContainerHeight 被置 0，
-  ///      containerHeight ≈ 一行文字高（约 18~20px）。外面的 SizedBox 只是**占位**
-  ///      40px，并不会把边框撑到 40 → 看上去是个矮盒子顶在 40px 空间的上沿。
-  ///   2. **按钮**这边 minimumSize 又被 VisualDensity 改过：main.dart:373-375 给
-  ///      全局主题设了 `visualDensity: VisualDensity.adaptivePlatformDensity`，
-  ///      桌面端解析为 compact(-2,-2)，baseSizeAdjustment = -8 → `minimumSize`
-  ///      Size(0,40) 实际按 32 生效。
-  /// 于是渲染结果是「输入框≈20 / 按钮≈32」，两者都比 40 矮且互相不等 →
-  /// 用户看到的「输入框明显比按钮矮」。
-  ///
-  /// 【修法】不再依赖 InputDecorator 自己算高度：输入框与下拉的边框改由
-  /// Container 自绘（TextField 用 isCollapsed 完全不画装饰），高度即本常量；
-  /// 按钮外面套 tight 的 SizedBox（ConstrainedBox 会 enforce 外部紧约束，
-  /// 按钮一定是 40）并显式写死 visualDensity，不吃全局 density。
-  static const double _kToolbarControlHeight = 40;
-
-  static const Color _kControlBorder = Color(0xFFDCDFE6);
-  static const BorderRadius _kControlRadius =
-      BorderRadius.all(Radius.circular(8));
-
-  /// 工具条控件统一外框（下拉/搜索框共用）
-  static BoxDecoration _controlBox({bool focused = false}) => BoxDecoration(
-        color: Colors.white,
-        borderRadius: _kControlRadius,
-        border: Border.all(
-          color: focused ? AppColors.iosBlue : _kControlBorder,
-          width: focused ? 1.5 : 1,
-        ),
-      );
-
+  /// 【为什么不能在本文件里各写各的，留痕】前两轮就是在这里就地补高度，补完
+  /// 别的弹窗照旧矮。根因有两条且方向相反（按钮被全局
+  /// `visualDensity: adaptivePlatformDensity` 压到 32；输入框/下拉的边框由
+  /// InputDecorator 自算、外层 SizedBox 只占位不撑边框），详见
+  /// `v2_toolbar_controls.dart` 文件头。本文件只保留「刷新」这个 IconButton
+  /// 的尺寸对齐，其余一律用共用控件。
   Widget _buildHeader(bool isNarrow) {
     final perm = ref.watch(permissionProvider);
 
-    // 按钮：tight SizedBox 决定最终高度；style 里的 minimumSize/visualDensity 只是
-    // 兜底（避免哪天去掉 SizedBox 又被全局 compact density 缩回 32）
-    final buttonStyle = OutlinedButton.styleFrom(
-      minimumSize: const Size(0, _kToolbarControlHeight),
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      visualDensity: VisualDensity.standard,
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      side: const BorderSide(color: _kControlBorder),
-      shape: const RoundedRectangleBorder(borderRadius: _kControlRadius),
-    );
-
-    Widget toolbarButton(Widget child) => SizedBox(
-          height: _kToolbarControlHeight,
-          child: child,
-        );
-
-    final typeDropdown = Container(
-      width: 130,
-      height: _kToolbarControlHeight,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      alignment: Alignment.center,
-      decoration: _controlBox(),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: _type,
-          isDense: true,
-          // isExpanded：DropdownButton 默认按最宽 item 的固有宽度撑开自己，
-          // 分组名/程序名一长就会顶破固定宽度
-          isExpanded: true,
-          icon: const Icon(LucideIcons.chevronDown,
-              size: 14, color: Color(0xFF9CA3AF)),
-          style: const TextStyle(fontSize: 13, color: Color(0xFF1F2937)),
-          items: [
-            for (final o in _spec.typeOptions)
-              DropdownMenuItem(
-                value: o.value,
-                child: Text(o.label,
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
-              ),
-          ],
-          onChanged: (v) {
-            if (v == null) return;
-            setState(() => _type = v);
-          },
-        ),
-      ),
-    );
-
-    final hintByType = {
+    const hintByType = {
       'merchant': '请输入网吧名称',
       'group': '请输入分组名称',
       'file': '请输入程序名称',
     };
-
-    final searchField = Container(
-      height: _kToolbarControlHeight,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      alignment: Alignment.center,
-      decoration: _controlBox(focused: _searchFocus.hasFocus),
-      child: TextField(
-        controller: _searchCtrl,
-        focusNode: _searchFocus,
-        style: const TextStyle(fontSize: 13),
-        textInputAction: TextInputAction.search,
-        onSubmitted: (_) => _search(),
-        // isCollapsed + 全部边框 none + filled:false：InputDecorator 什么都不画、
-        // 也不参与高度决策（全局 inputDecorationTheme 的 filled/enabledBorder/
-        // focusedBorder 会被这里逐项覆盖），盒子由外层 Container 负责
-        decoration: InputDecoration(
-          isCollapsed: true,
-          filled: false,
-          contentPadding: EdgeInsets.zero,
-          border: InputBorder.none,
-          enabledBorder: InputBorder.none,
-          focusedBorder: InputBorder.none,
-          disabledBorder: InputBorder.none,
-          hintText: hintByType[_type] ?? '请输入关键字',
-          hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF9CA3AF)),
-        ),
-      ),
-    );
-
-    // T8c-2：两个 variant 的新增都已接通（共享层表单按 variant 分流
-    // merchants 键形与保存端点），不再置灰。
-    final addButton = OutlinedButton.icon(
-      onPressed: () => _addStrategy(),
-      style: buttonStyle,
-      icon: const Icon(LucideIcons.plus, size: 14),
-      label: const Text('添加', style: TextStyle(fontSize: 13)),
-    );
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
@@ -629,24 +520,38 @@ class _V2StrategyListDialogState extends ConsumerState<V2StrategyListDialog> {
         runSpacing: 8,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          typeDropdown,
-          SizedBox(width: isNarrow ? 160 : 220, child: searchField),
-          toolbarButton(OutlinedButton(
-            onPressed: _search,
-            style: buttonStyle,
-            child: const Text('搜索', style: TextStyle(fontSize: 13)),
-          )),
-          if (perm.isManager) toolbarButton(addButton),
+          V2ToolbarDropdown<String>(
+            value: _type,
+            options: _spec.typeOptions,
+            onChanged: (v) => setState(() => _type = v),
+          ),
+          V2ToolbarTextField(
+            controller: _searchCtrl,
+            focusNode: _searchFocus,
+            width: isNarrow ? 160 : 220,
+            hintText: hintByType[_type] ?? '请输入关键字',
+            onSubmitted: (_) => _search(),
+          ),
+          V2ToolbarButton(label: '搜索', onPressed: _search),
+          // T8c-2：两个 variant 的新增都已接通（共享层表单按 variant 分流
+          // merchants 键形与保存端点），不再置灰。
+          if (perm.isManager)
+            V2ToolbarButton(
+              label: '添加',
+              icon: LucideIcons.plus,
+              onPressed: () => _addStrategy(),
+            ),
+          // 刷新是纯图标按钮：IconButton 默认 48x48 且会吃全局 density，
+          // 这里压成与其余控件同高的正方形
           SizedBox(
-            width: _kToolbarControlHeight,
-            height: _kToolbarControlHeight,
+            width: kV2ControlHeight,
+            height: kV2ControlHeight,
             child: IconButton(
               tooltip: '刷新',
               onPressed: _fetch,
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(
-                  minWidth: _kToolbarControlHeight,
-                  minHeight: _kToolbarControlHeight),
+                  minWidth: kV2ControlHeight, minHeight: kV2ControlHeight),
               icon: Icon(LucideIcons.refreshCw,
                   size: 16, color: Colors.grey.shade600),
             ),

@@ -8,6 +8,7 @@ import '../../../../shared/widgets/responsive_dialog_scaffold.dart';
 import '../../../strategy/presentation/widgets/strategy_exe_picker.dart';
 import '../../data/channel_v2_api.dart';
 import '../../data/channel_v2_models.dart';
+import 'v2_toolbar_controls.dart';
 
 /// 「下发文件区」执行文件选择器（T8c-2 新增，评审 A-4）。
 ///
@@ -251,35 +252,24 @@ class _V2DeliveryExePickerDialogState
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            // 搜索框与按钮统一走 v2_toolbar_controls 三件套：原来是
+            // `SizedBox(height: 34)` 包 TextField + 裸 OutlinedButton，
+            // 前者的边框只有 InputDecorator 自算的 ~20px、后者被全局 density
+            // 压到 32px，肉眼就是「搜索框比按钮矮」（用户第三次反馈的位置）。
             child: Row(
               children: [
                 Expanded(
-                  child: SizedBox(
-                    height: 34,
-                    child: TextField(
-                      controller: _kw,
-                      style: const TextStyle(fontSize: 13),
-                      textInputAction: TextInputAction.search,
-                      onSubmitted: (_) => _runSearch(),
-                      onChanged: (v) {
-                        if (v.trim().isEmpty) _runSearch();
-                      },
-                      decoration: const InputDecoration(
-                        hintText: '按文件名搜索当前目录及其子孙',
-                        hintStyle:
-                            TextStyle(fontSize: 12, color: Color(0xFF9CA3AF)),
-                        isDense: true,
-                        contentPadding: EdgeInsets.symmetric(horizontal: 10),
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
+                  child: V2ToolbarTextField(
+                    controller: _kw,
+                    hintText: '按文件名搜索当前目录及其子孙',
+                    onSubmitted: (_) => _runSearch(),
+                    onChanged: (v) {
+                      if (v.trim().isEmpty) _runSearch();
+                    },
                   ),
                 ),
                 const SizedBox(width: 8),
-                OutlinedButton(
-                  onPressed: _runSearch,
-                  child: const Text('搜索', style: TextStyle(fontSize: 13)),
-                ),
+                V2ToolbarButton(label: '搜索', onPressed: _runSearch),
               ],
             ),
           ),

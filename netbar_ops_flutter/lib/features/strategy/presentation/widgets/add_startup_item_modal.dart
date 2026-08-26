@@ -18,6 +18,12 @@ import 'executable_path_picker_field.dart';
 import 'strategy_exe_picker.dart';
 import 'strategy_merchants_panel.dart';
 
+/// 「区域配置」输入行的控件统一高度。
+/// 值取 48 是因为左侧 TextFormField 未设 isDense，InputDecorator 的
+/// minContainerHeight 恒为 kMinInteractiveDimension(48)，只能让按钮去就它
+/// （改输入框会动到 V1 旧页面的表单观感，本次只做纯视觉对齐）。
+const double _kAreaRowControlHeight = 48;
+
 /// 新增启动项弹窗 - Tab 结构随形态变化，见 [_AddStartupItemModalState._tabCount]
 class AddStartupItemModal extends ConsumerStatefulWidget {
   final String zone;
@@ -75,6 +81,20 @@ class AddStartupItemModal extends ConsumerStatefulWidget {
   /// 公共形态恒有该面板，本开关对它无影响。
   final bool allowMerchantSelect;
 
+  /// 本轮新增（**可选，默认空集 → V1 行为一字未变**）：
+  /// 「生效网吧」面板的**初始勾选**。
+  ///
+  /// 【与"默认勾当前网吧"的区别，留痕】上一轮被推翻的是"自动勾顶部 tab 栏的当前
+  /// 网吧"——那是与用户操作无关的自动行为。本参数只承接**用户的显式入口意图**：
+  ///   - V2 工具栏「新增」：不传 → 一家都不勾；
+  ///   - V2 占位行「新增策略」（该网吧还没有策略）：传这家网吧 → 进去就勾好，
+  ///     否则用户点了这一行还要在上千家里把它找回来，这个入口就废了。
+  /// 共享层不读 currentNetbarProvider，一律由调用方注入。
+  ///
+  /// 只在有「生效网吧」面板的形态里有意义（公共，或私有 + [allowMerchantSelect]）。
+  /// 复制态若模板自带生效网吧（公共），[initState] 里模板预选会**覆盖**本参数。
+  final Set<int> initialSelectedMerchantIds;
+
   const AddStartupItemModal({
     super.key,
     required this.zone,
@@ -89,6 +109,7 @@ class AddStartupItemModal extends ConsumerStatefulWidget {
     this.exePicker,
     this.dialogWidth = 560,
     this.allowMerchantSelect = false,
+    this.initialSelectedMerchantIds = const <int>{},
     required this.onSuccess,
   });
 
@@ -160,6 +181,8 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
       _pathController.text = widget.defaultPath!;
     }
     _periods = [_PeriodInput()];
+    // 入口带来的初始勾选（默认空集 = V1 现状）
+    _selectedMerchantIds = {...widget.initialSelectedMerchantIds};
     if (widget.template != null) {
       _applyTemplate(widget.template!);
       // T8c-2：公共策略的「复制」要把模板的生效网吧一并预选
@@ -716,7 +739,8 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
       // （V2 工具栏入口为 null = 全量），避免"先选文件再开页签"时列表被悄悄过滤掉、
       // 用户找不到自己的网吧。web 工具栏入口本身也是传空的。
       groupFileId: widget.resourceId,
-      // 新增态一家都不预勾（复制态例外：initState 已按模板预选）
+      // 勾选集合只来自入口注入（initialSelectedMerchantIds）/ 模板预选 / 用户操作，
+      // 面板内部不做任何默认勾选
       initialSelectedIds: _selectedMerchantIds,
       isSheet: isSheet,
       // setState 是必需的：私有形态下「区域配置」页签要跟着勾选数量联动
@@ -801,6 +825,17 @@ class _AddStartupItemModalState extends ConsumerState<AddStartupItemModal>
                   foregroundColor: Colors.white,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  // 【纯视觉等高，留痕】左侧输入框没写 isDense，InputDecorator 的
+                  // minContainerHeight = kMinInteractiveDimension = 48，边框恒
+                  // 48px 高；而本按钮的高度是「内容 43px」与「minimumSize 默认
+                  // 40 再被全局 visualDensity(adaptivePlatformDensity，桌面=
+                  // compact) 减 8 变 32」取大 = 43 → 比输入框矮 5px。
+                  // 显式写死 standard density + shrinkWrap 后 minimumSize 才按
+                  // 字面值生效（padded 会外包 _InputPadding，只撑布局盒不撑
+                  // 按钮本体，看上去仍然矮）。只改高度，不动布局与文案。
+                  minimumSize: const Size(0, _kAreaRowControlHeight),
+                  visualDensity: VisualDensity.standard,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8),
                   ),

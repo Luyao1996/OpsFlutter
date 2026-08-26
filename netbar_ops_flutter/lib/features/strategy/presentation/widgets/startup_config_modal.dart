@@ -46,6 +46,12 @@ String _decodeInBackground(Map<String, dynamic> params) {
   }
 }
 
+/// 「区域配置」输入行的控件统一高度。
+/// 值取 48 是因为左侧 TextFormField 未设 isDense，InputDecorator 的
+/// minContainerHeight 恒为 kMinInteractiveDimension(48)，只能让按钮去就它
+/// （改输入框会动到 V1 旧页面的表单观感，本次只做纯视觉对齐）。
+const double _kAreaRowControlHeight = 48;
+
 /// 启动项配置弹窗 - 适配 tactic 接口，包含启动项、区域、本地化编辑
 class StartupConfigModal extends ConsumerStatefulWidget {
   final TacticItem item;
@@ -782,6 +788,17 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
                   foregroundColor: Colors.white,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  // 【纯视觉等高，留痕】左侧输入框没写 isDense，InputDecorator 的
+                  // minContainerHeight = kMinInteractiveDimension = 48，边框恒
+                  // 48px 高；而本按钮的高度是「内容 43px」与「minimumSize 默认
+                  // 40 再被全局 visualDensity(adaptivePlatformDensity，桌面=
+                  // compact) 减 8 变 32」取大 = 43 → 比输入框矮 5px。
+                  // 显式写死 standard density + shrinkWrap 后 minimumSize 才按
+                  // 字面值生效（padded 会外包 _InputPadding，只撑布局盒不撑
+                  // 按钮本体，看上去仍然矮）。只改高度，不动布局与文案。
+                  minimumSize: const Size(0, _kAreaRowControlHeight),
+                  visualDensity: VisualDensity.standard,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8),
                   ),

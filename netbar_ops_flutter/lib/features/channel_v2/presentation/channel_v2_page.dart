@@ -23,6 +23,7 @@ import 'widgets/v2_file_props_dialog.dart';
 import 'widgets/v2_move_target_dialog.dart';
 import 'widgets/v2_strategy_list_dialog.dart';
 import 'widgets/v2_task_list_dialog.dart';
+import 'widgets/v2_toolbar_controls.dart';
 import 'widgets/v2_upload_dialog.dart';
 
 /// 通道管理 V2（T8b-2：文件操作层，对齐 web ChannelV2Page.vue）。
@@ -699,45 +700,41 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
         ),
     ];
 
-    final searchField = SizedBox(
+    // 【等高/跳高修复，走 v2_toolbar_controls】原来是 `SizedBox(height: 32)` 包
+    // TextField：SizedBox 只占位，可见边框由 InputDecorator 按内容自算 —— 有
+    // prefixIcon 时约 30px，而一旦输入了关键字、suffixIcon 的 IconButton 上来
+    // （M3 默认 48，被全局 compact density 调成 40），边框会从 30 直接跳到 40，
+    // 顶破 32 的外框。改用自绘边框的 [V2ToolbarTextField]，高度恒为 32，
+    // 放大镜与清除按钮排进内部 Row、被同一个高度收紧，不再有跳高。
+    // 视觉沿用原样：圆角 6 / 边框 #EEF0F4 / 底色仍取全局 inputDecorationTheme
+    // 的 5% 黑（自绘边框会关掉 filled，所以这里显式传回同一个色）。
+    final searchField = V2ToolbarTextField(
+      controller: _searchCtrl,
+      focusNode: _searchFocus,
       height: 32,
-      child: TextField(
-        controller: _searchCtrl,
-        focusNode: _searchFocus,
-        onChanged: (v) => setState(() => _searchQuery = v),
-        style: const TextStyle(fontSize: 13),
-        decoration: InputDecoration(
-          hintText: '搜索文件（三区联动）',
-          hintStyle: TextStyle(fontSize: 12, color: Colors.grey.shade400),
-          prefixIcon:
-              Icon(LucideIcons.search, size: 14, color: Colors.grey.shade400),
-          prefixIconConstraints:
-              const BoxConstraints(minWidth: 30, minHeight: 30),
-          suffixIcon: _searchQuery.isEmpty
-              ? null
-              : IconButton(
-                  icon: const Icon(LucideIcons.x, size: 13),
-                  onPressed: () {
-                    _searchCtrl.clear();
-                    setState(() => _searchQuery = '');
-                  },
-                ),
-          isDense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(6),
-            borderSide: const BorderSide(color: Color(0xFFEEF0F4)),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(6),
-            borderSide: const BorderSide(color: Color(0xFFEEF0F4)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(6),
-            borderSide: const BorderSide(color: Color(0xFF007AFF)),
-          ),
-        ),
-      ),
+      radius: 6,
+      borderColor: const Color(0xFFEEF0F4),
+      fillColor: Colors.black.withValues(alpha: 0.05),
+      hintText: '搜索文件（三区联动）',
+      onChanged: (v) => setState(() => _searchQuery = v),
+      prefixIcon:
+          Icon(LucideIcons.search, size: 14, color: Colors.grey.shade400),
+      suffix: _searchQuery.isEmpty
+          ? null
+          : SizedBox(
+              width: 22,
+              height: 22,
+              child: IconButton(
+                padding: EdgeInsets.zero,
+                constraints:
+                    const BoxConstraints(minWidth: 22, minHeight: 22),
+                icon: const Icon(LucideIcons.x, size: 13),
+                onPressed: () {
+                  _searchCtrl.clear();
+                  setState(() => _searchQuery = '');
+                },
+              ),
+            ),
     );
 
     return _card(
