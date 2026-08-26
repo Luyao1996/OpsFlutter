@@ -748,7 +748,7 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
                 const Icon(LucideIcons.layers, size: 16, color: Color(0xFF007AFF)),
                 const SizedBox(width: 8),
                 const Text(
-                  '通道管理V2',
+                  '通道管理',
                   style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,

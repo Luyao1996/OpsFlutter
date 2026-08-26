@@ -392,11 +392,11 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
     } else if (location.startsWith('/monitor')) {
       return (name: '网吧管理', icon: LucideIcons.network, color: Colors.indigo);
     } else if (location.startsWith('/resource-management')) {
-      return (name: '资源管理', icon: LucideIcons.database, color: Colors.orange);
+      return (name: '资源管理（旧版）', icon: LucideIcons.database, color: Colors.orange);
     } else if (location.startsWith('/channel-management')) {
-      return (name: '通道管理', icon: LucideIcons.activity, color: AppColors.iosBlue);
+      return (name: '通道管理（旧版）', icon: LucideIcons.activity, color: AppColors.iosBlue);
     } else if (location.startsWith('/channel-v2')) {
-      return (name: '通道管理V2', icon: LucideIcons.layers, color: Colors.deepPurple);
+      return (name: '通道管理', icon: LucideIcons.layers, color: Colors.deepPurple);
     } else if (location.startsWith('/desktop-management')) {
       return (name: '桌面管理', icon: LucideIcons.layoutGrid, color: Colors.teal);
     } else if (location.startsWith('/user-management')) {
@@ -472,22 +472,27 @@ class _MainLayoutState extends ConsumerState<MainLayout> {
               LucideIcons.network,
               Colors.indigo,
             ),
-            _buildMenuItem(
-              '资源管理',
-              '/resource-management',
-              LucideIcons.database,
-              Colors.orange,
-            ),
-            _buildMenuItem(
-              '通道管理',
-              '/channel-management',
-              LucideIcons.activity,
-              AppColors.iosBlue,
-            ),
-            // 新版通道管理（资源区/下发区双区）与旧版并存；web 端按 CHANNEL_MANAGE
+            // 【旧版入口隐藏，留痕】按用户要求，旧版「资源管理」/「通道管理」改名为
+            // 「资源管理（旧版）」/「通道管理（旧版）」并从主菜单隐藏，V2 顶上「通道管理」
+            // 之名。路由 /resource-management、/channel-management 仍在 router.dart 注册
+            // 且保持可直达：监控中心（channel_monitor_page.dart:510/912）仍会跳旧版通道
+            // 管理页做启动项编辑，删路由会炸。需恢复入口时把下面两段注释放开即可。
+            // _buildMenuItem(
+            //   '资源管理（旧版）',
+            //   '/resource-management',
+            //   LucideIcons.database,
+            //   Colors.orange,
+            // ),
+            // _buildMenuItem(
+            //   '通道管理（旧版）',
+            //   '/channel-management',
+            //   LucideIcons.activity,
+            //   AppColors.iosBlue,
+            // ),
+            // 新版通道管理（资源区/下发区双区）；web 端按 CHANNEL_MANAGE
             // 模块权限门禁，Flutter 无模块级判定原语，与旧版一样暂不加门禁
             _buildMenuItem(
-              '通道管理V2',
+              '通道管理',
               '/channel-v2',
               LucideIcons.layers,
               Colors.deepPurple,
