@@ -149,18 +149,63 @@ class PreLoginResponse {
   }
 }
 
+/// 多总部（租户）候选项。
+/// 同一微信/Apple 身份绑定了多个总部账号时，后端不直接下发 token，
+/// 而是返回候选列表让用户先选一个总部。字段对齐 web 端
+/// toolboxPage/src/views/LoginPage.vue 的 tenant_id / tenant_name / nickname。
+class TenantChoice {
+  final int tenantId;
+  final String tenantName;
+
+  /// 该总部下的账号昵称（同一人在不同总部昵称可能不同，是用户辨认的主要依据）
+  final String nickname;
+
+  TenantChoice({
+    required this.tenantId,
+    required this.tenantName,
+    required this.nickname,
+  });
+
+  factory TenantChoice.fromJson(Map<String, dynamic> json) {
+    final rawId = json['tenant_id'];
+    return TenantChoice(
+      tenantId: rawId is int ? rawId : int.tryParse('$rawId') ?? 0,
+      tenantName: json['tenant_name']?.toString() ?? '',
+      nickname: json['nickname']?.toString() ?? '',
+    );
+  }
+}
+
 /// Token响应 - 后端扫码登录第二步
+///
+/// 除 access_token 外还承载「需要先选总部」的分支：后端返回
+/// `{next: 'chooseTenant', choices: [...]}`（web 端 api/auth.js:pollLoginToken 同款协议），
+/// 此时 [accessToken] 为空、[isValid] 为 false，由调用方按 [needChooseTenant] 走选择流程。
 class TokenResponse {
   final String accessToken;
   final String tokenType;
   final int? createIn;
   final int? expireIn;
 
+  /// 后端下一步指令，目前只有 'chooseTenant'
+  final String? next;
+
+  /// 多总部候选（[needChooseTenant] 为 true 时非空）
+  final List<TenantChoice> choices;
+
+  /// 换取 token 时要回传的一次性凭证。
+  /// 扫码/小程序路径就是轮询用的 pwd；其它路径（如 Apple）后端可能换名下发，
+  /// 这里按 pwd → choose_ticket → ticket 顺序兜底取值，调用方拿不到时回退用自己手上的 pwd。
+  final String? chooseTicket;
+
   TokenResponse({
     required this.accessToken,
     required this.tokenType,
     this.createIn,
     this.expireIn,
+    this.next,
+    this.choices = const [],
+    this.chooseTicket,
   });
 
   factory TokenResponse.fromJson(Map<String, dynamic> json) {
@@ -169,10 +214,21 @@ class TokenResponse {
       tokenType: json['token_type'] ?? 'Bearer',
       createIn: json['create_in'],
       expireIn: json['expire_in'],
+      next: json['next']?.toString(),
+      choices: (json['choices'] as List?)
+              ?.whereType<Map>()
+              .map((e) => TenantChoice.fromJson(Map<String, dynamic>.from(e)))
+              .toList() ??
+          const [],
+      chooseTicket:
+          (json['pwd'] ?? json['choose_ticket'] ?? json['ticket'])?.toString(),
     );
   }
 
   bool get isValid => accessToken.isNotEmpty;
+
+  /// 是否需要用户先选择总部再换 token
+  bool get needChooseTenant => next == 'chooseTenant' || choices.isNotEmpty;
 }
 
 /// QR 登录会话 - 保留兼容
@@ -230,8 +286,28 @@ class AuthApi {
 
   /// 获取Token - 通过pwd获取JWT令牌
   /// 需要用户扫码授权后才能获取到token
+  ///
+  /// 后端命中「一个身份绑定多个总部」时不下发 access_token，而是返回
+  /// `{next: 'chooseTenant', choices: [...]}`，此时返回值 [TokenResponse.needChooseTenant]
+  /// 为 true，调用方应停止轮询并让用户选一个总部（见 [chooseTenant]）。
   Future<TokenResponse> getToken(String pwd) async {
     final response = await _client.get('/passport/token', queryParameters: {'pwd': pwd});
+    return TokenResponse.fromJson(response.data ?? {});
+  }
+
+  /// 选择总部换取 access_token —— POST /passport/token/choose {pwd, tenant_id}
+  ///
+  /// 对齐 web 端 toolboxPage/src/api/auth.js:chooseTenant（JSON body）。
+  /// [ticket] 为拿到候选那一步的一次性凭证：扫码/小程序路径即轮询用的 pwd。
+  /// 后端候选有效期约 5 分钟，超时会返回业务失败，由调用方提示重新登录。
+  Future<TokenResponse> chooseTenant({
+    required String ticket,
+    required int tenantId,
+  }) async {
+    final response = await _client.post(
+      '/passport/token/choose',
+      data: {'pwd': ticket, 'tenant_id': tenantId},
+    );
     return TokenResponse.fromJson(response.data ?? {});
   }
 
@@ -412,6 +488,21 @@ class AuthApi {
         }
         throw AppleAuthException(errorCode, 'Apple 登录失败：绑定票据缺失，请重试');
       }
+      // 多总部：Apple 身份同样可能绑定多个总部，走与扫码路径同款的 chooseTenant 协议。
+      // 截至 docs/SignInWithApple前端接口文档_后端定稿.md 该分支后端尚未定义，因此这里
+      // 不认具体 error_code，只要信封 data 里出现 next=chooseTenant 或非空 choices 就识别，
+      // 后端无论以 code=0 还是业务失败码下发都能接住；没有该分支时行为与改动前完全一致。
+      final envData = env?['data'];
+      if (envData is Map) {
+        final probe = TokenResponse.fromJson(Map<String, dynamic>.from(envData));
+        final ticket = probe.chooseTicket;
+        if (probe.needChooseTenant && ticket != null && ticket.isNotEmpty) {
+          throw TenantChoiceRequiredException(
+            ticket: ticket,
+            choices: probe.choices,
+          );
+        }
+      }
       if (errorCode != null && errorCode.isNotEmpty) {
         throw AppleAuthException(
           errorCode,
@@ -482,6 +573,18 @@ class AuthApi {
       rethrow;
     }
   }
+}
+
+/// 登录命中「一个身份绑定多个总部」：需用户先选总部再换 token（正常业务分支，非失败）。
+/// [ticket] 为换 token 用的一次性凭证，[choices] 为候选总部列表。
+class TenantChoiceRequiredException implements Exception {
+  final String ticket;
+  final List<TenantChoice> choices;
+
+  TenantChoiceRequiredException({required this.ticket, required this.choices});
+
+  @override
+  String toString() => '该账号绑定了多个总部，请选择要登录的总部';
 }
 
 /// Apple 登录：该 Apple 账号尚未绑定系统账号（正常业务分支，非失败）。

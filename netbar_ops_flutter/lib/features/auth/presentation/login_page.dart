@@ -110,6 +110,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
   int _qrCountdown = 30; // 二维码刷新倒计时（秒）
   static const int _qrRefreshInterval = 60; // 二维码刷新间隔（秒）
   int _qrCreateAttempts = 0; // 二维码创建连续失败计数（≥5 次转为 error 展示真实错误）
+  bool _choosingTenant = false; // 总部选择弹窗展示中（防轮询/Apple 两路重复弹窗）
 
   List<SavedUser> _savedUsers = [];
 
@@ -456,6 +457,40 @@ class _LoginPageState extends ConsumerState<LoginPage>
         // 轮询获取token接口
         final tokenResponse = await api.getToken(_qrSessionId);
 
+        // 多总部：后端不下发 token 而返回候选，停轮询 + 停刷新倒计时
+        //（候选后端有效约 5 分钟，不能让 60s 刷新把二维码换掉），弹出选择弹窗。
+        // 对齐 web 端 toolboxPage/src/views/LoginPage.vue:209 的 needChoose 分支。
+        if (tokenResponse.needChooseTenant) {
+          _qrPollTimer?.cancel();
+          _qrRefreshTimer?.cancel();
+          final token = await _promptTenantChoice(
+            ticket: tokenResponse.chooseTicket ?? _qrSessionId,
+            choices: tokenResponse.choices,
+            cancelLabel: '重新扫码',
+          );
+          if (!mounted) return;
+          if (token == null || token.isEmpty) {
+            // 放弃选择等同重新扫码：重新出码并重启轮询（web §5.2「关闭弹层即刷新」）
+            await _createQRSession();
+            return;
+          }
+          setState(() => _qrStatus = 'confirmed');
+          try {
+            await TokenStore.setToken(token);
+            await ref.read(authNotifierProvider.notifier).loginWithToken(token);
+            if (mounted) context.go('/dashboard');
+          } catch (e) {
+            // 拿到 token 但取用户信息失败：外层 catch 是"静默继续轮询"，而此处轮询已停，
+            // 不单独兜住会卡在「已确认」的死界面，这里显式回到带重试入口的错误态
+            if (!mounted) return;
+            setState(() {
+              _qrStatus = 'error';
+              _qrError = '登录失败：${e is ApiError ? e.message : e}';
+            });
+          }
+          return;
+        }
+
         if (tokenResponse.isValid) {
           // 登录成功
           _qrPollTimer?.cancel();
@@ -478,6 +513,39 @@ class _LoginPageState extends ConsumerState<LoginPage>
         // 检查是否是已扫码状态（如果后端支持）
       }
     });
+  }
+
+  /// 弹出「选择要登录的总部」并换取 access_token（扫码 / 小程序 / Apple 三路共用）。
+  ///
+  /// 返回换到的 token；返回 null 表示用户放弃或票据缺失——扫码路径据此重新出码，
+  /// Apple 路径据此回到登录界面。[cancelLabel] 是底部退出按钮文案（扫码「重新扫码」/ Apple「返回」）。
+  Future<String?> _promptTenantChoice({
+    required String ticket,
+    required List<TenantChoice> choices,
+    required String cancelLabel,
+  }) async {
+    if (_choosingTenant || !mounted) return null;
+    if (ticket.isEmpty) {
+      // 没有票据就换不了 token，弹窗必然失败，直接把问题亮到界面
+      setState(() => _loginError = '选择总部失败：未获取到登录凭证，请重新登录');
+      return null;
+    }
+    _choosingTenant = true;
+    try {
+      return await showAdaptive<String>(
+        context,
+        (_) => _TenantChoiceDialog(
+          ticket: ticket,
+          choices: choices,
+          cancelLabel: cancelLabel,
+        ),
+        routeName: 'tenant-choice',
+        // 误点遮罩就等于放弃本次登录，代价太大，只留弹窗内的显式出口
+        barrierDismissible: false,
+      );
+    } finally {
+      _choosingTenant = false;
+    }
   }
 
   /// 手机端微信登录 - 跳转小程序
@@ -564,7 +632,30 @@ class _LoginPageState extends ConsumerState<LoginPage>
           identityToken: identityToken,
           nonce: rawNonce,
         );
+        // 多总部（后端以 code=0 下发候选时走这里）：先选总部再换 token
+        if (tokenResp.needChooseTenant) {
+          final token = await _promptTenantChoice(
+            ticket: tokenResp.chooseTicket ?? '',
+            choices: tokenResp.choices,
+            cancelLabel: '返回',
+          );
+          if (token != null && token.isNotEmpty) {
+            await _finishAppleLogin(token);
+          }
+          return;
+        }
         await _finishAppleLogin(tokenResp.accessToken);
+      } on TenantChoiceRequiredException catch (tc) {
+        // 多总部（后端以业务失败码下发候选时走这里，见 auth_api.loginWithApple 注释）
+        if (!mounted) return;
+        final token = await _promptTenantChoice(
+          ticket: tc.ticket,
+          choices: tc.choices,
+          cancelLabel: '返回',
+        );
+        if (token != null && token.isNotEmpty) {
+          await _finishAppleLogin(token);
+        }
       } on AppleIdNotBoundException catch (nb) {
         if (!mounted) return;
         final loggedIn = await showAdaptive<bool>(
@@ -2152,6 +2243,163 @@ class _AppleBindDialogState extends ConsumerState<_AppleBindDialog> {
                   )
                 : const Text('关联并登录'),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 选择要登录的总部（同一微信 / Apple 身份绑定了多个总部账号时弹出）。
+///
+/// pop 值 = 选中总部换到的 access_token；用户放弃时 pop(null)。
+/// 关闭按钮（窄屏 AppBar 的 X / 宽屏标题栏的 X）语义等同底部的退出按钮：
+/// 扫码路径退出后由调用方重新出码，与 web 端「关闭弹层即刷新二维码」结果一致。
+class _TenantChoiceDialog extends ConsumerStatefulWidget {
+  /// 换 token 用的一次性凭证（扫码路径即轮询用的 pwd）
+  final String ticket;
+  final List<TenantChoice> choices;
+
+  /// 底部退出按钮文案：扫码路径「重新扫码」，Apple 路径「返回」
+  final String cancelLabel;
+
+  const _TenantChoiceDialog({
+    required this.ticket,
+    required this.choices,
+    required this.cancelLabel,
+  });
+
+  @override
+  ConsumerState<_TenantChoiceDialog> createState() =>
+      _TenantChoiceDialogState();
+}
+
+class _TenantChoiceDialogState extends ConsumerState<_TenantChoiceDialog> {
+  int? _submittingTenantId; // 正在提交的总部 id：既做转圈指示，也用于禁用其余项
+  String? _error;
+
+  Future<void> _choose(TenantChoice choice) async {
+    if (_submittingTenantId != null) return;
+    setState(() {
+      _submittingTenantId = choice.tenantId;
+      _error = null;
+    });
+    try {
+      final resp = await ref
+          .read(authApiProvider)
+          .chooseTenant(ticket: widget.ticket, tenantId: choice.tenantId);
+      if (!resp.isValid) {
+        throw ApiError(message: '选择总部失败：未获取到访问令牌');
+      }
+      if (!mounted) return;
+      // 路由已在退场（用户点了 X）时不再 pop，防止误弹掉下层登录页
+      final route = ModalRoute.of(context);
+      if (route != null && route.isCurrent) {
+        Navigator.of(context).pop(resp.accessToken);
+      }
+    } catch (e) {
+      // 失败留在弹窗内提示：候选后端有效约 5 分钟，用户可改选其它总部重试；
+      // 票据真失效时点底部按钮退出，扫码路径会自动刷新二维码
+      if (mounted) {
+        setState(() => _error = e is ApiError ? e.message : e.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _submittingTenantId = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final busy = _submittingTenantId != null;
+    return ResponsiveDialogScaffold(
+      title: '选择要登录的总部',
+      maxWidth: 420,
+      // 提交中不许关闭：换 token 是一次性票据消费，中途退出会让本次登录白跑
+      showCloseButton: !busy,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            '该账号绑定了多个总部，请选择一个进入。',
+            style: TextStyle(fontSize: 13, color: Colors.black54),
+          ),
+          const SizedBox(height: 16),
+          for (final choice in widget.choices) ...[
+            _buildChoiceTile(choice),
+            const SizedBox(height: 10),
+          ],
+          // 错误提示只追加在末尾：不改变前面选项的子级下标
+          if (_error != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              _error!,
+              style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+            ),
+          ],
+        ],
+      ),
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: busy ? null : () => Navigator.of(context).pop(),
+            child: Text(widget.cancelLabel),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChoiceTile(TenantChoice choice) {
+    final submitting = _submittingTenantId == choice.tenantId;
+    final busy = _submittingTenantId != null;
+    return OutlinedButton(
+      onPressed: busy ? null : () => _choose(choice),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        alignment: Alignment.centerLeft,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  // 后端偶发不下发名称时用 id 兜底，避免出现一排空白按钮无法辨认
+                  choice.tenantName.isEmpty
+                      ? '总部 ${choice.tenantId}'
+                      : choice.tenantName,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (choice.nickname.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    choice.nickname,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.black54,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (submitting)
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            const Icon(LucideIcons.chevronRight, size: 18),
         ],
       ),
     );
