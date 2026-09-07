@@ -1,0 +1,227 @@
+--- a/webrtc_host/src/webrtc_host.cpp
++++ b/webrtc_host/src/webrtc_host.cpp
+@@ -240,6 +240,14 @@
+ // D 巡检:30s 自频控(2026-08-03 用户定,每轮强制重跑 /api/getip 全发现链,直到切进 forward)。
+ static constexpr int64_t kForwardFirstPatrolIntervalMs = 30000;
+ static std::atomic<int64_t> g_ff_patrol_last_ms{0};
++// ★2026-09-01 R1 名单刷新巡检(CheckDiscoveryRefresh):direct 稳态每 60s 派后台 Rediscover("periodic") 刷一次
++//   turn_discovery_ 名单。它【独立于】g_ff_mission_done / g_manual_direct_pin / g_ff_all_failed_until_ms 三道门 ——
++//   那三道门只管"要不要自动进 forward",而刷新名单本身不切任何路。背景:D 巡检唯一的自动 Rediscover 入口
++//   (MaybeEnterForwardFirst("patrol_30s", forceRediscover=true))被函数顶部的使命门禁永久挡住,名单只在启动拉一次,
++//   腐烂后 L2 质量换路拿死名单选台必然失败。
++static constexpr int64_t kDiscoveryRefreshIntervalMs = 60000;  // 60s
++static std::atomic<int64_t> g_discovery_refresh_last_ms{0};
++static std::atomic<bool> g_discovery_refresh_inflight{false};
+ // 防打转:demote 链"全转发器失败回退 direct"后 5min 内巡检不再自动重试(手动 toggle 可豁免清零);
+ // 否则死台 WTFD 仍活时会"巡检切过去→落地失败→回 direct→30s 后又切"打转。
+ static constexpr int64_t kForwardFirstAllFailedHoldMs = 300000;
+@@ -12028,6 +12036,40 @@
+     MaybeEnterForwardFirst("patrol_30s", /*forceRediscover=*/true);
+ }
+ 
++// ★2026-09-01 R1 名单刷新巡检(relay_diag 后台循环每 500ms 调,内部 60s 自频控):direct 稳态周期性重跑
++// turn_discovery_ 的 /api/getip 全发现链,只刷名单、不切任何路。
++// 为什么必须独立于 g_ff_mission_done:D 巡检(CheckForwardFirstPatrol)是进程内唯一的自动 Rediscover 入口,
++// 但它走 MaybeEnterForwardFirst,而那里顶部的使命门禁(成功进过一次 forward 即永久关门)/手动 direct 压制/
++// 全灭冷却都会把整条链连同 Rediscover 一起挡掉 —— 结果名单只在启动时拉一次,转发器换 IP/新上线/下线全感知不到,
++// L2 质量换路(TriggerForwardDemote/SetIngestRelayMode)拿着死名单选台必然失败。那三道门语义是"要不要自动进
++// forward",与"名单新不新"无关,故本函数不看它们,只看 gate 开关与"是否正在用/正在切台"。
++// 不刷的时机:forward 态(不动正在用的台)、demote 链在途(它正在读名单)、切换悬决(landing watchdog 的地盘)。
++// 首拍只记时不刷:Start() 首轮发现刚跑过,不立刻重跑;Rediscover 同步阻塞(getip+STUN 数秒)故派后台线程,
++// inflight CAS 防重入(Rediscover 内部另有 rediscovering_ CAS,与 D 巡检/设置面板的手动重跑并发时自然合并)。
++void WebRTCHost::CheckDiscoveryRefresh() {
++    if (!g_sfu_ingest_accel_enabled.load(std::memory_order_relaxed)) return;
++    if (g_ingest_relay_forward.load(std::memory_order_relaxed)) return;        // forward 态不刷:不动正在用的台
++    if (g_relay_demote_inflight.load(std::memory_order_relaxed)) return;       // 降级链正在读名单
++    if (g_relay_forward_deadline_ms.load(std::memory_order_relaxed) != 0) return;  // 切换悬决
++    if (!turn_discovery_) return;
++    const int64_t now = IngestNowMs();
++    const int64_t last = g_discovery_refresh_last_ms.load(std::memory_order_relaxed);
++    if (last == 0) {  // 首拍只记时:Start() 首轮发现刚跑过,不立刻重跑
++        g_discovery_refresh_last_ms.store(now, std::memory_order_relaxed);
++        return;
++    }
++    if (now - last < kDiscoveryRefreshIntervalMs) return;
++    bool expected = false;
++    if (!g_discovery_refresh_inflight.compare_exchange_strong(expected, true)) return;
++    g_discovery_refresh_last_ms.store(now, std::memory_order_relaxed);
++    RLOGI("Discovery", "direct", "periodic rediscover dispatched (interval="
++          << (kDiscoveryRefreshIntervalMs / 1000) << "s; independent of forward-first mission/manual pin)");
++    SpawnBackgroundThread("discovery_refresh", [this]() {
++        if (!shutting_down_.load() && turn_discovery_) turn_discovery_->Rediscover("periodic");
++        g_discovery_refresh_inflight.store(false, std::memory_order_relaxed);
++    });
++}
++
+ // ★G 转发器运行态保活(2026-08-03 用户定"跳板挂了 3 秒内检测换台";语义见 webrtc_host.h 声明处)。
+ // 常驻专用循环(不挤 relay_diag 500ms 循环——WTFD 探活阻塞 1s 会拖垮 landing check/切换保活节拍)。
+ // 只在 forward 稳态探测:落地窗口未决=切换中(landing watchdog 的地盘)、demote 在途都跳过。
+@@ -12321,6 +12363,7 @@
+                 CheckRelayForwardLanding();  // ★①每 500ms 检查 forward 落地窗口是否超时(未连上则降级)
+                 MaybeSendRelaySwitchingKeepalive();  // ★切换悬决期每 ~3s 续 SFU 停推宽限(内部自频控)
+                 CheckForwardFirstPatrol();  // ★D 转发优先巡检:direct 暂驻期 30s 一轮(内部自频控+派发后台)
++                CheckDiscoveryRefresh();  // ★2026-09-01 R1 名单刷新巡检:direct 态 60s 一轮,不受 forward-first 使命完成闸管辖
+                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
+             }
+         }
+@@ -12426,7 +12469,7 @@
+     else if (!discEnabled)              problem = "discovery_disabled";  // 内网 TURN 发现被关
+     else if (discErr == "ini-missing")   problem = "config_ini_missing";  // Config.ini 未找到
+     else if (discErr == "port-missing")  problem = "config_port_missing"; // Config.ini 缺 http_port
+-    else if (discErr == "fetch-failed")  problem = "getip_failed";        // getip 调用失败/返回空
++    else if (discErr == "fetch-failed" && eps.empty())  problem = "getip_failed";        // getip 调用失败/返回空(2026-09-01 R1:名单非空=旧名单仍在,按其实际状态往下报)
+     else if (!discComplete)             problem = "discovering";         // 发现进行中
+     else if (eps.empty())               problem = "no_candidates";       // 无内网转发器登记
+     else if (aliveCount == 0)           problem = "no_forwarder_alive";  // 候选无 WTFD 响应(端口不匹配/未运行/防火墙)
+--- a/webrtc_host/src/turn_discovery_service.cpp
++++ b/webrtc_host/src/turn_discovery_service.cpp
+@@ -18,6 +18,7 @@
+ #include <random>
+ #include <string>
+ #include <thread>
++#include <unordered_set>
+ 
+ #include "rtc_base/logging.h"
+ #include "log_manager.h"
+@@ -214,6 +215,16 @@
+     return {};
+ }
+ 
++// 2026-09-01 R5:去掉首尾 ' ' '\t' '\r' '\n'(供 /api/getip 结果清洗;ReadLocalSectionFromIni 内的 trim
++// 是局部 lambda 且只去空格/制表,不可复用)。
++std::string TrimAscii(const std::string& s) {
++    const char* ws = " \t\r\n";
++    auto a = s.find_first_not_of(ws);
++    if (a == std::string::npos) return {};
++    auto b = s.find_last_not_of(ws);
++    return s.substr(a, b - a + 1);
++}
++
+ std::vector<std::string> JsonSplitStringArray(const std::string& body) {
+     std::vector<std::string> out;
+     size_t i = 0;
+@@ -450,7 +461,7 @@
+     rediscovering_.store(false);
+ }
+ 
+-void TurnDiscoveryService::Rediscover() {
++void TurnDiscoveryService::Rediscover(const char* reason) {
+     if (!config_.enabled) {
+         LOGI("[TurnDiscovery] rediscover skipped, service disabled");
+         return;
+@@ -460,15 +471,15 @@
+         LOGI("[TurnDiscovery] rediscover ignored, another in flight");
+         return;
+     }
+-    // 清空旧 endpoint：发现接口可能返回新的 IP，过期的应该消失而不是叠加
++    // 清空旧 endpoint 改为 RunOnce 探测后按 (ip,port) 剔除过期项(见 Reprobe 之后;2026-09-01 R1):fetch 失败/
++    // 网维接口暂不可达时保留旧名单,不让一次失败把名单清空(原来这里无条件 endpoints_.clear()+ice_cache_.clear())。
++    // 此处只重置完成态/错误原因。
+     {
+         std::lock_guard<std::mutex> lk(cache_mutex_);
+-        endpoints_.clear();
+-        ice_cache_.clear();
+         discovery_complete_ = false;
+         error_reason_.clear();
+     }
+-    LOGI("[TurnDiscovery] manual rediscover triggered");
++    LOGI("[TurnDiscovery] rediscover triggered (reason=" << (reason ? reason : "-") << ")");
+     RunOnce();
+     rediscovering_.store(false);
+ }
+@@ -509,9 +520,32 @@
+             int code = JsonExtractInt(body, "code", -1);
+             if (code == 0) {
+                 ips = JsonSplitStringArray(JsonExtractArrayBody(body, "data"));
++                // 2026-09-01 R5:接口上限 5 个 IP 且可能含重复 → trim + IPv4 校验 + 去重(保持接口返回顺序,不排序)。
++                // 重复 IP 会在下方 ips × probe_ports 组探测集时生成重复 (ip,port),Reprobe 对每项各起一线程重复探测。
++                {
++                    const size_t raw_n = ips.size();
++                    std::vector<std::string> cleaned;
++                    std::unordered_set<std::string> seen;
++                    size_t dropped = 0;
++                    cleaned.reserve(raw_n);
++                    for (const std::string& raw : ips) {
++                        std::string ip = TrimAscii(raw);
++                        in_addr tmp{};
++                        if (ip.empty() || inet_pton(AF_INET, ip.c_str(), &tmp) != 1) { ++dropped; continue; }
++                        if (!seen.insert(ip).second) { ++dropped; continue; }
++                        cleaned.push_back(std::move(ip));
++                    }
++                    ips.swap(cleaned);
++                    if (!ips.empty()) {
++                        LOGI("[TurnDiscovery][fetch] got " << raw_n << " ips (" << ips.size()
++                             << " unique, " << dropped << " dropped)");
++                    }
++                    else if (raw_n > 0) {
++                        LOGW("[TurnDiscovery][fetch] all " << raw_n
++                             << " ips dropped (invalid/duplicate) → treated as empty, will retry");
++                    }
++                }
+                 if (!ips.empty()) {
+-                    LOGI("[TurnDiscovery][fetch] got "
+-                                     << ips.size() << " ips");
+                     break;
+                 }
+             }
+@@ -555,12 +589,32 @@
+     // the same cache structure.
+     std::vector<std::pair<std::string, uint16_t>> work;
+     work.reserve(ips.size() * probe_ports.size());
++    // 2026-09-01 R5:防御性去重(probe_ports 来自用户配置,可能重复)
++    std::unordered_set<std::string> seen_ep;
+     for (const auto& ip : ips) {
+         if (ip.empty()) continue;
+-        for (uint16_t p : probe_ports) work.emplace_back(ip, p);
++        for (uint16_t p : probe_ports) {
++            if (!seen_ep.insert(ip + ":" + std::to_string(p)).second) continue;
++            work.emplace_back(ip, p);
++        }
+     }
+     Reprobe(work);
+ 
++    // 2026-09-01 R1:探测完成后再剔除不在本轮名单里的旧条目(取代原 Rediscover() 开头的无条件清空):
++    // "先清空再探"在 clear→Reprobe 写回之间有约 1s 空名单窗口,L2 GoForward/HasUsableForwarderCandidate
++    // 撞进去会误判"无候选"→升级 SwitchSfu(整链重连)。改为旧条目保留到新结果落地,再按 (ip,port) 剪掉
++    // 过期项,名单永无空窗;fetch 失败时(上方已 return)旧名单原样保留。Run() 首轮 endpoints_ 为空,剪除无事。
++    {
++        std::lock_guard<std::mutex> lk(cache_mutex_);
++        endpoints_.erase(
++            std::remove_if(endpoints_.begin(), endpoints_.end(),
++                           [&seen_ep](const EndpointStatus& ep) {
++                               return seen_ep.find(ep.ip + ":" + std::to_string(ep.port)) == seen_ep.end();
++                           }),
++            endpoints_.end());
++        RebuildIceCacheLocked();  // 剪除后重建 ICE 注入缓存(Reprobe 内那次是剪除前的)
++    }
++
+     int reachable_count = 0;
+     {
+         std::lock_guard<std::mutex> lk(cache_mutex_);
+--- a/webrtc_host/include/webrtc_host.h
++++ b/webrtc_host/include/webrtc_host.h
+@@ -743,6 +743,11 @@
+     //   补的是"运行中转发器突然挂"的检测真空(此前只能等 ICE failed,实测 checking→failed 可拖 30s)。
+     void MaybeEnterForwardFirst(const char* trigger, bool forceRediscover);
+     void CheckForwardFirstPatrol();
++    // CheckDiscoveryRefresh:名单刷新巡检(2026-09-01 R1;relay_diag 后台循环每 500ms 调,内部 60s 自频控)。
++    //   只刷 turn_discovery_ 名单(Rediscover("periodic")),不切任何路,因此【不受】g_ff_mission_done /
++    //   g_manual_direct_pin / g_ff_all_failed_until_ms 三道门管辖(那三道门只管"要不要自动进 forward")。
++    //   仅 direct 稳态(非 forward/无 demote 在途/无切换悬决)时刷,不动正在用的台。背景:名单只在启动拉一次会腐烂。
++    void CheckDiscoveryRefresh();
+     void StartForwardKeepaliveLoopOnce();
+ 
+     // ★任务3(块A):快速(非阻塞,只读 turn_discovery_ 缓存)判断是否还有可用转发器候选。
+--- a/webrtc_host/include/turn_discovery_service.h
++++ b/webrtc_host/include/turn_discovery_service.h
+@@ -107,7 +107,9 @@
+     // Re-runs the full discovery flow synchronously: re-read Config.ini, refetch
+     // IP list, rebuild endpoint table, reprobe. Used by the settings panel
+     // "发现内网 TURN" button. Concurrent calls coalesce (second caller is a no-op).
+-    void Rediscover();
++    // reason:触发来源,仅入日志(2026-09-01 R1)。缺省 "manual"=设置面板/测试入口/RediscoverInternalTurn,
++    // "periodic"=WebRTCHost::CheckDiscoveryRefresh 的 60s 周期名单刷新。
++    void Rediscover(const char* reason = "manual");
+ 
+     // 写回某 endpoint 的端到端深度探测结果（供 DeepProbeInternalTurn 调用）。线程安全。
+     // 只更新展示字段（deep_measured/turn_host/direct/forward），不碰 ICE 注入缓存、

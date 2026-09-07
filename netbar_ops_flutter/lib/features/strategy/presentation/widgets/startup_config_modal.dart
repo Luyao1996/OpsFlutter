@@ -994,7 +994,8 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
           Expanded(
             child: Padding(
               padding: EdgeInsets.all(isSheet ? 16 : 24),
-              child: _buildLocaleEditor(_localeFiles[_activeLocaleIndex]),
+              child: _buildLocaleEditor(_localeFiles[_activeLocaleIndex],
+                  isSheet: isSheet),
             ),
           )
         else
@@ -1237,7 +1238,7 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
     });
   }
 
-  Widget _buildLocaleEditor(_LocaleFileEntry file) {
+  Widget _buildLocaleEditor(_LocaleFileEntry file, {required bool isSheet}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1259,48 +1260,26 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
         const SizedBox(height: 16),
 
         // 模式切换 + 编码选择
-        Row(
-          children: [
-            _buildModeChip('文本内容', file.mode == 'text', () {
-              setState(() => file.mode = 'text');
-            }),
-            const SizedBox(width: 8),
-            _buildModeChip('上传文件', file.mode == 'upload', () {
-              setState(() => file.mode = 'upload');
-            }),
-            const Spacer(),
-            // 编码选择
-            if (file.mode == 'text') ...[
-              Text('编码:', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: Colors.grey.shade300),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: file.encoding,
-                    isDense: true,
-                    menuMaxHeight: 300,
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-                    items: _supportedEncodings
-                        .map((e) => DropdownMenuItem(
-                              value: e.key,
-                              child: Text(e.value, style: const TextStyle(fontSize: 12)),
-                            ))
-                        .toList(),
-                    onChanged: (v) {
-                      if (v != null) _onEncodingChanged(file, v);
-                    },
-                  ),
-                ),
-              ),
-            ],
+        // 【窄屏溢出修复，留痕】原来是一整行不可收缩的 Row：两个 chip（各 horizontal:14
+        // 内边距 + 12 号 4 字 ≈ 76px）+ Spacer +「编码:」(≈34px) + 编码下拉
+        // （DropdownButton 宽度按**最宽 item**「ISO-8859-1 (Latin1)」撑到 ≈150px）
+        // 合计 ≈352px；而手机 sheet 的内容宽只有「屏宽 - 16*2」（360 屏 = 328），
+        // 必然 RenderFlex overflow。窄屏改成上下两行，宽屏保持原来的一整行不动
+        // （不改 V1 两个旧页面的观感）。
+        if (isSheet) ...[
+          Row(children: _localeModeChips(file)),
+          if (file.mode == 'text') ...[
+            const SizedBox(height: 10),
+            Row(children: _localeEncodingPicker(file)),
           ],
-        ),
+        ] else
+          Row(
+            children: [
+              ..._localeModeChips(file),
+              const Spacer(),
+              if (file.mode == 'text') ..._localeEncodingPicker(file),
+            ],
+          ),
         const SizedBox(height: 12),
 
         // 加载错误提示
@@ -1348,6 +1327,50 @@ class _StartupConfigModalState extends ConsumerState<StartupConfigModal>
       ],
     );
   }
+
+  /// 「文本内容 / 上传文件」模式 chip（宽窄屏共用同一份）
+  List<Widget> _localeModeChips(_LocaleFileEntry file) => [
+        _buildModeChip('文本内容', file.mode == 'text', () {
+          setState(() => file.mode = 'text');
+        }),
+        const SizedBox(width: 8),
+        _buildModeChip('上传文件', file.mode == 'upload', () {
+          setState(() => file.mode = 'upload');
+        }),
+      ];
+
+  /// 「编码: [下拉]」（宽窄屏共用同一份，仅文本模式出现）
+  List<Widget> _localeEncodingPicker(_LocaleFileEntry file) => [
+        Text('编码:',
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+        const SizedBox(width: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.grey.shade300),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: file.encoding,
+              isDense: true,
+              menuMaxHeight: 300,
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+              items: _supportedEncodings
+                  .map((e) => DropdownMenuItem(
+                        value: e.key,
+                        child:
+                            Text(e.value, style: const TextStyle(fontSize: 12)),
+                      ))
+                  .toList(),
+              onChanged: (v) {
+                if (v != null) _onEncodingChanged(file, v);
+              },
+            ),
+          ),
+        ),
+      ];
 
   Widget _buildTextEditorWithLoadMore(_LocaleFileEntry file) {
     // 参考 FileEditorModal：大文件不支持强制加载，直接显示文本编辑器

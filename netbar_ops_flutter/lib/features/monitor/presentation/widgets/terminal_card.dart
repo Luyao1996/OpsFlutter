@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/utils/html_text.dart';
 import '../../data/terminal_api.dart';
 
 /// 终端卡片组件 - 对应 Vue 的 TerminalCard.vue
@@ -15,6 +17,10 @@ class TerminalCard extends StatefulWidget {
   final VoidCallback? onHoverStart; // 鼠标进入：父级启动截图轮询
   final VoidCallback? onHoverEnd; // 鼠标离开：父级停止轮询
 
+  /// 点击右下角备注角标。传 null 则不渲染角标。
+  /// 保存备注要走 API，交给持有 ref 的父级处理，卡片只负责显示「有没有备注」。
+  final VoidCallback? onRemarkTap;
+
   const TerminalCard({
     super.key,
     required this.terminal,
@@ -25,6 +31,7 @@ class TerminalCard extends StatefulWidget {
     this.groupName,
     this.onHoverStart,
     this.onHoverEnd,
+    this.onRemarkTap,
   });
 
   @override
@@ -55,6 +62,14 @@ class _TerminalCardState extends State<TerminalCard> {
   }
 
   bool get _isOffline => t.status == 0;
+
+  /// 备注纯文本（去 HTML），空串 = 没写过备注。tooltip 里最多带一小段，
+  /// 备注可能很长，全塞进 tooltip 会糊住半个屏幕
+  String get _remarkPreview {
+    final text = stripHtml(t.remark);
+    if (text.length <= 40) return text;
+    return '${text.substring(0, 40)}…';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -225,6 +240,37 @@ class _TerminalCardState extends State<TerminalCard> {
             ],
           ),
         ),
+        // 右下角：备注角标。有备注就点亮成琥珀（与 toolboxPage DeviceCard 一致的
+        // 「有备注把图标点亮」表达）；没备注时是半透明白，点开即可新建。
+        // 琥珀而不是蓝：蓝色在这张卡上已经被 Busy 状态和边框占了
+        if (widget.onRemarkTap != null)
+          Positioned(
+            bottom: 4,
+            right: 4,
+            child: Tooltip(
+              message: _remarkPreview.isEmpty
+                  ? '编辑备注'
+                  : '已写备注：$_remarkPreview',
+              child: Material(
+                color: Colors.black.withValues(alpha: 0.45),
+                borderRadius: BorderRadius.circular(4),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(4),
+                  onTap: widget.onRemarkTap,
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(
+                      LucideIcons.fileText,
+                      size: 12,
+                      color: _remarkPreview.isEmpty
+                          ? Colors.white.withValues(alpha: 0.55)
+                          : const Color(0xFFFBBF24),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         // 左下角：IP 地址（常驻显示，空则不渲染）
         if (t.ip.isNotEmpty)
           Positioned(

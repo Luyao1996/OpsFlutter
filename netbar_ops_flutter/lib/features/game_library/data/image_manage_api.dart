@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import 'game_library_api.dart' show extractApiError;
+
 /// 镜像管理 HTTP API —— game_library 无盘系接口（对齐 web src/api/imageManage.js）
 ///
 /// 与 GameLibraryApi 同一套约定：独立 Dio、无鉴权、https://<subdomain_full> 直连。
@@ -38,15 +40,15 @@ class ImageManageApi {
   }
 
   /// 读接口错误体可能是 text/plain 的 Go 调用链串，也可能是 JSON —— 原样取原文，
-  /// 人话翻译由 UI 层调 humanizeCfgError
+  /// 人话翻译由 UI 层调 humanizeCfgError。
+  ///
+  /// 唯一的例外是网关错误页：网吧服务端没起来时 frp / nginx 会返回一整页 HTML，
+  /// 那不是后端文案，透出去会被原样渲染成一屏尖括号，降级成 `HTTP <status>`
+  /// （对齐 toolboxPage api/gameLibrary.js:32-48 的 extractApiError）。
   static String? _dioError(DioException e) {
-    final body = e.response?.data;
-    if (body is String && body.isNotEmpty) return body;
-    if (body is Map) {
-      final msg = body['message'] ?? body['error'];
-      if (msg != null) return msg.toString();
-    }
-    return e.message;
+    final status = e.response?.statusCode ?? 0;
+    return extractApiError(e.response?.data, status, fallbackMessage: e.message) ??
+        e.message;
   }
 
   /// GET /game_library/image_info —— 平台镜像列表 + 配置节/配置点树。

@@ -357,21 +357,33 @@ class _AppCenterBodyState extends ConsumerState<_AppCenterBody> {
   Widget _buildCatSidebar() {
     Widget catItem(String key, String name) {
       final active = _activeCat == key;
+      // 「已添加应用」带数量徽标：不点进去也能看到本分组添加了几个
+      final count = key == _catAdded ? _addedMap.length : 0;
       return InkWell(
         onTap: () => _selectCat(key),
         child: Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
           color: active ? const Color(0xFFEFF6FF) : null,
-          child: Text(
-            name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 14,
-              color: active ? AppColors.iosBlue : const Color(0xFF4B5563),
-              fontWeight: active ? FontWeight.w600 : FontWeight.normal,
-            ),
+          child: Row(
+            children: [
+              Flexible(
+                child: Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: active ? AppColors.iosBlue : const Color(0xFF4B5563),
+                    fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                  ),
+                ),
+              ),
+              if (count > 0) ...[
+                const SizedBox(width: 6),
+                _catCountBadge(count, active),
+              ],
+            ],
           ),
         ),
       );
@@ -396,14 +408,36 @@ class _AppCenterBodyState extends ConsumerState<_AppCenterBody> {
     );
   }
 
+  /// 分类项的数量徽标（对齐 toolboxPage AppCenterDialog.vue 的 .ac-cat-count）
+  Widget _catCountBadge(int count, bool active) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: active
+            ? AppColors.iosBlue.withValues(alpha: 0.14)
+            : const Color(0xFFEEF2F7),
+        borderRadius: BorderRadius.circular(9),
+      ),
+      child: Text(
+        '$count',
+        style: TextStyle(
+          fontSize: 11,
+          color: active ? AppColors.iosBlue : const Color(0xFF6B7280),
+        ),
+      ),
+    );
+  }
+
   // 顶部分类 chips（窄屏）
   Widget _buildCatChips() {
     Widget chip(String key, String name) {
       final active = _activeCat == key;
+      final count = key == _catAdded ? _addedMap.length : 0;
       return Padding(
         padding: const EdgeInsets.only(right: 8),
         child: ChoiceChip(
-          label: Text(name, style: const TextStyle(fontSize: 12)),
+          label: Text(count > 0 ? '$name $count' : name,
+              style: const TextStyle(fontSize: 12)),
           selected: active,
           onSelected: (_) => _selectCat(key),
           visualDensity: VisualDensity.compact,

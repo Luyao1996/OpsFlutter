@@ -317,17 +317,37 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
     }
   }
 
+  /// 菜单统一入口。
+  ///
+  /// [anchorRect] 非空 = 由某个按钮触发（[_openMoreMenu]）：菜单右缘对齐按钮右缘、
+  /// 顶边贴按钮底边。**必须**把 left 传按钮右缘、right 传"到按钮右缘的距离"，
+  /// 使 left > right —— Flutter `_PopupMenuRouteLayout.getPositionForChild` 只有在
+  /// `position.left > position.right` 时才走右对齐分支
+  /// （`x = 窗宽 - position.right - 菜单宽`）。
+  /// 【修复留痕】原实现恒传按钮**左下角**：left=按钮左缘(≈770)、right=窗宽-770(≈53)，
+  /// 同样满足 left > right 而走右对齐，算出 `x = 按钮左缘 - 菜单宽`，
+  /// 于是菜单整块跑到按钮**左侧**（右缘贴按钮左缘），看着像脱锚。
+  ///
+  /// [anchorRect] 为空 = 右键/长按触发：窄屏（手机）改弹底部 ActionSheet，
+  /// 宽屏仍在光标处弹 PopupMenu。
   Future<String?> _showContextMenu(
-      Offset globalPos, List<V2ContextMenuItem> items) {
+      Offset globalPos, List<V2ContextMenuItem> items,
+      {Rect? anchorRect}) {
+    if (anchorRect == null && context.isNarrow) {
+      return _guardDialog<String?>(() => _showActionSheet(items));
+    }
     final overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox;
+    final anchor = anchorRect == null
+        ? globalPos
+        : Offset(anchorRect.right, anchorRect.bottom);
     return _guardDialog<String?>(() => showMenu<String>(
           context: context,
           position: RelativeRect.fromLTRB(
-            globalPos.dx,
-            globalPos.dy,
-            overlay.size.width - globalPos.dx,
-            overlay.size.height - globalPos.dy,
+            anchor.dx,
+            anchor.dy,
+            overlay.size.width - anchor.dx,
+            overlay.size.height - anchor.dy,
           ),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           items: [
@@ -367,6 +387,83 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
                 ),
           ],
         ));
+  }
+
+  /// 窄屏（手机端）右键/长按菜单的形态：底部 ActionSheet。
+  ///
+  /// 【形态分叉，用户拍板】触屏长按弹出的 PopupMenu 锚在手指位置，菜单恰好被手指和
+  /// 刚点的那一行挡住；改为贴底弹出的列表：不遮内容、命中区更大。
+  /// 宽屏（桌面）保持 showMenu 原样，两端行为不互相影响。
+  /// 项集合、禁用态与危险色三者与 PopupMenu 分支逐项一致，新增项只需改 items 来源。
+  Future<String?> _showActionSheet(List<V2ContextMenuItem> items) {
+    Color iconColor(V2ContextMenuItem it) => it.disabled
+        ? Colors.grey.shade400
+        : (it.danger ? AppColors.red : Colors.grey.shade700);
+    Color textColor(V2ContextMenuItem it) => it.disabled
+        ? Colors.grey.shade400
+        : (it.danger ? AppColors.red : const Color(0xFF1F2937));
+
+    return showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      // 资源区右键最多 7 项：限高 + 内部可滚，避免顶到状态栏
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.7,
+      ),
+      builder: (sheetCtx) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.only(bottom: 8),
+                children: [
+                  for (final it in items)
+                    if (it.divider)
+                      Divider(
+                          height: 9,
+                          thickness: 1,
+                          indent: 16,
+                          endIndent: 16,
+                          color: Colors.grey.shade200)
+                    else
+                      ListTile(
+                        dense: true,
+                        visualDensity: VisualDensity.standard,
+                        leading: it.icon == null
+                            ? null
+                            : Icon(it.icon, size: 20, color: iconColor(it)),
+                        minLeadingWidth: 20,
+                        title: Text(
+                          it.label,
+                          style: TextStyle(
+                              fontSize: 15, color: textColor(it)),
+                        ),
+                        onTap: it.disabled
+                            ? null
+                            : () => Navigator.of(sheetCtx).pop(it.key),
+                      ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ====== 删除 ======
@@ -823,8 +920,9 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
   Future<void> _openMoreMenu(BuildContext btnCtx) async {
     final box = btnCtx.findRenderObject() as RenderBox?;
     if (box == null) return;
-    final pos = box.localToGlobal(box.size.bottomLeft(Offset.zero));
-    final key = await _showContextMenu(pos, [
+    // 按钮整块矩形交给 [_showContextMenu]，由它做"右缘对齐按钮右缘"的定位
+    final rect = box.localToGlobal(Offset.zero) & box.size;
+    final key = await _showContextMenu(rect.bottomLeft, [
       const V2ContextMenuItem(
           key: 'strategy_private',
           label: '网吧私有策略',
@@ -833,7 +931,7 @@ class _ChannelV2PageState extends ConsumerState<ChannelV2Page> {
           key: 'strategy_public', label: '程序公共策略', icon: LucideIcons.globe),
       const V2ContextMenuItem(
           key: 'task_list', label: '任务列表', icon: LucideIcons.listChecks),
-    ]);
+    ], anchorRect: rect);
     switch (key) {
       case 'strategy_private':
         _openStrategyDialog(V2StrategyVariant.private);

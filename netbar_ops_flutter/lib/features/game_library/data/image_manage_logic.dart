@@ -275,6 +275,10 @@ final List<(RegExp, String)> _errorRules = [
   (RegExp('not connected|dial|timeout|超时'), '连不上无盘服务端，请检查网络或服务状态'),
 ];
 
+/// 响应体是 HTML / XML 文档（frp、nginx 等网关的错误页），而不是后端给的错误文案
+final RegExp kGatewayPageRe =
+    RegExp(r'^\s*(<!doctype|<html|<\?xml)', caseSensitive: false);
+
 /// js:195-202。未命中保留原文截 80 字（UTF-16 计数，与 js slice 同口径）
 String humanizeCfgError(dynamic raw) {
   final text = (raw ?? '').toString().trim();
@@ -282,6 +286,9 @@ String humanizeCfgError(dynamic raw) {
   for (final (re, msg) in _errorRules) {
     if (re.hasMatch(text)) return msg;
   }
+  // 兜底：网吧服务端没起来时请求会被 frp / nginx 拦下并返回一整页 HTML 错误页，
+  // 那段源码不能当文案透出去，否则界面上会出现一屏尖括号
+  if (kGatewayPageRe.hasMatch(text)) return '连不上网吧服务端，请检查服务状态';
   return text.length > 80 ? '${text.substring(0, 80)}…' : text;
 }
 

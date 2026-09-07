@@ -40,7 +40,10 @@ class _RouterCardState extends State<RouterCard> {
   // 避免 hover 频繁进出时"stop 后紧接 start"导致旧请求误判未过期、出现双计时链。
   int _pollEpoch = 0;
 
-  bool get _shouldPoll => widget.active && widget.router.enabled;
+  /// 网页管理是公网站点，压根没有 /traffic 这个接口 —— 不排除掉的话每 15s
+  /// 就会打一次必然失败的请求（错误还被 _pollOnce 静默吞掉，查都查不出来）。
+  bool get _shouldPoll =>
+      widget.active && widget.router.enabled && !widget.router.isWebManage;
 
   /// 轮询间隔：hover 时 1s 高频刷新，否则 15s baseline。
   Duration get _pollInterval =>
@@ -103,10 +106,30 @@ class _RouterCardState extends State<RouterCard> {
     _pollTimer = Timer(_pollInterval, () => _pollOnce(epoch));
   }
 
+  /// 设备主色：路由器青 / 交换机琥珀 / 网页管理玫红。
+  ///
+  /// 只换图标底色与卡片描边，不动卡体的深色渐变 —— toolboxPage 那边是浅色卡，
+  /// 整套配色（路由器绿 #10b981、交换机琥珀、网页管理玫红）搬不过来，
+  /// 这里保持本端既有的深色观感，仅借用「三类设备三种色相」的区分方式。
+  Color get _accent {
+    final r = widget.router;
+    if (r.isWebManage) return const Color(0xFFEC4899);
+    if (r.isSwitch) return const Color(0xFFF59E0B);
+    return const Color(0xFF06B6D4);
+  }
+
+  IconData get _deviceIcon {
+    final r = widget.router;
+    if (r.isWebManage) return LucideIcons.globe;
+    if (r.isSwitch) return LucideIcons.network;
+    return LucideIcons.router;
+  }
+
   @override
   Widget build(BuildContext context) {
     final r = widget.router;
     final enabled = r.enabled;
+    final accent = _accent;
 
     return MouseRegion(
       onEnter: (_) {
@@ -149,7 +172,7 @@ class _RouterCardState extends State<RouterCard> {
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: enabled
-                  ? const Color(0xFF06B6D4).withValues(alpha: _isHovered ? 0.8 : 0.4)
+                  ? accent.withValues(alpha: _isHovered ? 0.8 : 0.4)
                   : Colors.grey.shade600.withValues(alpha: 0.3),
               width: 2,
             ),
@@ -184,10 +207,10 @@ class _RouterCardState extends State<RouterCard> {
                                   width: iconSize,
                                   height: iconSize,
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF06B6D4).withValues(alpha: 0.15),
+                                    color: accent.withValues(alpha: 0.15),
                                     borderRadius: BorderRadius.circular(iconRadius),
                                   ),
-                                  child: Icon(LucideIcons.router, size: iconSize * 0.56, color: const Color(0xFF06B6D4)),
+                                  child: Icon(_deviceIcon, size: iconSize * 0.56, color: accent),
                                 ),
                                 const SizedBox(width: 8),
                                 Expanded(
@@ -217,8 +240,19 @@ class _RouterCardState extends State<RouterCard> {
                               ],
                             ),
                             const Spacer(),
+                            // 网页管理没有流量可显示（公网站点，不是内网设备）
+                            if (enabled && r.isWebManage)
+                              Text(
+                                '点击打开管理网页',
+                                style: TextStyle(
+                                  color: Colors.grey.shade400,
+                                  fontSize: isCompact ? 10 : 12,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              )
                             // Traffic rates: WAN + LAN (two columns)
-                            if (enabled)
+                            else if (enabled)
                               Row(
                                 children: [
                                   Expanded(
@@ -267,8 +301,11 @@ class _RouterCardState extends State<RouterCard> {
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
-                              r.type,
-                              style: const TextStyle(color: Color(0xFF06B6D4), fontSize: 9, fontWeight: FontWeight.w600),
+                              // 与 toolboxPage RouterCard.vue:10 同口径：脚本类型(设备类型)。
+                              // deviceType 理论上由 routersProvider 回填，但兜一手空值，
+                              // 免得角标出现一对空括号
+                              r.deviceType.isEmpty ? r.type : '${r.type}(${r.deviceType})',
+                              style: TextStyle(color: accent, fontSize: 9, fontWeight: FontWeight.w600),
                             ),
                           ),
                         ),

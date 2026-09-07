@@ -247,14 +247,9 @@ class GameLibraryApi {
       );
     } on DioException catch (e) {
       final status = e.response?.statusCode ?? 0;
-      final body = e.response?.data;
-      String? error;
-      if (body is Map) {
-        error = (body['message'] ?? body['error'])?.toString();
-      } else if (body is String) {
-        error = body;
-      }
-      error ??= e.message;
+      final error =
+          extractApiError(e.response?.data, status, fallbackMessage: e.message) ??
+              e.message;
       return RecyclePlanSaveResult(ok: false, status: status, error: error);
     }
   }
@@ -269,20 +264,15 @@ class GameLibraryApi {
         return GameOpResult(
           ok: status >= 200 && status < 300,
           status: status,
-          error: data == null ? null : data.toString(),
+          error: data == null ? null : extractApiError(data, status),
         );
       }
       return _parseOpResult(status, data.cast<String, dynamic>());
     } on DioException catch (e) {
       final status = e.response?.statusCode ?? 0;
-      final body = e.response?.data;
-      String? error;
-      if (body is Map) {
-        error = (body['message'] ?? body['error'])?.toString();
-      } else if (body is String) {
-        error = body;
-      }
-      error ??= e.message;
+      final error =
+          extractApiError(e.response?.data, status, fallbackMessage: e.message) ??
+              e.message;
       return GameOpResult(ok: false, status: status, error: error);
     }
   }
@@ -343,6 +333,31 @@ GameLibraryDownloadingResult _parseDownloading(Map<String, dynamic> data) {
     }
   }
   return GameLibraryDownloadingResult(tasks: tasks, snapshots: snapshots);
+}
+
+/// 响应体是 HTML / XML 文档（frp、nginx 等网关的错误页），而不是后端给的错误文案
+final RegExp _gatewayPageRe =
+    RegExp(r'^\s*(<!doctype|<html|<\?xml)', caseSensitive: false);
+final RegExp _closingTagRe = RegExp(r'</[a-z]+>', caseSensitive: false);
+
+/// 从非 2xx 响应里取错误文案（对齐 toolboxPage api/gameLibrary.js:32-48）。
+///
+/// 后端业务错误是 text/plain 的 Go 错误串（[humanizeCfgError] 的规则表靠它翻译），
+/// 必须原样保留；但网吧服务端没起来时，请求会被 frp / nginx 拦下并返回一整页 HTML
+/// 错误页，那段源码不能当错误文案透出去（会被原样渲染成一屏尖括号），统一降级成
+/// `HTTP <status>`，由调用方转成「离线」这类人话。
+String? extractApiError(dynamic data, int status, {String? fallbackMessage}) {
+  final fallback = status > 0 ? 'HTTP $status' : fallbackMessage;
+  if (data is Map) {
+    return (data['message'] ?? data['error'])?.toString() ?? fallback;
+  }
+  if (data is! String) return fallback;
+  final text = data.trim();
+  // 含闭合标签说明是标记文档而非纯文本错误串（Go 错误里的 <nil> 不会命中）
+  if (text.isEmpty || _gatewayPageRe.hasMatch(text) || _closingTagRe.hasMatch(text)) {
+    return fallback;
+  }
+  return text.length > 200 ? '${text.substring(0, 200)}…' : text;
 }
 
 GameOpResult _parseOpResult(int status, Map<String, dynamic> body) {

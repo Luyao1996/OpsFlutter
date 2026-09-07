@@ -1,11 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/providers/permission_provider.dart';
 import '../../../shared/utils/adaptive_show.dart';
+import '../../../shared/utils/top_notice.dart';
+// 启动项的新增/编辑弹窗与 V2 通道管理页共用同一份共享层组件（features/strategy），
+// 执行文件选择器取自 V2（features/channel_v2）——本页是 channel → channel_v2 的
+// 单向引用，channel_v2 侧不 import channel，不构成循环依赖。
+import '../../channel_v2/data/channel_v2_api.dart';
+import '../../channel_v2/presentation/widgets/v2_delivery_exe_picker_dialog.dart';
+import '../../strategy/data/strategy_api.dart';
+import '../../strategy/presentation/widgets/add_startup_item_modal.dart';
+import '../../strategy/presentation/widgets/startup_config_modal.dart';
+import '../../strategy/presentation/widgets/strategy_exe_picker.dart';
 import '../data/startup_monitor_api.dart';
 import '../data/startup_monitor_models.dart';
 import 'widgets/monitor_item_dialog.dart';
@@ -19,7 +29,12 @@ class ChannelMonitorPage extends ConsumerStatefulWidget {
 
 class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
   final StartupItemMonitorApi _api = StartupItemMonitorApi();
+  /// 启动项（策略）读写走共享层，与 V2 策略弹窗同一份 API
+  final StrategyApi _strategyApi = StrategyApi();
   final TextEditingController _searchController = TextEditingController();
+
+  /// 「编辑启动项」入口的并发守卫：拉策略列表期间挡住重复点击
+  bool _startupEditorBusy = false;
 
   List<NetbarMonitorData> _data = [];
   bool _loading = true;
@@ -66,6 +81,95 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
         _loading = false;
       });
     }
+  }
+
+  /// 启动项表单（新增/编辑）的宽屏宽度，与 V2 策略弹窗一致（共享层默认 560）。
+  static const double _kStartupFormWidth = 728;
+
+  /// 新版执行文件选择器（下发文件区）。[netbarId] 非空时限定为该网吧作用域。
+  StrategyExePicker _startupExePicker(int? netbarId) {
+    final api = ref.read(channelV2ApiProvider);
+    if (netbarId == null) return v2DeliveryExePicker(api);
+    return v2DeliveryExePicker(api, scopeType: 'merchant', scopeId: '$netbarId');
+  }
+
+  /// 「编辑启动项」：就地打开新版编辑弹窗。
+  ///
+  /// 【留痕】原实现是 `context.go('/channel-management?tab=startup&zone=BRANCH'
+  /// '&edit_startup_item_id=..')` 跳旧版通道管理页，由旧页按 startupId 匹配后
+  /// 打开同一个 [StartupConfigModal]（channel_management_page.dart:337-368）。
+  /// 旧页已改名「通道管理（旧版）」并从主菜单隐藏，编辑必须落到新版，故把
+  /// 「匹配 + 弹窗」两步搬到本页就地做：
+  ///   - 弹窗本体就是共享层组件，与 V2 策略列表的编辑入口是同一个；
+  ///   - 补上 V2 的执行文件选择器与放大后的宽度（旧页不传 → 执行文件只读、560 宽）；
+  ///   - 不再 setNetbar：那是旧页要按当前网吧过滤才切的全局态，就地弹窗不需要，
+  ///     切了反而会经 [_netbarSub] 触发本页整页重载。
+  Future<void> _openStartupEditor(
+      NetbarMonitorData netbar, int startupItemId) async {
+    if (_startupEditorBusy) return;
+    _startupEditorBusy = true;
+    try {
+      final items = await _strategyApi.getAll();
+      // 匹配口径照搬旧页：监控页传的是 startup 表主键，不是 tactic 主键
+      TacticItem? found;
+      for (final item in items) {
+        if (item.merchantId == netbar.id && item.startupId == startupItemId) {
+          found = item;
+          break;
+        }
+      }
+      if (!mounted) return;
+      final target = found;
+      if (target == null) {
+        showTopNotice(context, '未找到启动项：$startupItemId',
+            level: NoticeLevel.warning);
+        return;
+      }
+      await showAdaptive<void>(
+        context,
+        (_) => StartupConfigModal(
+          item: target,
+          isAdmin: ref.read(permissionProvider).isManager,
+          variant: StrategyVariant.private,
+          exePicker: _startupExePicker(netbar.id),
+          dialogWidth: _kStartupFormWidth,
+          onSuccess: _loadData,
+        ),
+        routeName: '/dialog/startup-config',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      showTopNotice(context, '加载启动项失败: $e', level: NoticeLevel.error);
+    } finally {
+      _startupEditorBusy = false;
+    }
+  }
+
+  /// 空态「前往配置启动项」：就地打开新版「新增策略」。
+  ///
+  /// 【留痕】原实现同样跳旧页的启动项页签、再让用户自己点新增。改为直接复用共享层
+  /// [AddStartupItemModal]，参数与 V2 占位行「新增策略」入口逐项对齐
+  /// （v2_strategy_list_dialog.dart:427-455）：预勾当前网吧是承接用户「给这家网吧
+  /// 配启动项」的显式点击；未选网吧（[netbarId] 为 null）则一家都不勾，由用户在
+  /// 表单的「生效网吧」面板里自己选。
+  Future<void> _openAddStartupItem(int? netbarId) async {
+    await showAdaptive<void>(
+      context,
+      (_) => AddStartupItemModal(
+        // zone 是 AddStartupItemModal 的死参数（全文件无 widget.zone 引用），
+        // 传值仅为满足 required；新版没有 zone 概念。
+        zone: 'BRANCH',
+        isAdmin: ref.read(permissionProvider).isManager,
+        variant: StrategyVariant.private,
+        exePicker: _startupExePicker(netbarId),
+        dialogWidth: _kStartupFormWidth,
+        allowMerchantSelect: true,
+        initialSelectedMerchantIds:
+            netbarId == null ? const <int>{} : <int>{netbarId},
+        onSuccess: _loadData,
+      ),
+      routeName: '/dialog/add-startup-item',
+    );
   }
 
   bool _isItemAbnormal(StartupItemStats item) {
@@ -507,7 +611,7 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
                   ),
                   const SizedBox(height: 16),
                   TextButton.icon(
-                    onPressed: () => context.go('/channel-management?tab=startup&zone=BRANCH'),
+                    onPressed: () => _openAddStartupItem(netbar.id),
                     icon: const Icon(LucideIcons.plus, size: 16),
                     label: const Text('前往配置启动项'),
                     style: TextButton.styleFrom(
@@ -901,15 +1005,9 @@ class _ChannelMonitorPageState extends ConsumerState<ChannelMonitorPage> {
             onClose: () => Navigator.of(context).pop(),
             onEdit: startupItemId == null
                 ? null
-                : () async {
-                    await ref.read(currentNetbarProvider.notifier).setNetbar(
-                          netbar.id,
-                          netbar.name,
-                          netbar.status,
-                        );
-                    if (!context.mounted) return;
+                : () {
                     Navigator.of(context).pop();
-                    context.go('/channel-management?tab=startup&zone=BRANCH&edit_startup_item_id=$startupItemId');
+                    _openStartupEditor(netbar, startupItemId);
                   },
           ),
           barrierColor: Colors.black.withOpacity(0.3),

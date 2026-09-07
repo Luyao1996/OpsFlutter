@@ -6,6 +6,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/utils/natural_sort.dart';
 import '../../monitor/data/terminal_api.dart';
 import '../data/game_constants.dart';
 import '../data/image_manage_api.dart';
@@ -81,6 +82,10 @@ class _ImageManageViewState extends ConsumerState<ImageManageView> {
   int? _filterDiskId;
   String _filterOnline = ''; // '' / 'online' / 'offline'
 
+  /// 表头排序：null = 不排序，保持后端返回顺序
+  String? _sortKey;
+  SortOrder? _sortOrder;
+
   final Set<String> _selected = {};
 
   @override
@@ -149,6 +154,48 @@ class _ImageManageViewState extends ConsumerState<ImageManageView> {
       ));
     }
     return out;
+  }
+
+  // ===== 排序（对齐 toolboxPage ImageManageDialog.vue:344-373）=====
+  //
+  // 机号形如 010 / T9 / WIN-4KD4KFJFJBQ、IP 形如 192.168.1.9，都混着数字和字母，
+  // 统一走 natural_sort（"T9" 排在 "T10" 前，纯字符串比较会反过来）。
+  // 后两列在行上没有可直接比较的字段，这里给出各自的排序值：
+  //   已配置镜像 → 拼接「镜像名/配置点」，未接入/未配置的机器无值，恒沉底
+  //   虚拟安全   → 各槽开启的开关总数，开得多的排后（升序）
+  static final Map<String, Object? Function(_ImageRow)> _sortGetters = {
+    'id': (r) => r.id,
+    'ip': (r) => r.ip,
+    'mac': (r) => r.mac,
+    'slots': (r) =>
+        r.slots.map((s) => '${s.imageName}/${s.sectionName}').join(','),
+    'virtual_security': (r) => r.slots.isEmpty
+        ? null
+        : r.slots.fold<int>(
+            0,
+            (n, s) =>
+                n + kVsKeys.where((vs) => s.virtualSecurity[vs.key] == true).length),
+  };
+
+  List<_ImageRow> _sortRows(List<_ImageRow> rows) {
+    final getter = _sortGetters[_sortKey];
+    if (getter == null || _sortOrder == null) return rows;
+    return sortByGetter(rows, getter, _sortOrder);
+  }
+
+  /// 表头三态循环：升序 → 降序 → 取消（回到后端原始顺序）
+  void _onHeaderTap(String key) {
+    setState(() {
+      if (_sortKey != key) {
+        _sortKey = key;
+        _sortOrder = SortOrder.ascending;
+      } else if (_sortOrder == SortOrder.ascending) {
+        _sortOrder = SortOrder.descending;
+      } else {
+        _sortKey = null;
+        _sortOrder = null;
+      }
+    });
   }
 
   List<_ImageRow> _filteredRows() {
@@ -764,7 +811,7 @@ class _ImageManageViewState extends ConsumerState<ImageManageView> {
       );
     }
 
-    final rows = _filteredRows();
+    final rows = _sortRows(_filteredRows());
     if (rows.isEmpty) {
       return Center(
         child: Text(
@@ -810,6 +857,39 @@ class _ImageManageViewState extends ConsumerState<ImageManageView> {
   static const _headStyle = TextStyle(
       fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF6B7280));
 
+  /// 可排序表头单元：点击切换 升序 → 降序 → 取消，当前列带方向箭头
+  Widget _sortableHead(String label, String key) {
+    final active = _sortKey == key && _sortOrder != null;
+    return InkWell(
+      onTap: () => _onHeaderTap(key),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: Text(
+              label,
+              style: active
+                  ? _headStyle.copyWith(color: AppColors.iosBlue)
+                  : _headStyle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 2),
+          Icon(
+            active
+                ? (_sortOrder == SortOrder.descending
+                    ? LucideIcons.arrowDown
+                    : LucideIcons.arrowUp)
+                : LucideIcons.arrowDownUp,
+            size: 11,
+            color: active ? AppColors.iosBlue : const Color(0xFFC0C4CC),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTableHeader() {
     return Container(
       decoration: const BoxDecoration(
@@ -817,17 +897,18 @@ class _ImageManageViewState extends ConsumerState<ImageManageView> {
         border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
       ),
       padding: const EdgeInsets.symmetric(vertical: 9),
-      child: const Row(
+      // 除「操作」外每列都可排（对齐 toolboxPage ImageManageDialog.vue:128-153）
+      child: Row(
         children: [
-          SizedBox(width: 40),
-          Expanded(flex: 3, child: Text('客户机名称', style: _headStyle)),
-          SizedBox(width: 110, child: Text('IP地址', style: _headStyle)),
-          SizedBox(width: 150, child: Text('MAC地址', style: _headStyle)),
+          const SizedBox(width: 40),
+          Expanded(flex: 3, child: _sortableHead('客户机名称', 'id')),
+          SizedBox(width: 110, child: _sortableHead('IP地址', 'ip')),
+          SizedBox(width: 150, child: _sortableHead('MAC地址', 'mac')),
           Expanded(
               flex: 5,
-              child: Text('已配置镜像 / 配置点 / 临时镜像时间', style: _headStyle)),
-          SizedBox(width: 240, child: Text('虚拟安全', style: _headStyle)),
-          SizedBox(width: 96, child: Text('操作', style: _headStyle)),
+              child: _sortableHead('已配置镜像 / 配置点 / 临时镜像时间', 'slots')),
+          SizedBox(width: 240, child: _sortableHead('虚拟安全', 'virtual_security')),
+          const SizedBox(width: 96, child: Text('操作', style: _headStyle)),
         ],
       ),
     );

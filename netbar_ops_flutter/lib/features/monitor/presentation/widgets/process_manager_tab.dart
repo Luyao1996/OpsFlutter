@@ -4,10 +4,11 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../../../core/responsive/responsive.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/providers/app_providers.dart';
+import '../../../../shared/utils/natural_sort.dart';
 import '../../../../shared/utils/top_notice.dart';
 import '../../data/terminal_api.dart';
 
-enum _ProcessSortKey { name, pid, cpu, mem, user, thread }
+enum _ProcessSortKey { name, pid, cpu, mem, user, thread, path }
 
 class ProcessManagerTab extends ConsumerStatefulWidget {
   final int terminalId;
@@ -176,9 +177,15 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
       case _ProcessSortKey.pid:
       case _ProcessSortKey.user:
       case _ProcessSortKey.thread:
+      case _ProcessSortKey.path:
         return true;
     }
   }
+
+  /// 路径列：web 的进程表有独立「路径」列（且可排序），本端原先只把路径挂在进程名的
+  /// tooltip 上。补出来一列，但窄窗口下六列均分会把每列挤到看不清，
+  /// 所以宽度不够时仍然只保留 tooltip。
+  bool get _showPathColumn => MediaQuery.of(context).size.width >= 1200;
 
   void _toggleSort(_ProcessSortKey key) {
     setState(() {
@@ -316,6 +323,10 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
         break;
       case _ProcessSortKey.thread:
         c = a.threadCount.compareTo(b.threadCount);
+        break;
+      case _ProcessSortKey.path:
+        // 路径里混着数字（Program Files (x86)、版本号目录），走自然序
+        c = naturalCompare(a.path, b.path);
         break;
     }
     if (c == 0) c = a.pid.compareTo(b.pid);
@@ -464,6 +475,11 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
                 Expanded(child: Center(child: _buildSortHeaderCell('线程', _ProcessSortKey.thread))),
                 Expanded(child: Center(child: _buildSortHeaderCell('CPU%', _ProcessSortKey.cpu))),
                 Expanded(child: Center(child: _buildSortHeaderCell('内存', _ProcessSortKey.mem))),
+                if (_showPathColumn)
+                  Expanded(
+                    flex: 2,
+                    child: _buildSortHeaderCell('路径', _ProcessSortKey.path),
+                  ),
                 const SizedBox(width: 80), // 操作列
               ],
             ),
@@ -591,6 +607,20 @@ class _ProcessManagerTabState extends ConsumerState<ProcessManagerTab> {
                         ),
                       ),
                     ),
+                    // 路径（宽屏才显示，与表头同一个开关）
+                    if (_showPathColumn)
+                      Expanded(
+                        flex: 2,
+                        child: Tooltip(
+                          message: proc.path.isNotEmpty ? proc.path : '—',
+                          child: Text(
+                            proc.path.isNotEmpty ? proc.path : '—',
+                            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
                     // 操作
                     SizedBox(
                       width: 80,

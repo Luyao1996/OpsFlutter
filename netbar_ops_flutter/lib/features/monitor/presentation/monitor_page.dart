@@ -35,6 +35,8 @@ import 'widgets/terminal_card.dart';
 import '../../../shared/widgets/app_error_view.dart';
 import 'widgets/router_card.dart';
 import 'widgets/router_edit_modal.dart';
+import 'widgets/remark_edit_dialog.dart';
+import 'widgets/remark_search_dialog.dart';
 
 /// 终端列表 Provider — 按 netbarId 隔离。
 ///
@@ -960,6 +962,8 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                                             _onCardHoverStart(terminal),
                                         onHoverEnd: () =>
                                             _onCardHoverEnd(terminal.seatId),
+                                        onRemarkTap: () =>
+                                            _openRemarkEditor(terminal),
                                       );
                                     }, childCount: filteredClients.length),
                                   );
@@ -1028,6 +1032,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                               _showContextMenu(details, terminal),
                           onHoverStart: () => _onCardHoverStart(terminal),
                           onHoverEnd: () => _onCardHoverEnd(terminal.seatId),
+                          onRemarkTap: () => _openRemarkEditor(terminal),
                         );
                       }, childCount: filteredClients.length),
                     );
@@ -1162,6 +1167,42 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
   // 完成，旧方案会让 id 永久残留、对应卡片永久点不动（间歇"点击无反应"根因）。
   int? _lastOpenTerminalId;
   DateTime? _lastOpenTerminalAt;
+
+  /// 打开备注搜索。数据取当前网吧的终端快照（已带 remark），窗口内不再发请求。
+  void _openRemarkSearch() {
+    final netbarId = ref.read(currentNetbarIdProvider);
+    final terminals =
+        ref.read(liveTerminalsProvider(netbarId)).valueOrNull ?? const <Terminal>[];
+    showAdaptive<void>(
+      context,
+      (_) => RemarkSearchDialog(
+        terminals: terminals,
+        onOpen: _openRemarkEditor,
+      ),
+      routeName: '/dialog/remark-search',
+    );
+  }
+
+  /// 打开备注编辑器（卡片右下角角标 / 备注搜索结果项共用）。
+  /// 保存成功后重拉终端列表 —— 角标点亮状态和备注搜索的数据都派生自 terminals。
+  Future<void> _openRemarkEditor(Terminal terminal) async {
+    final netbarId = ref.read(currentNetbarIdProvider);
+    final saved = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => RemarkEditDialog(
+          terminalName: terminal.name,
+          initialHtml: terminal.remark ?? '',
+          onSave: (html) async {
+            await ref.read(terminalApiProvider).saveRemark(terminal.id, html);
+          },
+        ),
+      ),
+    );
+    if (saved != null && mounted) {
+      ref.invalidate(terminalsProvider(netbarId));
+    }
+  }
 
   void _openTerminalDetail(Terminal terminal) {
     if (isDesktopPlatform) {
@@ -1390,12 +1431,27 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
       {required int? expectedNetbarId}) async {
     debugPrint(
         '[Router] _openRouterInBrowser entry: id=${router.id} name=${router.name} proxyUrl=${router.proxyUrl}');
-    // 禁用状态的路由器不应该被打开
+    // 禁用状态的设备不应该被打开
     if (!router.enabled) {
       debugPrint('[Router] abort open: router disabled id=${router.id}');
       if (mounted) {
-        showTopNotice(context, '该路由器已禁用，请先启用后再打开',
+        showTopNotice(context, '该设备已禁用，请先启用后再打开',
             level: NoticeLevel.warning);
+      }
+      return;
+    }
+    // 网页管理（腾讯网吧特权 / 网吧特权服务平台）与路由器/交换机走同一条链路：
+    // 一律经 frps 代理开 /embed/ 并带 netbarGroup/netbarName/Authorization。
+    // 目标域名是我们自己的 frps 子域而非第三方站点，token 不会外泄给对方
+    // （toolboxPage RemoteWakePage.vue:561-563：曾短暂改成「直开 host 不带 query」，
+    //   2026-08-28 又改了回来，本端跟随）。
+    //
+    // 无代理地址的直接给提示：Uri.parse('') 不会抛错，替换 path 后会得到一个
+    // `/embed/?...` 的畸形相对地址，交给 launchUrl 只会静默失败。
+    if (router.proxyUrl.isEmpty) {
+      debugPrint('[Router] abort open: proxyUrl empty id=${router.id}');
+      if (mounted) {
+        showTopNotice(context, '该条目暂无可访问的代理地址', level: NoticeLevel.warning);
       }
       return;
     }
@@ -1483,6 +1539,8 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                     ),
                     _buildAddRouterButton(compact: true),
                     const SizedBox(width: 8),
+                    _buildRemarkSearchButton(),
+                    const SizedBox(width: 8),
                     _buildDevicesRefreshButton(),
                   ],
                 ),
@@ -1508,6 +1566,8 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                 const Spacer(),
                 _buildAddRouterButton(compact: false),
                 // 「下载服务端」「下载副服务器」已迁移至顶部面包屑行右侧（_buildHeaderActions）
+                const SizedBox(width: 8),
+                _buildRemarkSearchButton(),
                 const SizedBox(width: 8),
                 _buildDevicesRefreshButton(),
               ],
@@ -1576,6 +1636,7 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
                             _showContextMenu(details, d),
                         onHoverStart: () => _onCardHoverStart(d),
                         onHoverEnd: () => _onCardHoverEnd(d.seatId),
+                        onRemarkTap: () => _openRemarkEditor(d),
                       ),
                     ),
                   ),
@@ -1711,13 +1772,34 @@ class _MonitorPageState extends ConsumerState<MonitorPage>
       child: ElevatedButton.icon(
         onPressed: netbarId == null ? null : () => _showRouterEditModal(netbarId: netbarId),
         icon: const Icon(LucideIcons.plus, size: 14),
-        label: Text(compact ? '路由器' : '新增路由器', style: const TextStyle(fontSize: 12)),
+        // 这个入口同时用于新增路由器 / 交换机 / 网页管理，写死「路由器」会让人
+        // 以为建不了另外两类（类型由弹窗里的脚本类型决定）
+        label: Text(compact ? '设备' : '新增设备', style: const TextStyle(fontSize: 12)),
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF06B6D4),
           foregroundColor: Colors.white,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           elevation: 0,
+        ),
+      ),
+    );
+  }
+
+  /// 备注搜索按钮（关键设备区标题栏，「新增设备」与刷新之间）。
+  /// 尺寸/配色对齐 [_buildDevicesRefreshButton]，三个按钮一排要齐高。
+  Widget _buildRemarkSearchButton() {
+    return SizedBox(
+      width: 32,
+      height: 32,
+      child: IconButton(
+        tooltip: '备注搜索',
+        onPressed: _openRemarkSearch,
+        icon: const Icon(LucideIcons.fileText, size: 14),
+        style: IconButton.styleFrom(
+          backgroundColor: Colors.grey.shade200,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          padding: EdgeInsets.zero,
         ),
       ),
     );

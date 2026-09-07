@@ -7,6 +7,16 @@ import '../../../shared/providers/app_providers.dart';
 
 // ── Models ──
 
+/// 设备类型取值（与后端 `/config/global/router_types` 下发的 deviceType 字段对齐，
+/// 见 toolboxPage RouterCard.vue:68-70）。缺省一律按路由器处理。
+const String kDeviceTypeRouter = '路由器';
+const String kDeviceTypeSwitch = '交换机';
+
+/// 网页管理（腾讯网吧特权 / 网吧特权服务平台这类）：不是内网设备，是公网站点。
+/// 它既不走 frp 隧道，打开方式也与路由器/交换机完全不同，见
+/// monitor_page._openRouterInBrowser。
+const String kDeviceTypeWeb = '网页管理';
+
 class RouterInfo {
   final String id;
   final String name;
@@ -14,9 +24,19 @@ class RouterInfo {
   final String type;
   final String user;
   final String pass;
+
+  /// 二次密码：只有「网页管理」这类平台才有这道验证，选填。
+  /// 后端字段名就叫 pass2（toolboxPage useRouters.js:112 同名提交）。
+  final String pass2;
   final bool enabled;
   final String proxyUrl;
   final bool isIp;
+
+  /// 设备类型：路由器 / 交换机 / 网页管理。
+  ///
+  /// 后端 `/routers` 的记录不一定带这个字段（保存时也没往上传），所以列表拿到手后
+  /// 还要按脚本类型名去类型表里反查补齐，见 [resolveDeviceType] 与 [routersProvider]。
+  final String deviceType;
 
   const RouterInfo({
     required this.id,
@@ -25,9 +45,11 @@ class RouterInfo {
     this.type = '',
     this.user = '',
     this.pass = '',
+    this.pass2 = '',
     this.enabled = true,
     this.proxyUrl = '',
     this.isIp = false,
+    this.deviceType = kDeviceTypeRouter,
   });
 
   factory RouterInfo.fromJson(Map<String, dynamic> json) {
@@ -38,13 +60,84 @@ class RouterInfo {
       type: json['type']?.toString() ?? '',
       user: json['user']?.toString() ?? '',
       pass: json['pass']?.toString() ?? '',
+      pass2: json['pass2']?.toString() ?? '',
       enabled: json['enabled'] == true,
       // 兼容两种命名：后端历史上把字段从驼峰 proxyUrl 改成蛇形 proxy_url，
       // 优先取驼峰兜底蛇形（与 toolboxPage RemoteWakePage.vue:333 一致）。
       proxyUrl: (json['proxyUrl'] ?? json['proxy_url'])?.toString() ?? '',
       isIp: json['isIp'] == true,
+      // 记录自带就用自带的（兼容驼峰/蛇形两种写法），缺失留空由 resolveDeviceType 反查
+      deviceType:
+          (json['deviceType'] ?? json['device_type'])?.toString().trim() ?? '',
     );
   }
+
+  RouterInfo copyWith({String? deviceType}) => RouterInfo(
+        id: id,
+        name: name,
+        host: host,
+        type: type,
+        user: user,
+        pass: pass,
+        pass2: pass2,
+        enabled: enabled,
+        proxyUrl: proxyUrl,
+        isIp: isIp,
+        deviceType: deviceType ?? this.deviceType,
+      );
+
+  bool get isWebManage => deviceType == kDeviceTypeWeb;
+  bool get isSwitch => deviceType == kDeviceTypeSwitch;
+}
+
+/// 脚本类型表的一项（`/config/global/router_types` 下发）。
+class ScriptType {
+  final String name;
+  final String deviceType;
+
+  /// 该类型的默认地址（后端字段名是 host）。新增时选中类型会自动填进地址栏。
+  final String defaultHost;
+
+  const ScriptType({
+    required this.name,
+    this.deviceType = kDeviceTypeRouter,
+    this.defaultHost = '',
+  });
+
+  factory ScriptType.fromJson(dynamic raw) {
+    if (raw is Map) {
+      final map = Map<String, dynamic>.from(raw);
+      final device =
+          (map['deviceType'] ?? map['device_type'])?.toString().trim() ?? '';
+      return ScriptType(
+        // 必须 trim：后端配置里 " 腾讯网吧特权 " 前后带空格，不裁掉的话下拉里会多出
+        // 两段空白，存进记录后跟别处的同名比较也会对不上
+        name: (map['name'] ?? '').toString().trim(),
+        deviceType: device.isEmpty ? kDeviceTypeRouter : device,
+        // 默认地址：后端下发的字段名是 host，另外两种写法留作兼容
+        defaultHost:
+            (map['host'] ?? map['defaultHost'] ?? map['default_host'])?.toString().trim() ?? '',
+      );
+    }
+    return ScriptType(name: raw?.toString().trim() ?? '');
+  }
+
+  /// 下拉里的展示文案：`名称(设备类型)`，与 toolboxPage RouterFormDialog.vue:27 一致
+  String get label => '$name($deviceType)';
+}
+
+/// 设备类型兜底：优先记录自带，其次按脚本类型名去类型表反查，最后落回「路由器」。
+///
+/// 名字比较一律先 trim —— 后端配置里是 " 腾讯网吧特权 " 带空格，而历史记录里存的
+/// 可能是不带空格的版本，不裁掉就匹配不上、又会掉回「路由器」
+/// （对齐 toolboxPage useRouters.js:20-38）。
+String resolveDeviceType(RouterInfo r, List<ScriptType> types) {
+  if (r.deviceType.isNotEmpty) return r.deviceType;
+  final key = r.type.trim();
+  for (final t in types) {
+    if (t.name.trim() == key) return t.deviceType;
+  }
+  return kDeviceTypeRouter;
 }
 
 class TrafficInterface {
@@ -245,15 +338,18 @@ class RouterApi {
     });
   }
 
-  /// 脚本类型枚举 —— 路径 `/config/global/router_types`（toolboxPage useRouters.js:77）
-  Future<List<String>> getScriptTypes() async {
+  /// 脚本类型枚举 —— 路径 `/config/global/router_types`（toolboxPage useRouters.js:90）
+  ///
+  /// 返回结构化的 [ScriptType]（含 deviceType / 默认地址），而不是只取名字：
+  /// deviceType 是卡片渲染和打开方式的依据，defaultHost 是新增时的地址自动填充。
+  Future<List<ScriptType>> getScriptTypes() async {
     final response = await ApiClient.instance.get('/config/global/router_types');
     final data = response.data;
     if (data is List) {
-      return data.map((e) {
-        if (e is Map) return (e['name'] ?? '').toString();
-        return e.toString();
-      }).where((s) => s.isNotEmpty).toList();
+      return data
+          .map(ScriptType.fromJson)
+          .where((t) => t.name.isNotEmpty)
+          .toList();
     }
     return const [];
   }
@@ -275,19 +371,29 @@ final routerApiProvider =
   return RouterApi(subdomainFull: domain, merchantId: netbarId);
 });
 
-/// 按 netbarId 隔离的路由器列表。
+/// 按 netbarId 隔离的路由器列表（deviceType 已按类型表回填）。
 final routersProvider =
     FutureProvider.autoDispose.family<List<RouterInfo>, int?>(
   (ref, netbarId) async {
     final api = ref.watch(routerApiProvider(netbarId));
     if (api == null) return const [];
-    return api.getAll();
+    // 类型表与列表并行拉：deviceType 决定卡片图标/配色和点击后的打开方式，卡片一渲染
+    // 就要用，不能等编辑弹窗打开才拉（对齐 toolboxPage useRouters.js:46 提前 fetch）。
+    // 类型表失败不牵连列表 —— 只是全部落回「路由器」，页面照常可用。
+    final typesFuture = ref
+        .watch(scriptTypesProvider(netbarId).future)
+        .catchError((_) => const <ScriptType>[]);
+    final list = await api.getAll();
+    final types = await typesFuture;
+    return list
+        .map((r) => r.copyWith(deviceType: resolveDeviceType(r, types)))
+        .toList();
   },
 );
 
 /// 按 netbarId 隔离的脚本类型列表。
 final scriptTypesProvider =
-    FutureProvider.autoDispose.family<List<String>, int?>(
+    FutureProvider.autoDispose.family<List<ScriptType>, int?>(
   (ref, netbarId) async {
     final api = ref.watch(routerApiProvider(netbarId));
     if (api == null) return const [];

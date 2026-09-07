@@ -5,10 +5,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../shared/utils/natural_sort.dart';
 import '../data/game_constants.dart';
 import '../data/game_models.dart';
 import '../providers/game_library_providers.dart';
 import '../utils/formatter.dart';
+import '../utils/game_sort.dart';
 import '../utils/pinyin_match.dart';
 import 'widgets/batch_result_dialog.dart';
 import 'widgets/health_banner.dart';
@@ -55,6 +57,10 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
   String _filterStatus = ''; // installed / not_installed / upgradable
   String _search = '';
   String _searchDebounced = '';
+
+  /// 排序：null = 不排序，保持后端返回的原始顺序
+  GameSortField? _sortField;
+  SortOrder? _sortOrder;
 
   int _renderedCount = kRenderBatch;
   bool _loadingMore = false;
@@ -994,6 +1000,20 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
             _notifier.clearSelection();
           },
         ),
+      // 排序：下载任务页字段完全不同（进度/速度/机号），不复用这套
+      if (_activeTab != _Tab.downloads) ...[
+        _dropdown<GameSortField?>(
+          value: _sortField,
+          hint: '默认排序',
+          items: [
+            const DropdownMenuItem<GameSortField?>(value: null, child: Text('默认排序')),
+            for (final f in kGameSortFields)
+              DropdownMenuItem<GameSortField?>(value: f.field, child: Text(f.label)),
+          ],
+          onChanged: _onSortFieldChanged,
+        ),
+        _buildSortOrderButton(),
+      ],
     ];
 
     // 桌面端：搜索 + 筛选项一行 Wrap 平铺
@@ -1056,6 +1076,8 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
     if (_filterPlatform.isNotEmpty) n++;
     if (_activeTab != _Tab.downloads && _filterCategory.isNotEmpty) n++;
     if (_activeTab == _Tab.all && _filterStatus.isNotEmpty) n++;
+    // 排序也折在里面，手机端不展开就看不到当前排到底按了什么字段
+    if (_activeTab != _Tab.downloads && _sortField != null) n++;
     return n;
   }
 
@@ -1160,6 +1182,55 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
     );
   }
 
+  /// 切排序字段时套用该字段的默认方向（大小/热度/最后修改默认降序，其余升序）。
+  /// 排序不改变集合内容，所以不清多选 —— 与 toolboxPage useGameFilter.js:172 的
+  /// watch 一致（那里只 resetRender，清多选留给筛选变更）。
+  void _onSortFieldChanged(GameSortField? field) {
+    final spec = gameSortSpec(field);
+    setState(() {
+      _sortField = spec?.field;
+      _sortOrder = spec?.defaultOrder;
+      _resetPaging();
+    });
+  }
+
+  void _toggleSortOrder() {
+    if (_sortField == null) return;
+    setState(() {
+      _sortOrder = _sortOrder == SortOrder.descending
+          ? SortOrder.ascending
+          : SortOrder.descending;
+      _resetPaging();
+    });
+  }
+
+  Widget _buildSortOrderButton() {
+    final enabled = _sortField != null;
+    final desc = _sortOrder == SortOrder.descending;
+    return Tooltip(
+      message: !enabled
+          ? '先选择排序字段'
+          : (desc ? '当前降序，点击改升序' : '当前升序，点击改降序'),
+      child: SizedBox(
+        height: 34,
+        width: 34,
+        child: OutlinedButton(
+          onPressed: enabled ? _toggleSortOrder : null,
+          style: OutlinedButton.styleFrom(
+            padding: EdgeInsets.zero,
+            side: const BorderSide(color: Color(0xFFD1D5DB)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+          ),
+          child: Icon(
+            desc ? LucideIcons.arrowDownWideNarrow : LucideIcons.arrowUpNarrowWide,
+            size: 14,
+            color: enabled ? const Color(0xFF4B5563) : const Color(0xFFD1D5DB),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _dropdown<T>({
     required T? value,
     required String hint,
@@ -1191,7 +1262,11 @@ class _GameManageViewState extends ConsumerState<GameManageView> {
   // ============== 列表 ==============
   Widget _buildList(GameLibraryState state) {
     final isDownloads = _activeTab == _Tab.downloads;
-    final games = isDownloads ? const <GameItem>[] : _filteredGames(state);
+    // 排序只在渲染路径做一次：_filteredGames 还被计数和「全选」复用，那两处与顺序无关，
+    // 让它们也跟着排属于白花的 O(n log n)
+    final games = isDownloads
+        ? const <GameItem>[]
+        : sortGames(_filteredGames(state), _sortField, _sortOrder);
     final downloads = isDownloads ? _filteredDownloads(state) : const <DownloadTask>[];
     final total = isDownloads ? downloads.length : games.length;
     final loading = state.loading && state.games.isEmpty && state.downloads.isEmpty;

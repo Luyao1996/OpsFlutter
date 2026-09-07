@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/utils/natural_sort.dart';
 import '../../data/netbar_api.dart';
 import '../../data/version_compare.dart';
 
@@ -43,6 +44,10 @@ class _NetbarMultiSelectTableState extends State<NetbarMultiSelectTable> {
   final Set<int> _selectedIds = {};
   late List<String> _versionOptions;
 
+  /// 表头排序：null = 不排序，保持接口返回顺序
+  String? _sortKey;
+  SortOrder? _sortOrder;
+
   @override
   void initState() {
     super.initState();
@@ -63,7 +68,7 @@ class _NetbarMultiSelectTableState extends State<NetbarMultiSelectTable> {
   }
 
   List<Netbar> get _filteredNetbars {
-    return widget.netbars.where((n) {
+    final filtered = widget.netbars.where((n) {
       final matchName = _searchQuery.isEmpty || n.name.contains(_searchQuery);
       final matchGroup = _filterGroupId == null ||
           (n.groups?.any((g) => g.id == _filterGroupId) ?? false);
@@ -71,6 +76,47 @@ class _NetbarMultiSelectTableState extends State<NetbarMultiSelectTable> {
       final matchOnline = _filterOnline == null || n.isOnline == _filterOnline;
       return matchName && matchGroup && matchVersion && matchOnline;
     }).toList();
+    return _sortNetbars(filtered);
+  }
+
+  // ===== 表头排序 =====
+  // 对齐 toolboxPage NetbarPage.vue:707-740 给网吧管理表头加排序的那笔改动。
+  // 本端没有 web 那样的网吧管理页（网吧靠顶部 tab 切换），这张批量操作表格是
+  // 形态最接近的列表，排序落在这里。
+  //
+  // 版本号列不能走自然序：'1.10' 必须排在 '1.2' 之后，得用语义化版本比较
+  // （与筛选下拉的版本排序同一个 compareVersion，保证两处顺序一致）。
+  static final Map<String, Object? Function(Netbar)> _sortGetters = {
+    'name': (n) => n.name,
+    'group': (n) => n.groups?.map((g) => g.name).join('、'),
+    'version': (n) => n.version,
+    'online': (n) => n.isOnline,
+    'terminal': (n) => n.terminalCount,
+  };
+
+  List<Netbar> _sortNetbars(List<Netbar> list) {
+    final getter = _sortGetters[_sortKey];
+    if (getter == null || _sortOrder == null) return list;
+    if (_sortKey == 'version') {
+      return sortByGetter(list, getter, _sortOrder,
+          compare: (a, b) => compareVersion(a?.toString(), b?.toString()));
+    }
+    return sortByGetter(list, getter, _sortOrder);
+  }
+
+  /// 三态循环：升序 → 降序 → 取消（回到接口返回的原始顺序）
+  void _onHeaderTap(String key) {
+    setState(() {
+      if (_sortKey != key) {
+        _sortKey = key;
+        _sortOrder = SortOrder.ascending;
+      } else if (_sortOrder == SortOrder.ascending) {
+        _sortOrder = SortOrder.descending;
+      } else {
+        _sortKey = null;
+        _sortOrder = null;
+      }
+    });
   }
 
   /// 版本号选项：去重后按语义化版本降序（"1.10" 必须排在 "1.2" 前面，不能按字符串排）
@@ -181,11 +227,39 @@ class _NetbarMultiSelectTableState extends State<NetbarMultiSelectTable> {
     );
   }
 
-  Widget _headerCell(String text) => Text(
-        text,
-        textAlign: TextAlign.center,
-        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF909399)),
-      );
+  /// 可排序表头：点一下切方向，第三下取消。当前列文字变蓝并带方向箭头。
+  Widget _sortableHeader(String text, String key, {bool center = true}) {
+    final active = _sortKey == key && _sortOrder != null;
+    final color = active ? AppColors.iosBlue : const Color(0xFF909399);
+    return InkWell(
+      onTap: () => _onHeaderTap(key),
+      child: Row(
+        mainAxisAlignment:
+            center ? MainAxisAlignment.center : MainAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: Text(
+              text,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 12, fontWeight: FontWeight.bold, color: color),
+            ),
+          ),
+          const SizedBox(width: 2),
+          Icon(
+            active
+                ? (_sortOrder == SortOrder.descending
+                    ? Icons.arrow_downward
+                    : Icons.arrow_upward)
+                : Icons.unfold_more,
+            size: 11,
+            color: active ? AppColors.iosBlue : const Color(0xFFC0C4CC),
+          ),
+        ],
+      ),
+    );
+  }
 
   /// 在线状态徽章：描边圆角小标签，对标 Vue 端 el-tag effect="plain" round
   Widget _statusBadge(bool online) {
@@ -299,22 +373,27 @@ class _NetbarMultiSelectTableState extends State<NetbarMultiSelectTable> {
                               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             ),
                           ),
-                          const Expanded(
-                            child: Text('网吧名称',
-                                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF909399)),
-                                overflow: TextOverflow.ellipsis),
+                          Expanded(
+                            child: _sortableHeader('网吧名称', 'name', center: false),
                           ),
                           if (compact)
-                            SizedBox(width: _kStatusColW, child: _headerCell('状态'))
+                            SizedBox(
+                                width: _kStatusColW,
+                                child: _sortableHeader('状态', 'online'))
                           else ...[
-                            const Expanded(
-                              child: Text('所属分组',
-                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF909399)),
-                                  overflow: TextOverflow.ellipsis),
+                            Expanded(
+                              child: _sortableHeader('所属分组', 'group', center: false),
                             ),
-                            SizedBox(width: _kVersionColW, child: _headerCell('版本号')),
-                            SizedBox(width: _kStatusColW, child: _headerCell('状态')),
-                            if (showTerminal) SizedBox(width: _kTerminalColW, child: _headerCell('终端数')),
+                            SizedBox(
+                                width: _kVersionColW,
+                                child: _sortableHeader('版本号', 'version')),
+                            SizedBox(
+                                width: _kStatusColW,
+                                child: _sortableHeader('状态', 'online')),
+                            if (showTerminal)
+                              SizedBox(
+                                  width: _kTerminalColW,
+                                  child: _sortableHeader('终端数', 'terminal')),
                           ],
                         ],
                       ),

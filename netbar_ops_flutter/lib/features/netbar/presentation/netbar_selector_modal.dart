@@ -5,6 +5,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import '../../../core/responsive/responsive.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/utils/adaptive_show.dart';
+import '../../../shared/utils/natural_sort.dart';
 import '../../../shared/utils/top_notice.dart';
 import '../../../shared/providers/permission_provider.dart';
 import '../data/edition_meta.dart';
@@ -120,12 +121,31 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
       switch (_sortKey) {
         case 'id':
           cmp = a.id.compareTo(b.id);
+        // 名称/分组/管理员/Token 里都混着数字（"网吧2" vs "网吧10"、机房编号、
+        // token 串），走自然序；纯 compareTo 会把 10 排到 2 前面
         case 'name':
-          cmp = a.name.compareTo(b.name);
+          cmp = naturalCompare(a.name, b.name);
         case 'terminalCount':
           cmp = a.terminalCount.compareTo(b.terminalCount);
         case 'status':
           cmp = a.status.compareTo(b.status);
+        case 'group':
+          cmp = naturalCompare(a.group, b.group);
+        case 'admin':
+          cmp = naturalCompare(a.admin, b.admin);
+        case 'code':
+          cmp = naturalCompare(a.code, b.code);
+        case 'createdAt':
+          {
+            // 用原始 createdAt 而不是展示用的 createTime：后者截断到天、且无值时
+            // 是 '-'，'-' 会跟正常日期混着排。这里让无值恒沉底（升降序都一样）
+            final ta = a.createdAt ?? '';
+            final tb = b.createdAt ?? '';
+            if (ta.isEmpty && tb.isEmpty) return 0;
+            if (ta.isEmpty) return 1;
+            if (tb.isEmpty) return -1;
+            cmp = ta.compareTo(tb);
+          }
       }
       return _sortAsc ? cmp : -cmp;
     });
@@ -648,13 +668,14 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
       ),
       child: Row(
         children: [
+          // 除「操作」外每列都可排
           _buildHeaderCell('网吧名称 / ID', flex: 3, sortKey: 'id'),
           _buildHeaderCell('在线数/终端数', flex: 1, sortKey: 'terminalCount'),
           _buildHeaderCell('状态', flex: 1, sortKey: 'status'),
-          _buildHeaderCell('所属分组', flex: 2),
-          _buildHeaderCell('管理员', flex: 2),
-          _buildHeaderCell('创建时间', flex: 2),
-          _buildHeaderCell('Token', flex: 2),
+          _buildHeaderCell('所属分组', flex: 2, sortKey: 'group'),
+          _buildHeaderCell('管理员', flex: 2, sortKey: 'admin'),
+          _buildHeaderCell('创建时间', flex: 2, sortKey: 'createdAt'),
+          _buildHeaderCell('Token', flex: 2, sortKey: 'code'),
           _buildHeaderCell('操作', flex: 1),
         ],
       ),
@@ -680,21 +701,34 @@ class _NetbarSelectorModalState extends ConsumerState<NetbarSelectorModal> {
           cursor: sortKey != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
           child: Row(
             children: [
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: isActive ? AppColors.iosBlue : Colors.grey.shade500,
-                  letterSpacing: 0.5,
+              Flexible(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: isActive ? AppColors.iosBlue : Colors.grey.shade500,
+                    letterSpacing: 0.5,
+                  ),
                 ),
               ),
+              // 未激活的可排序列也给一个淡灰双向箭头：原先只有激活列才有箭头，
+              // 结果整张表看不出哪些列点得动（实际测下来没人发现能排序）
               if (isActive) ...[
                 const SizedBox(width: 4),
                 Icon(
                   _sortAsc ? LucideIcons.arrowUp : LucideIcons.arrowDown,
                   size: 12,
                   color: AppColors.iosBlue,
+                ),
+              ] else if (sortKey != null) ...[
+                const SizedBox(width: 4),
+                Icon(
+                  LucideIcons.chevronsUpDown,
+                  size: 11,
+                  color: Colors.grey.shade300,
                 ),
               ],
             ],
